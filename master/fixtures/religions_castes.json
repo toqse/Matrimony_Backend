@@ -1,0 +1,49 @@
+{
+  "religions": [
+    {
+      "name": "Hinduism",
+      "castes": [
+        "Brahmin", "Kshatriya", "Vaishya", "Ezhava", "Nair", "Namboothiri",
+        "Vellalar", "Thevar", "Gounder", "Reddy", "Kamma", "Kapu", "Naidu",
+        "Maratha", "Kunbi", "Baniya", "Kayastha", "Rajput", "Jat", "Gurjar",
+        "Bhumihar", "Yadav", "Kurmi", "Lohar", "Teli", "Kumhar", "Barber",
+        "Dhobi", "Chamar", "Other"
+      ]
+    },
+    {
+      "name": "Islam",
+      "castes": [
+        "Sunni", "Shia", "Bohra", "Khoja", "Pathan", "Mughal", "Syed", "Sheikh", "Other"
+      ]
+    },
+    {
+      "name": "Christianity",
+      "castes": [
+        "Roman Catholic", "Syrian Christian", "Latin Catholic", "Protestant",
+        "Orthodox", "Pentecostal", "Other"
+      ]
+    },
+    {
+      "name": "Sikhism",
+      "castes": [
+        "Jat Sikh", "Khatri", "Arora", "Ramgarhia", "Bhatia", "Tarkhan", "Other"
+      ]
+    },
+    {
+      "name": "Buddhism",
+      "castes": [
+        "Mahayana", "Theravada", "Vajrayana", "Other"
+      ]
+    },
+    {
+      "name": "Jainism",
+      "castes": [
+        "Digambar", "Shwetambar", "Other"
+      ]
+    },
+    {
+      "name": "Other",
+      "castes": ["Other"]
+    }
+  ]
+}

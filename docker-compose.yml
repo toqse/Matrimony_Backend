@@ -1,0 +1,114 @@
+services:
+  django:
+    build: .
+    command: ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "matrimony_backend.wsgi:application"]
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=matrimony_backend.settings
+      - DEBUG=0
+      - DATABASE_ENGINE=mysql
+      - DATABASE_HOST=mysql
+      - DATABASE_PORT=3306
+      - DATABASE_NAME=${DATABASE_NAME:-matrimony_db}
+      - DATABASE_USER=${DATABASE_USER:-matrimony_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-matrimony_pass}
+      - REDIS_URL=redis://redis:6379/0
+      - ALLOWED_HOSTS=*
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: ${DATABASE_NAME:-matrimony_db}
+      MYSQL_USER: ${DATABASE_USER:-matrimony_user}
+      MYSQL_PASSWORD: ${DATABASE_PASSWORD:-matrimony_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3308:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  celery_worker:
+    build: .
+    entrypoint: ["celery"]
+    command: ["-A", "matrimony_backend", "worker", "-l", "info"]
+    volumes:
+      - .:/app
+    env_file: .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=matrimony_backend.settings
+      - DEBUG=0
+      - DATABASE_ENGINE=mysql
+      - DATABASE_HOST=mysql
+      - DATABASE_PORT=3306
+      - DATABASE_NAME=${DATABASE_NAME:-matrimony_db}
+      - DATABASE_USER=${DATABASE_USER:-matrimony_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-matrimony_pass}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      django:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery_beat:
+    build: .
+    entrypoint: ["celery"]
+    command: ["-A", "matrimony_backend", "beat", "-l", "info"]
+    volumes:
+      - .:/app
+    env_file: .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=matrimony_backend.settings
+      - DEBUG=0
+      - DATABASE_ENGINE=mysql
+      - DATABASE_HOST=mysql
+      - DATABASE_PORT=3306
+      - DATABASE_NAME=${DATABASE_NAME:-matrimony_db}
+      - DATABASE_USER=${DATABASE_USER:-matrimony_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-matrimony_pass}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      django:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      celery_worker:
+        condition: service_started
+    restart: unless-stopped
+
+networks:
+  default:
+    name: matrimony_backend_net
+
+volumes:
+  mysql_data:

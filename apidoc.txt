@@ -1,0 +1,1342 @@
+================================================================================
+MATRIMONY BACKEND - API DOCUMENTATION (Aiswarya Matrimony)
+================================================================================
+Base URL: /api/v1
+Auth Base: /api/v1/auth/
+Profile Base: /api/v1/profile/
+Master Base: /api/v1/master/
+
+--- Authentication ---
+All authenticated endpoints require header: Authorization: Bearer <access_token>
+Error 401: Missing or invalid JWT.
+
+--- Request / Response ---
+For POST/PATCH with JSON: Content-Type: application/json (text/plain also accepted).
+For file uploads: Content-Type: multipart/form-data.
+Success responses: { "success": true, "data": { ... } } or { "success": true, "message": "..." }
+Paginated lists: ?page=1&page_size=20 (default page_size=20); response has count, next, previous, results.
+
+--- Security ---
+HTTPS, HSTS (production), rate limiting (DRF throttle + OTP rate limit).
+JWT: Access token 15 min (RS256 when keys set), Refresh token 30 days (optional HTTP-only cookie).
+================================================================================
+
+----------------------------------------
+1. AUTHENTICATION (/api/v1/auth/)
+----------------------------------------
+
+--- New registration flow (recommended) ---
+
+POST /api/v1/auth/register/
+  Auth: None
+  Description: Register new user with name, phone, email, dob, gender. Email and phone must be unique (among verified users). If user exists with same phone but not yet verified, resend OTP and update details (no duplicate user). Generates matri_id and sends OTP.
+  Rate limit: OTP rate limit applies (max 5 OTP requests per 10 minutes per phone/email).
+  Body (JSON):
+    {
+      "name": "string (required)",
+      "phone_number": "string (required, with country code, e.g. +919496954772)",
+      "email": "string (required, valid email)",
+      "dob": "string (required, DD-MM-YYYY, e.g. 16-12-1990)",
+      "gender": "M | F | O (required)"
+    }
+
+  Validation rules:
+    phone_number:
+      - Required. Must include country code (e.g. +919496954772).
+      - Validated with phonenumbers library; stored in E164 format.
+      - Must be unique: if a user already exists with this phone and is_registered (mobile_verified=True), returns 400 "Phone number already registered".
+      - If user exists with this phone but not verified, OTP is resent and profile updated (no duplicate).
+    email:
+      - Required. Validated with Django's validate_email.
+      - Must be unique: if a user already exists with this email and is_registered (mobile_verified=True), returns 400 "Email already registered".
+      - Invalid format returns 400 "Invalid email address".
+    dob:
+      - Required. Format DD-MM-YYYY (e.g. 16-12-1990). Stored as date.
+      - Must not be in the future. Invalid format returns 400.
+
+  Success response 200:
+    {
+      "success": true,
+      "message": "Registration successful. OTP has been sent to your phone number. Please verify to continue.",
+      "data": {
+        "matri_id": "AM100002",
+        "phone_number": "+919496954772",
+        "otp_sent": true
+      }
+    }
+
+  Error response 400:
+    {
+      "success": false,
+      "error": {
+        "code": 400,
+        "message": "Phone number already registered"
+      }
+    }
+    or "Email already registered", "Invalid email address", or other validation message in error.message.
+
+  Error 429: Too many OTP requests (success: false, error: { code: 429, message }).
+
+---
+
+POST /api/v1/auth/verify-otp/
+  Auth: None
+  Description: Verify OTP sent to phone. Returns tokens, multi-step profile completion status, and all previously saved profile data in detail.
+  Body (JSON):
+    {
+      "phone_number": "string (required)",
+      "otp": "string (required, 6 digits)"
+    }
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "access_token": "JWT access token",
+        "refresh_token": "JWT refresh token",
+        "matri_id": "AM100001",
+        "is_registered": true,
+        "is_registration_profile_completed": false,
+        "profile_status": "incomplete",
+        "profile_steps": {
+          "location": false,
+          "religion": false,
+          "personal": false,
+          "education": false,
+          "about": false,
+          "photos": false
+        },
+        "profile_completion_percentage": 0,
+        "next_step": "location",
+        "profile": {
+          "id": "user pk",
+          "matri_id": "AM100001",
+          "basic_details": { "name", "gender", "dob", "email", "phone" },
+          "photos": { "profile_photo", "full_photo", "selfie_photo", "family_photo", "aadhaar_front", "aadhaar_back" },
+          "religion_details": { ... },
+          "personal_details": { ... },
+          "location_details": { ... },
+          "family_details": { ... },
+          "education_details": { ... },
+          "about_me": "string"
+        }
+      }
+    }
+  Field explanations:
+    access_token       — JWT for Authorization: Bearer <token>
+    refresh_token      — JWT for token refresh (may also be in HTTP-only cookie)
+    matri_id           — Unique profile ID (e.g. AM100001)
+    is_registered      — Always true on successful verify
+    is_registration_profile_completed — True when user has called POST /profile/complete/
+    profile_status     — "completed" if all 6 steps done, else "incomplete"
+    profile_steps      — Per-step completion: location, religion, personal, education, about, photos
+    profile_completion_percentage — 0–100 (completed_steps / 6 * 100)
+    next_step          — First incomplete step name, or null if all complete
+    profile            — Full saved profile (same structure as GET /api/v1/profile/): basic_details, photos, religion_details, personal_details, location_details, family_details, education_details, about_me
+  (Refresh token may also be set in HTTP-only cookie when JWT_REFRESH_COOKIE_NAME is set.)
+  Error 400: Invalid OTP, user not found, or account not active.
+
+---
+
+--- Legacy / alternate auth ---
+
+POST /api/v1/auth/register/mobile/
+  Auth: None
+  Use: Send OTP to mobile (register or login).
+  Body (JSON): { "mobile": "string (required, max 20 chars)" }
+  Response 200: { "success": true, "message": "OTP sent to mobile", "data": { "mobile": "<mobile>" } }
+
+POST /api/v1/auth/verify/mobile/
+  Auth: None
+  Body (JSON): { "mobile": "string", "otp": "string (6 digits)", "referral_code": "string (optional)" }
+  Response 200: { "success": true, "data": { "user": {...}, "tokens": { "access", "refresh" } } }
+
+POST /api/v1/auth/register/email/
+  Auth: None
+  Body (JSON): { "email": "string (required)" }
+  Response 200: { "success": true, "message": "OTP sent to email", "data": { "email": "<email>" } }
+
+POST /api/v1/auth/verify/email/
+  Auth: None
+  Body (JSON): { "email": "string", "otp": "string (6 digits)", "referral_code": "optional" }
+  Response 200: { "success": true, "data": { "user": {...}, "tokens": { "access", "refresh" } } }
+
+POST /api/v1/auth/login/
+  Auth: None
+  Body (JSON): { "mobile": "string", "otp": "string (6 digits)" }
+  Response 200: { "success": true, "data": { "user": {...}, "tokens": { "access", "refresh" } } }
+
+POST /api/v1/auth/token/refresh/
+  Auth: None (refresh token in body or in HTTP-only cookie)
+  Body (JSON): { "refresh": "string (optional if sent via cookie)" }
+  Response 200: { "success": true, "data": { "tokens": { "access", "refresh" } } }
+
+POST /api/v1/auth/logout/
+  Auth: Required (JWT)
+  Body (JSON): { "refresh_token": "string (optional, to blacklist)" }
+  Response 200: { "success": true, "message": "Logged out successfully." }
+
+POST /api/v1/auth/password/reset/
+  Auth: None
+  Body (JSON): { "email": "optional", "mobile": "optional" }
+  Response 200: { "success": true, "message": "OTP sent for password reset." }
+
+POST /api/v1/auth/password/confirm/
+  Auth: None
+  Body (JSON): { "email" | "mobile", "otp", "new_password" (min 8 chars) }
+  Response 200: { "success": true, "message": "Password updated." }
+
+================================================================================
+2. PROFILE (/api/v1/profile/)
+================================================================================
+All profile endpoints require JWT authentication. Users can only access their own profile.
+Error 401: Unauthorized if token missing or invalid.
+
+Quick reference:
+  GET    /profile/              Full profile (all sections)
+  GET    /profile/basic/        Basic details only
+  PATCH  /profile/basic/        Update basic details
+  GET    /profile/photos/       Photos only
+  PATCH  /profile/photos/       Upload/update photos (multipart)
+  GET    /profile/religion/     Religion section
+  PATCH  /profile/religion/     Update religion
+  GET    /profile/partner-preferences/   Partner religion/caste preference
+  PATCH  /profile/partner-preferences/  Update partner preference
+  GET    /profile/personal/     Personal section
+  PATCH  /profile/personal/     Update personal
+  GET    /profile/location/     Location section
+  PATCH  /profile/location/     Update location
+  GET    /profile/family/       Family section
+  PATCH  /profile/family/       Update family
+  GET    /profile/education/    Education & occupation
+  PATCH  /profile/education/   Update education
+  GET    /profile/about/        About me text
+  PATCH  /profile/about/        Update about me
+  GET    /profile/generate-about/  Generate about-me suggestions
+  POST   /profile/complete/     Mark profile complete (legacy)
+
+--- Profile edit: 7 section endpoints (PATCH) ---
+Profile creation and editing use the same section endpoints. Each section has one PATCH endpoint;
+all fields in the body are optional (partial update). Auth: JWT required for all.
+
+  1. Basic details
+     PATCH /api/v1/profile/basic/
+     Body (JSON): { "name": "string", "gender": "male"|"female"|"other", "dob": "YYYY-MM-DD", "email": "string" }
+     Response 200: { "success": true, "data": { "name", "gender", "dob", "email", "phone" } }
+
+  2. Location
+     PATCH /api/v1/profile/location/
+     Body (JSON): { "country_id": int, "state_id": int, "district_id": int, "city_id": int, "address": string }
+     IDs must exist in master. Response 200: { "success": true, "data": { ... } }
+     Error 400: Invalid country_id, state_id, district_id, or city_id.
+
+  3. Religion
+     PATCH /api/v1/profile/religion/
+     Body (JSON): { "religion_id": int, "caste_id": int, "mother_tongue_id": int, "partner_religion_preference": string, "partner_preference_type", "partner_religion_ids", "partner_caste_preference" }
+     Response 200: { "success": true, "data": { ... } }
+     Partner preference also has dedicated GET/PATCH at /api/v1/profile/partner-preferences/
+
+  4. Personal
+     PATCH /api/v1/profile/personal/
+     Body (JSON): { "marital_status_id": int, "children_count": int (≥0), "height_cm": int, "weight_kg": decimal, "colour": string, "blood_group": string }
+     height_cm stored as free text (e.g. "168 cm"). Response 200: { "success": true, "data": { ... } }
+     Error 400: Invalid marital_status_id.
+
+  5. Education & occupation
+     PATCH /api/v1/profile/education/
+     Body (JSON): { "highest_education_id": int, "education_subject_id": int, "employment_status": string, "occupation_id": int, "annual_income_id": int }
+     IDs must exist in master. Response 200: { "success": true, "data": { ... } }
+     Error 400: Invalid id for any master reference.
+
+  6. About me
+     PATCH /api/v1/profile/about/
+     Body (JSON): { "about_me": "string" }
+     Response 200: { "success": true, "data": { "about_me": "..." } }
+
+  7. Photos
+     PATCH /api/v1/profile/photos/
+     Content-Type: multipart/form-data
+     Body (form): profile_photo, full_photo, selfie_photo, family_photo, aadhaar_front, aadhaar_back (each optional file)
+     Response 200: { "success": true, "data": { "profile_photo", "full_photo", "selfie_photo", "family_photo", "aadhaar_front", "aadhaar_back" } }
+
+(An additional section, Family, has PATCH /api/v1/profile/family/ with body: father_name, father_occupation, mother_name, mother_occupation, brothers, married_brothers, sisters, married_sisters, about_family — not part of the 7-step completion.)
+
+--- Base profile (full) ---
+GET /api/v1/profile/
+  Auth: Required (JWT)
+  Description: Return the complete profile grouped by sections.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "id": "uuid",
+        "matri_id": "AM100001",
+        "basic_details": { "name", "gender", "dob", "email", "phone" },
+        "photos": { "profile_photo", "full_photo", "selfie_photo", "family_photo", "aadhaar_front", "aadhaar_back" },
+        "religion_details": { "religion_id", "religion", "caste_id", "caste", "mother_tongue_id", "mother_tongue", "partner_religion_preference" },
+        "personal_details": { "marital_status_id", "marital_status", "children_count", "height_cm", "weight_kg", "colour", "blood_group" },
+        "location_details": { "country_id", "country", "state_id", "state", "district_id", "district", "city_id", "city", "address" },
+        "family_details": { "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers", "married_brothers", "sisters", "married_sisters", "about_family" },
+        "education_details": { "highest_education_id", "highest_education", "education_subject_id", "education_subject", "employment_status", "occupation_id", "occupation", "annual_income_id", "annual_income" },
+        "about_me": "string"
+      }
+    }
+
+--- 1. Basic Details ---
+GET /api/v1/profile/basic/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "name", "gender", "dob", "email", "phone" } }
+  Note: gender in response is "male" | "female" | "other"; phone is user mobile.
+
+PATCH /api/v1/profile/basic/
+  Auth: Required (JWT)
+  Body (JSON): { "name": "string", "gender": "male"|"female"|"other", "dob": "YYYY-MM-DD", "email": "string" }
+  All fields optional (partial update). Response 200: { "success": true, "data": { ... } }
+
+--- 2. Photos ---
+GET /api/v1/profile/photos/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "profile_photo", "full_photo", "selfie_photo", "family_photo", "aadhaar_front", "aadhaar_back" } }
+  Photo fields are full URLs (or null if not set). Stored in MEDIA / S3 / MinIO.
+
+PATCH /api/v1/profile/photos/
+  Auth: Required (JWT)
+  Content-Type: multipart/form-data
+  Body (form): profile_photo, full_photo, selfie_photo, family_photo, aadhaar_front, aadhaar_back (each optional file)
+  Response 200: { "success": true, "data": { "profile_photo", "full_photo", "selfie_photo", "family_photo", "aadhaar_front", "aadhaar_back" } }
+
+--- 3. Religion Details ---
+GET /api/v1/profile/religion/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "religion_id", "religion", "caste_id", "caste", "mother_tongue_id", "mother_tongue", "partner_religion_preference", "partner_preference_type", "partner_religion_ids", "partner_caste_preference" } }
+
+PATCH /api/v1/profile/religion/
+  Auth: Required (JWT)
+  Body (JSON): { "religion_id", "caste_id", "mother_tongue_id", "partner_religion_preference", "partner_preference_type", "partner_religion_ids", "partner_caste_preference" }
+  Response 200: { "success": true, "data": { ... } }
+
+--- 3a. Partner Preferences (religion/caste for matches) ---
+GET /api/v1/profile/partner-preferences/
+  Auth: Required (JWT)
+  Returns structured partner preference used to filter matches. If user has no religion record, returns defaults.
+  Response 200: { "success": true, "data": { "partner_preference_type", "partner_religion_ids", "partner_caste_preference" } }
+  partner_preference_type: "own_religion_only" | "open_to_all" | "specific_religions"
+  partner_religion_ids: array of religion IDs (used when type is specific_religions)
+  partner_caste_preference: "any" | "own_caste_only"
+
+PATCH /api/v1/profile/partner-preferences/
+  Auth: Required (JWT)
+  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preference": "any"|"own_caste_only" }
+  All fields optional (partial update). When partner_preference_type is "specific_religions", partner_religion_ids must contain valid active religion IDs.
+  Response 200: { "success": true, "data": { "partner_preference_type", "partner_religion_ids", "partner_caste_preference" } }
+  Error 400: Invalid or inactive religion id(s) in partner_religion_ids.
+
+--- 4. Personal Details ---
+GET /api/v1/profile/personal/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "marital_status_id", "marital_status", "children_count", "height_cm", "weight_kg", "colour", "blood_group" } }
+  height_cm may be a number (from master) or string (free text e.g. "168 cm").
+
+PATCH /api/v1/profile/personal/
+  Auth: Required (JWT)
+  Body (JSON): { "marital_status_id": int, "children_count": int (≥0), "height_cm": int, "weight_kg": decimal, "colour": string, "blood_group": string }
+  All optional. height_cm stored as free text (e.g. "168 cm"). Response 200: { "success": true, "data": { ... } }
+  Error 400: Invalid marital_status_id.
+
+--- 5. Location Details ---
+GET /api/v1/profile/location/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "country_id", "country", "state_id", "state", "district_id", "district", "city_id", "city", "address" } }
+  *_id and name pairs; names from master (e.g. country, state, city).
+
+PATCH /api/v1/profile/location/
+  Auth: Required (JWT)
+  Body (JSON): { "country_id": int, "state_id": int, "district_id": int, "city_id": int, "address": string }
+  All optional. IDs must exist in master tables. Response 200: { "success": true, "data": { ... } }
+  Error 400: Invalid country_id, state_id, district_id, or city_id.
+
+--- 6. Family Details ---
+GET /api/v1/profile/family/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers", "married_brothers", "sisters", "married_sisters", "about_family" } }
+  Empty object {} if never updated.
+
+PATCH /api/v1/profile/family/
+  Auth: Required (JWT)
+  Body (JSON): { "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers": int (≥0), "married_brothers": int (≥0), "sisters": int (≥0), "married_sisters": int (≥0), "about_family": string }
+  All optional. Response 200: { "success": true, "data": { ... } }
+
+--- 7. Education & Occupation ---
+GET /api/v1/profile/education/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "highest_education_id", "highest_education", "education_subject_id", "education_subject", "employment_status", "occupation_id", "occupation", "annual_income_id", "annual_income" } }
+
+PATCH /api/v1/profile/education/
+  Auth: Required (JWT)
+  Body (JSON): { "highest_education_id": int, "education_subject_id": int, "employment_status": string, "occupation_id": int, "annual_income_id": int }
+  All optional. IDs must exist in master (educations, education-subjects, occupations, income-ranges). Response 200: { "success": true, "data": { ... } }
+  Error 400: Invalid id for any master reference.
+
+--- 8. About Me ---
+GET /api/v1/profile/about/
+  Auth: Required (JWT)
+  Response 200: { "success": true, "data": { "about_me": "string" } }
+  about_me is the saved text (may be empty).
+
+PATCH /api/v1/profile/about/
+  Auth: Required (JWT)
+  Body (JSON): { "about_me": "string" }
+  Response 200: { "success": true, "data": { "about_me": "..." } }
+
+================================================================================
+2a. PROFILE SETTINGS (/api/v1/settings/)
+================================================================================
+All endpoints require JWT: Authorization: Bearer <access_token>.
+Errors: 400 Invalid request, 401 Unauthorized, 404 Settings not found (where applicable).
+
+GET /api/v1/settings/profile/
+  Auth: Required (JWT)
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "name": "string",
+        "matri_id": "string",
+        "profile_photo": "url or null",
+        "location": "string",
+        "plan": "string (e.g. Premium)",
+        "profile_visibility": "all_users | premium_only | hidden",
+        "interest_permission": "all_users | premium_only",
+        "notifications": {
+          "interest_request": true,
+          "chat": true,
+          "profile_views": true,
+          "new_matches": true
+        }
+      }
+    }
+
+PATCH /api/v1/settings/profile-visibility/
+  Auth: Required (JWT)
+  Body (JSON): { "profile_visibility": "all_users | premium_only | hidden" }
+  Response 200: { "success": true, "message": "Profile visibility updated." }
+  Error 400: Invalid profile_visibility value.
+
+PATCH /api/v1/settings/interest-permission/
+  Auth: Required (JWT)
+  Body (JSON): { "interest_permission": "all_users | premium_only" }
+  Response 200: { "success": true, "message": "Interest permission updated." }
+  Error 400: Invalid interest_permission value.
+
+PATCH /api/v1/settings/notifications/
+  Auth: Required (JWT)
+  Body (JSON): {
+    "interest_request": true,
+    "chat": true,
+    "profile_views": false,
+    "new_matches": true
+  }
+  Response 200: { "success": true, "message": "Notification settings updated." }
+
+PATCH /api/v1/settings/account/
+  Auth: Required (JWT)
+  Body (JSON): { "name": "string (optional)", "email": "string (optional)", "phone_number": "string (optional)" }
+  Response 200: { "success": true, "message": "Account details updated." }
+  Error 400: Invalid or duplicate email/phone.
+
+POST /api/v1/settings/change-password/
+  Auth: Required (JWT)
+  Body (JSON): { "current_password": "string", "new_password": "string" }
+  Response 200: { "success": true, "message": "Password changed successfully." }
+  Error 400: Invalid current_password or new_password validation.
+
+--------------------------------------------------------------------------------
+Legacy POST (still supported for onboarding flow)
+--------------------------------------------------------------------------------
+POST /api/v1/profile/location/
+  Auth: Required (JWT)
+  Body (JSON):
+    {
+      "country_id": "int (optional, must exist in master)",
+      "state_id": "int (optional, must exist in master)",
+      "district_id": "int (optional, must exist in master)",
+      "city_id": "int (optional, must exist in master)",
+      "address": "string (optional)"
+    }
+  Response 200: { "success": true, "message": "Location saved." }
+  Error 400: If any provided ID does not exist (e.g. invalid city_id).
+
+---
+
+POST /api/v1/profile/religion/
+  Auth: Required (JWT)
+  Body (JSON): Religion step and partner preference in one request. Matches are filtered using partner preference.
+    {
+      "religion_id": "int (optional, must exist in master_religion)",
+      "caste_id": "int (optional, must exist in master_caste)",
+      "mother_tongue_id": "int (optional, must exist in master_mother_tongue)",
+      "partner_religion_preference": "string (optional, legacy)",
+      "partner_preference_type": "own_religion_only | open_to_all | specific_religions (optional)",
+      "partner_religion_ids": [int, ...] (optional; required when partner_preference_type is specific_religions; valid active religion IDs)",
+      "partner_caste_preference": "any | own_caste_only (optional)"
+    }
+  Response 200: { "success": true, "message": "Religion saved." }
+  Error 400: Validation error if any ID does not exist or is inactive, or invalid partner_religion_ids.
+
+---
+
+POST /api/v1/profile/personal/
+  Auth: Required (JWT)
+  Body (JSON):
+    {
+      "marital_status": "string (optional, one of master_marital_status names e.g. Never Married, Separated, Widowed, Divorced; matched by name in master, case-insensitive)",
+      "has_children": "boolean (optional, required when marital_status is Separated, Widowed or Divorced)",
+      "number_of_children": "integer (optional, required when has_children is true, ≥ 0)",
+      "height": "integer (optional, height in cm, e.g. 175)",
+      "weight": "decimal (optional, e.g. 65.5)",
+      "complexion": "string (optional, one of: Fair, Wheatish, Dark, Very Fair)"
+    }
+  Validation rules:
+    marital_status:
+      - Optional. When provided, must match an active record in master_marital_status by name (case-insensitive).
+      - If marital_status is "Separated", "Widowed" or "Divorced", has_children becomes required.
+    has_children:
+      - Optional normally.
+      - When marital_status is "Separated", "Widowed" or "Divorced" and has_children is missing or null → 400 with message "Please specify whether you have children."
+    number_of_children:
+      - Required when has_children is true.
+      - Must be an integer ≥ 0.
+    height:
+      - Optional integer in centimeters; stored as height in cm for the profile (e.g. 175).
+    weight:
+      - Optional decimal value (e.g. 65.0, 65.5).
+    complexion:
+      - Optional.
+      - Must be one of: "Fair", "Wheatish", "Dark", "Very Fair" (case-sensitive).
+
+  Example valid request:
+    {
+      "marital_status": "Separated",
+      "has_children": true,
+      "number_of_children": 2,
+      "height": 175,
+      "weight": 65.5,
+      "complexion": "Wheatish"
+    }
+
+  Example invalid request (missing has_children for Separated):
+    {
+      "marital_status": "Separated"
+    }
+
+  Example invalid response 400:
+    {
+      "success": false,
+      "error": {
+        "code": 400,
+        "message": "Please specify whether you have children."
+      }
+    }
+
+  Success response 200:
+    {
+      "success": true,
+      "message": "Personal details saved successfully."
+    }
+
+  Error responses:
+    400 → Validation error (e.g. invalid marital_status, missing has_children for Separated/Widowed/Divorced, missing number_of_children when has_children is true, invalid complexion value).
+    401 → Unauthorized (missing or invalid JWT).
+
+---
+
+POST /api/v1/profile/education/
+  Auth: Required (JWT)
+  Body (JSON):
+    {
+      "highest_education": "string (optional; use value from static list, e.g. B.Tech., M.Sc.)",
+      "education_subject": "string (optional, e.g. Computer Science)",
+      "employment": "string (optional employment type, e.g. Employed, Business, Student)",
+      "occupation": "string (optional, e.g. Software Engineer; name must match an active occupation in master)",
+      "annual_income": "string (optional, e.g. 5-10 Lakh)"
+    }
+  Highest education: static list. Get options (with live search): GET /api/v1/master/educations/?search=tech
+  Validation rules:
+    highest_education:
+      - Optional. When provided, must match an active record in master_educations by name (case-insensitive; dots at the end are ignored, so "B.Tech" matches "B.Tech.").
+    education_subject:
+      - Optional. When provided, must match an active record in master_education_subjects by name (case-insensitive).
+    employment:
+      - Optional free-text string describing employment type (e.g. "Employed", "Business", "Student"). Stored as employment_status on the profile.
+    occupation:
+      - Optional. When provided, must match an active record in master_occupations by name (case-insensitive).
+    annual_income:
+      - Optional. When provided, must match an active record in master_income_ranges by name (case-insensitive).
+  Response 200: { "success": true, "message": "Education saved." }
+  Error 400: If any value does not match an active master record.
+
+---
+
+GET /api/v1/profile/generate-about/
+  Auth: Required (JWT)
+  Description: Generate a professional matrimony-style "About Me" paragraph from the logged-in user's profile (location, education, occupation, religion, mother tongue, marital status, height). Missing fields are skipped. Returns one primary paragraph and three text suggestions (variations) for better UX.
+  Example response 200:
+    {
+      "success": true,
+      "data": {
+        "about_me": "I am a family-oriented person currently based in Kakinada, Andhra Pradesh. I have completed my B.Tech. and work as a Software Engineer. I belong to a Hindu family. My mother tongue is Malayalam. I value honesty and strong family relationships and look forward to finding a caring life partner.",
+        "suggestions": [
+          "I am a family-oriented person currently based in Kakinada, Andhra Pradesh. I have completed my B.Tech. and work as a Software Engineer. ...",
+          "I have completed my B.Tech. I work as a Software Engineer. I am currently based in Kakinada, Andhra Pradesh. ...",
+          "Based in Kakinada, Andhra Pradesh, I am a family-oriented person. I belong to a Hindu family. ..."
+        ]
+      }
+    }
+  Fields used: user location (city, state), religion, mother_tongue, marital_status, highest_education, occupation, height (text or master).
+
+---
+
+POST /api/v1/profile/about/
+  Auth: Required (JWT)
+  Body (JSON): { "about_me": "string (required, can be empty)" }
+  Response 200: { "success": true, "message": "About me saved." }
+
+---
+
+POST /api/v1/profile/photos/
+  Auth: Required (JWT)
+  Content-Type: multipart/form-data (or application/json for URLs if supported)
+  Body (form): profile_photo, full_photo, selfie_photo, family_photo, aadhaar_front, aadhaar_back (each optional file)
+  Description: Upload images; stored in AWS S3 or MinIO when configured, else local MEDIA. Aadhaar images stored under profiles/aadhaar/%Y/%m/.
+  Response 200: { "success": true, "message": "Photos saved." }
+
+---
+
+POST /api/v1/profile/complete/
+  Auth: Required (JWT)
+  Description: Mark is_registration_profile_completed = true.
+  Response 200: { "success": true, "message": "Profile marked as complete.", "data": { "is_registration_profile_completed": true } }
+
+================================================================================
+3. MASTER DROPDOWNS - LIVE SEARCH (/api/v1/master/)
+================================================================================
+All master list endpoints support optional ?search= for live search (except heights, marital-status, income-ranges which are fixed lists).
+Pagination: ?page=1&page_size=20
+Auth: None (public dropdowns)
+
+GET /api/v1/master/countries/?search=
+  Response 200: { "count": N, "next": "...", "previous": "...", "results": [ { "id", "name", "code" }, ... ] }
+
+GET /api/v1/master/states/?country_id=&search=
+  Response 200: { "count", "results": [ { "id", "name", "code", "country" }, ... ] }
+
+GET /api/v1/master/districts/?state_id=&search=
+  Response 200: { "count", "results": [ { "id", "name", "state" }, ... ] }
+
+GET /api/v1/master/cities/?district_id=&search=
+  Response 200: { "count", "results": [ { "id", "name", "district" }, ... ] }
+
+GET /api/v1/master/religions/?search=
+  Response 200: { "count", "results": [ { "id", "name", "is_active" }, ... ] }
+
+GET /api/v1/master/mother-tongues/?search=
+  Response 200: { "count", "results": [ { "id", "name", "is_active" }, ... ] }
+
+--------------------------------------------------------------------------------
+3a. MASTER CRUD - Religion, Caste, Mother Tongue (Admin panel)
+--------------------------------------------------------------------------------
+Full CRUD via ViewSets. Read (GET list, GET detail): allowed for all.
+Create, Update, Delete: Admin only (role=admin).
+Search: ?search= for name. Caste filter: ?religion_id=1
+
+--- Religion ---
+GET    /api/v1/master/religions/              List (paginated). ?search=hin
+POST   /api/v1/master/religions/              Create (Admin). Body: { "name": "Hinduism", "is_active": true }
+GET    /api/v1/master/religions/{id}/         Retrieve one
+PUT    /api/v1/master/religions/{id}/        Update (Admin). Body: { "name", "is_active" }
+DELETE /api/v1/master/religions/{id}/        Delete (Admin)
+
+Response (list/detail): { "id", "name", "is_active" }
+
+--- Caste ---
+GET    /api/v1/master/castes/                 List. ?religion_id=1&search=
+POST   /api/v1/master/castes/                Create (Admin). Body: { "name": "Ezhava", "religion": 1, "is_active": true }
+GET    /api/v1/master/castes/{id}/            Retrieve one
+PUT    /api/v1/master/castes/{id}/           Update (Admin)
+DELETE /api/v1/master/castes/{id}/           Delete (Admin)
+
+Response (list/detail): { "id", "name", "is_active", "religion" }  (religion = id)
+
+--- Mother Tongue ---
+GET    /api/v1/master/mother-tongues/        List. ?search=mal
+POST   /api/v1/master/mother-tongues/        Create (Admin). Body: { "name": "Malayalam", "is_active": true }
+GET    /api/v1/master/mother-tongues/{id}/   Retrieve one
+PUT    /api/v1/master/mother-tongues/{id}/   Update (Admin)
+DELETE /api/v1/master/mother-tongues/{id}/   Delete (Admin)
+
+Response (list/detail): { "id", "name", "is_active" }
+--------------------------------------------------------------------------------
+
+GET /api/v1/master/heights/
+  Response 200: { "count", "results": [ { "id", "value_cm", "display_label" }, ... ] }
+
+GET /api/v1/master/marital-status/
+  Response 200: { "count", "results": [ { "id", "name" }, ... ] }
+
+GET /api/v1/master/income-ranges/
+  Response 200: { "count", "results": [ { "id", "name", "min_value", "max_value" }, ... ] }
+
+GET /api/v1/master/educations/?search=
+  Highest education: static list (seeded). Live search: ?search=tech returns matching names.
+  Response 200: { "count", "results": [ { "id", "name", "is_active" }, ... ] }
+
+GET /api/v1/master/education-subjects/?search=
+  Response 200: { "count", "results": [ { "id", "name" }, ... ] }
+
+GET /api/v1/master/occupations/?search=
+  Response 200: { "count", "results": [ { "id", "name" }, ... ] }
+
+================================================================================
+3b. PLANS & SUBSCRIPTIONS (/api/v1/plans/, /api/v1/admin/plans/, /api/v1/my/plan/)
+================================================================================
+Auth: Admin APIs require Admin only (role=admin). User APIs require JWT.
+
+--- Admin Plan CRUD APIs ---
+Base: /api/v1/admin/plans/
+All require: Authorization: Bearer <access_token>, user.role = admin.
+
+CREATE PLAN
+  POST /api/v1/admin/plans/
+  Body (JSON):
+    {
+      "name": "Gold",
+      "price": 1499,
+      "duration_days": 180,
+      "profile_view_limit": 30,
+      "interest_limit": 30,
+      "chat_limit": 30,
+      "horoscope_match_limit": 30,
+      "contact_view_limit": 30,
+      "description": "Most popular plan",
+      "is_active": true
+    }
+  Response 201: { "id", "name", "price", "duration_days", "profile_view_limit", "interest_limit", "chat_limit", "horoscope_match_limit", "contact_view_limit", "description", "is_active", "created_at" }
+  Error 403: Not admin.
+
+UPDATE PLAN
+  PATCH /api/v1/admin/plans/{id}/
+  Body (JSON): any subset of plan fields.
+  Response 200: updated plan object.
+  Error 403: Not admin. Error 404: Plan not found.
+
+DELETE PLAN
+  DELETE /api/v1/admin/plans/{id}/
+  Response 204: No content.
+  Error 403: Not admin. Error 404: Plan not found.
+
+LIST PLANS (ADMIN)
+  GET /api/v1/admin/plans/
+  Returns all plans (active and inactive), ordered by name.
+  Response 200: List of plan objects (paginated if configured).
+
+--- User Plan APIs ---
+
+LIST AVAILABLE PLANS
+  GET /api/v1/plans/
+  Auth: Required (JWT). Returns active plans with service_charge and total_price from user profile (gender). Male: service 15000, remaining 14501; Female: service 10000, remaining 9501; Other: 5000.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "gender": "M",
+        "plans": [
+          {
+            "id": 1,
+            "name": "Gold",
+            "price": 1499,
+            "service_charge": 15000,
+            "total_price": 16499,
+            "first_payment": 499,
+            "service_charge_remaining": 14501,
+            "duration_days": 180,
+            "profile_view_limit": 30,
+            "interest_limit": 30,
+            "chat_limit": 30,
+            "horoscope_match_limit": 30,
+            "contact_view_limit": 30,
+            "description": "Most popular plan"
+          }
+        ]
+      }
+    }
+
+PLAN PURCHASE API (first payment: 499)
+  POST /api/v1/plans/purchase/
+  Auth: Required (JWT).
+  Body (JSON):
+    {
+      "plan_id": 3,
+      "payment_method": "razorpay"
+    }
+  payment_method: one of "razorpay", "stripe", "upi", "manual".
+  Backend: First payment is 499 only. Gets user gender, applies service charge (Male 15000, Female 1000, Other 5000). Creates Transaction(amount=499), creates/updates UserPlan with service_charge_paid=499 and service_charge_remaining=14501 (for Male). Plan is active; admin may contact customer. If service is required, customer pays remaining via Pay Remaining Service API.
+  Response 201:
+    {
+      "success": true,
+      "message": "Plan purchased successfully. Pay 499 now. If service required, admin will contact you for remaining payment.",
+      "data": {
+        "transaction_id": 1,
+        "plan_name": "Gold",
+        "valid_until": "2026-09-10",
+        "amount_paid": 499,
+        "total_amount": 16499,
+        "service_charge_remaining": 14501
+      }
+    }
+  Error 400: Invalid plan_id or payment_method. Error 401: Unauthorized.
+
+PAY REMAINING SERVICE (when admin confirms service required: 14501)
+  POST /api/v1/plans/pay-remaining-service/
+  Auth: Required (JWT).
+  Body (JSON):
+    {
+      "payment_method": "razorpay"
+    }
+  Backend: User must have an active UserPlan. Pays remaining service charge (e.g. 14501 = 15000 - 499). Creates Transaction for remaining amount, updates UserPlan.service_charge_paid to full service charge.
+  Response 201:
+    {
+      "success": true,
+      "message": "Remaining service charge paid successfully.",
+      "data": {
+        "transaction_id": 2,
+        "amount_paid": 14501,
+        "service_charge_remaining": 0
+      }
+    }
+  Response 200 (nothing to pay): { "success": true, "message": "No remaining service charge to pay.", "data": { "amount_paid": 0, "service_charge_remaining": 0 } }
+  Error 404: No active plan. Error 401: Unauthorized.
+
+MY PLAN DETAILS
+  GET /api/v1/my/plan/
+  Auth: Required (JWT).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "is_plan_active": true,
+        "plan_name": "Gold",
+        "valid_until": "2026-01-10",
+        "profile_views_remaining": 20,
+        "interests_remaining": 15,
+        "chat_remaining": 10,
+        "contact_view_remaining": 12,
+        "horoscope_remaining": 8,
+        "service_charge_remaining": 14501,
+        "service_charge_paid": 499
+      }
+    }
+  When no active plan: is_plan_active false, plan_name null, valid_until null, *_remaining 0, service_charge_remaining 0, service_charge_paid 0.
+  Error 403 (plan expired): { "success": false, "error": { "code": 403, "message": "Your plan expired" } } (returned by endpoints that require an active plan, e.g. send interest).
+
+--- Plan limit service ---
+  PlanLimitService provides: can_view_profile(user), can_send_interest(user), can_chat(user), can_view_contact(user).
+  Each action (view profile, send interest, start chat, view contact) decrements the corresponding usage counter when performed.
+
+--- Transaction model (payment integration ready) ---
+  Transaction stores: user, plan, amount, service_charge, total_amount, payment_method, payment_status, transaction_id, created_at.
+  payment_method: razorpay | stripe | upi | manual (admin approval).
+  payment_status: pending | success | failed | refunded.
+  Transaction is created on purchase; can be extended later for Razorpay/Stripe webhook callbacks to update payment_status and transaction_id.
+
+================================================================================
+4. MY MATCHES & PLANS (/api/v1/matches/, /api/v1/profiles/, /api/v1/interests/, /api/v1/chat/, /api/v1/my/)
+================================================================================
+All endpoints require: Authorization: Bearer <access_token>
+
+Profile visibility: Male → Female only; Female → Male only; Other → both. Own profile never shown.
+
+--- Match List API ---
+GET /api/v1/matches/
+  Matches are automatically filtered by the logged-in user's partner religion (and optionally caste) preference:
+  - own_religion_only: only same religion (and same caste if partner_caste_preference is own_caste_only)
+  - open_to_all: no religion/caste filter from preference
+  - specific_religions: only profiles whose religion is in partner_religion_ids
+  Query params religion_id and caste_id further narrow results (intersection with preference).
+
+  Query parameters (all optional):
+    page          (default 1)
+    limit         (default 10, max 50)
+    search        (name, matri_id, education, occupation)
+    age_min       (integer)
+    age_max       (integer)
+    height_min    (integer, cm)
+    height_max    (integer, cm)
+    religion_id   (integer; narrows in addition to stored preference)
+    caste_id      (integer; narrows in addition to stored preference)
+    education_id  (integer)
+    occupation_id (integer)
+    marital_status (integer, marital_status id)
+    profile_with_photo (1, true, yes = only profiles with photo)
+    sort_by       (newest | most_relevant | best_match; default newest)
+
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total_profiles": 1342,
+        "page": 1,
+        "limit": 10,
+        "profiles": [
+          {
+            "matri_id": "AM100012",
+            "name": "Priya Sharma",
+            "age": 26,
+            "height": 155,
+            "education": "MBA",
+            "occupation": "Software Engineer",
+            "profile_photo": "https://cdn.aiswarya/profile/1.jpg",
+            "is_online": true,
+            "last_seen": "10 minutes ago",
+            "is_new": true,
+            "match_percentage": 95,
+            "can_view_details": true,
+            "can_send_interest": true,
+            "can_chat": false
+          }
+        ]
+      }
+    }
+
+  Match list does NOT expose: phone, email, family details, contact number.
+
+--- Filter Options API ---
+GET /api/v1/matches/filters/
+  Returns all dropdown values for match filters.
+
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "religions": [ { "id", "name" }, ... ],
+        "castes": [ { "id", "name", "religion_id" }, ... ],
+        "educations": [ { "id", "name" }, ... ],
+        "occupations": [ { "id", "name" }, ... ],
+        "marital_status": [ { "id", "name" }, ... ],
+        "heights": [ { "id", "value_cm", "display_label" }, ... ]
+      }
+    }
+
+--- Profile Preview API (popup) ---
+GET /api/v1/profiles/{matri_id}/preview/
+  Auth: Required (JWT)
+  Purpose: Return limited profile information for the matches popup modal. DOES NOT decrement profile view limits.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "matri_id": "AM100012",
+        "name": "Priya Sharma",
+        "age": 26,
+        "location": "Mumbai, Maharashtra",
+        "religion": "Hindu",
+        "caste": "Menon",
+        "education": "MBA",
+        "occupation": "Software Engineer",
+        "annual_income": "5-8 Lakhs",
+        "marital_status": "Never Married",
+        "height": "5'4\"",
+        "mother_tongue": "Malayalam",
+        "profile_photo": "https://cdn.site/profile.jpg",
+        "about_me": "MBA graduate working in Mumbai.",
+        "family_background": "Middle class family from Kerala.",
+        "contact_locked": true
+      }
+    }
+  Error 400: Cannot view own profile here.
+  Error 404: Profile not found.
+
+--- Full Profile API (by matri_id) ---
+GET /api/v1/profiles/{matri_id}/full/
+  Auth: Required (JWT)
+  Purpose: Return full profile details for a given matri_id.
+  Logic:
+    - If user is viewing their own profile: 400 "Cannot view own profile here."
+    - Call PlanLimitService.can_view_profile(user) to check profile view limit.
+    - If can_view:
+        - Build full profile (includes contact and family).
+        - Decrement profile view count via PlanLimitService.consume_profile_view(user).
+        - Create ProfileView record (viewer, viewed_user).
+        - Refresh plan info so profile_views_remaining reflects the decrement.
+    - If cannot view:
+        - Return restricted profile (no contact, no family_details).
+
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "profile": { ... full or limited profile ... },
+        "plan": {
+          "name": "Gold",
+          "profile_views_remaining": 14,
+          "interests_remaining": 10,
+          "chat_remaining": 5
+        }
+      }
+    }
+  Error 404: Profile not found.
+  Error 400: Cannot view own profile here.
+
+  (For backward compatibility, GET /api/v1/profiles/{matri_id}/ is also mapped to the same logic.)
+
+--- Interest APIs ---
+
+SEND INTEREST
+POST /api/v1/interests/send/
+  Auth: Required (JWT)
+  Body (JSON): { "receiver_matri_id": "AM100023" }
+  Logic:
+    - Find receiver by matri_id.
+    - Prevent sending interest to self.
+    - Prevent duplicate interest (idempotent).
+    - Require active plan and check interest limit via PlanLimitService.can_send_interest().
+    - Create Interest record and decrement interest usage.
+  Success 200:
+    { "success": true, "message": "Interest sent successfully." }
+  Success 200 (already sent):
+    { "success": true, "message": "Interest already sent." }
+  Error 400: receiver_matri_id missing or invalid.
+  Error 403: No active plan / plan expired / interest limit reached.
+  Error 404: Profile not found.
+
+MY INTERESTS (COMBINED)
+GET /api/v1/interests/my/
+  Auth: Required (JWT)
+  Description: Return both sent and received interests for current user (no pagination).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "sent": {
+          "total": N,
+          "results": [ <interest_card>, ... ]
+        },
+        "received": {
+          "total": M,
+          "results": [ <interest_card>, ... ]
+        }
+      }
+    }
+
+SENT INTERESTS
+GET /api/v1/interests/sent/
+  Auth: Required (JWT)
+  Query params:
+    page  (default 1)
+    limit (default 10, max 50)
+  Returns only interests sent by current user, paginated.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total": N,
+        "results": [ <interest_card>, ... ]
+      }
+    }
+
+RECEIVED INTERESTS
+GET /api/v1/interests/received/
+  Auth: Required (JWT)
+  Same pagination and response format as /sent/, but for interests where current user is receiver.
+
+RESPOND TO INTEREST
+POST /api/v1/interests/respond/
+  Auth: Required (JWT)
+  Body (JSON): { "interest_id": 15, "action": "accept" | "reject" }
+  Logic:
+    - Find Interest by id.
+    - Ensure current user is receiver; else 403.
+    - Update status to accepted or rejected.
+  Success 200:
+    { "success": true, "message": "Interest accepted." }
+    or
+    { "success": true, "message": "Interest rejected." }
+  Error 400: Invalid request (missing interest_id/action or invalid action).
+  Error 403: Permission denied (not receiver).
+  Error 404: Interest not found.
+
+CANCEL SENT INTEREST
+POST /api/v1/interests/cancel/
+  Auth: Required (JWT)
+  Body (JSON): { "interest_id": 15 }
+  Logic:
+    - Find Interest by id.
+    - Ensure current user is sender; else 403.
+    - Status must be pending; otherwise 400.
+    - Update status to cancelled.
+  Success 200:
+    { "success": true, "message": "Interest cancelled successfully." }
+  Error 400: Invalid request or status not pending.
+  Error 403: Permission denied (not sender).
+  Error 404: Interest not found.
+
+Interest card fields (for all list responses):
+  {
+    "interest_id": 15,
+    "matri_id": "AM100006",
+    "name": "Amalnath C K",
+    "age": 28,
+    "location": "Kochi, Kerala",
+    "education": "MBA",
+    "occupation": "Software Engineer",
+    "profile_photo": "https://cdn.site/profile/6.jpg",
+    "status": "pending",
+    "created_at": "2026-03-13T08:08:59Z"
+  }
+
+--- Chat List API ---
+GET /api/v1/chat/list/
+  Auth: Required (JWT)
+  Description: Returns all conversations for the current user (chat list for sidebar).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "conversations": [
+          {
+            "conversation_id": 1,
+            "other_user": {
+              "matri_id": "AM100006",
+              "name": "Amalnath C K",
+              "profile_photo": "https://cdn.site/profile/6.jpg"
+            },
+            "last_message": {
+              "preview": "Hi Anna, How are you?",
+              "timestamp": "2026-03-13T21:00:00Z"
+            },
+            "unread_count": 3,
+            "updated_at": "2026-03-13T21:00:00Z"
+          }
+        ]
+      }
+    }
+
+--- Chat Messages API ---
+GET /api/v1/chat/messages/{conversation_id}/
+  Auth: Required (JWT)
+  Query params: page (default 1), limit (default 20, max 100)
+  Description: Returns paginated messages for a conversation. User must be a participant.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "conversation_id": 1,
+        "total": 45,
+        "page": 1,
+        "limit": 20,
+        "messages": [
+          {
+            "id": 101,
+            "sender_id": "uuid",
+            "sender_matri_id": "AM100001",
+            "sender_name": "Anna",
+            "text": "Hi, how are you?",
+            "created_at": "2026-03-13T20:55:00Z",
+            "read_at": null
+          }
+        ]
+      }
+    }
+  Error 403: Not a participant in this conversation.
+  Error 404: Conversation not found.
+
+--- Chat Permission API ---
+GET /api/v1/chat/permission/{matri_id}/
+  Returns whether the current user can chat (plan allows and limit remaining).
+
+  Response 200: { "success": true, "data": { "can_chat": true } }
+  Error 404: Profile not found.
+
+--- Contact Unlock API ---
+POST /api/v1/contact/unlock/
+  Auth: Required (JWT)
+  Body (JSON): { "matri_id": "AM100012" }
+  Logic:
+    - If matri_id is missing: 400 "matri_id is required."
+    - If plan expired or no active plan: 403 with standard "Your plan expired" response.
+    - If profile not found: 404 "Profile not found."
+    - If user tries to unlock their own contact: 400 "Cannot view your own contact details."
+    - Call PlanLimitService.can_view_contact(user):
+        - If False: 403 "Upgrade plan to view contact".
+        - If True: decrement via PlanLimitService.consume_contact_view(user) and return phone/email.
+  Success 200:
+    {
+      "success": true,
+      "data": {
+        "phone": "+91 9876543210",
+        "email": "priya@example.com"
+      }
+    }
+
+--- Chat Start API ---
+POST /api/v1/chat/start/
+  Auth: Required (JWT)
+  Body (JSON): { "matri_id": "AM100012" }
+  Logic:
+    - If matri_id is missing: 400 "matri_id is required."
+    - If plan expired or no active plan: 403 with standard "Your plan expired" response.
+    - If profile not found: 404 "Profile not found."
+    - If user tries to chat with themselves: 400 "Cannot chat with yourself."
+    - Call PlanLimitService.can_chat(user):
+        - If False: 403 "Upgrade plan to chat".
+        - If True:
+            - Create or get a Conversation between the two users (one row per pair).
+            - If conversation was newly created, decrement chat_used via PlanLimitService.consume_chat(user).
+            - Return conversation_id and message.
+  Success 200:
+    {
+      "success": true,
+      "data": {
+        "conversation_id": 324,
+        "message": "Chat started successfully"
+      }
+    }
+
+--- User Plan Details (My Plan) ---
+  See section 3b "MY PLAN DETAILS" for full request/response. Response includes profile_views_remaining, interests_remaining, chat_remaining, contact_view_remaining, horoscope_remaining.
+  Error 403 (when plan required): { "success": false, "error": { "code": 403, "message": "Your plan expired" } }
+
+--- Plan limit logic ---
+  PlanLimitService: can_view_profile, can_send_interest, can_chat, can_view_contact. Each action decrements the corresponding counter (profile_views_used, interests_used, chat_used, contact_views_used).
+  View full profile → decrement profile_views_used; create ProfileView record.
+  Send interest → decrement interests_used.
+  Chat (initiation) → decrement chat_used (call when user starts chat; not done by permission API).
+  View contact → decrement contact_views_used.
+
+--------------------------------------------------------------------------------
+WebSocket — Real-time chat (Django Channels)
+--------------------------------------------------------------------------------
+  URL: ws://<host>/ws/chat/<conversation_id>/
+  Authentication: JWT passed as query parameter: ?token=<access_token>
+  Example: ws://127.0.0.1:8000/ws/chat/1/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  The user must be a participant in the conversation; otherwise the connection is rejected (403).
+
+  After connecting, send JSON text frames to post a message:
+    { "message": "Hello!" }
+  or
+    { "text": "Hello!" }
+
+  Incoming messages (broadcast to both participants) have the form:
+    {
+      "message_id": 101,
+      "sender_id": "uuid",
+      "sender_matri_id": "AM100001",
+      "sender_name": "Anna",
+      "text": "Hello!",
+      "created_at": "2026-03-13T20:55:00Z"
+    }
+
+  Messages are persisted to the database and conversation.updated_at is updated on each new message.
+  Backend uses Redis channel layer (channels_redis) for broadcasting between workers.
+
+================================================================================
+4a. WISHLIST APIs (/api/v1/wishlist/)
+================================================================================
+All endpoints require: Authorization: Bearer <access_token>
+
+Wishlist stores profiles that the logged-in user has favorited (heart icon on matches page).
+
+--- TOGGLE WISHLIST ---
+POST /api/v1/wishlist/toggle/
+  Auth: Required (JWT)
+  Body (JSON):
+    { "matri_id": "AM100012" }
+  Logic:
+    - Find target profile by matri_id.
+    - If user tries to wishlist their own profile → 403.
+    - If profile already in wishlist → remove it.
+    - Otherwise add it.
+  Success 200 (added):
+    {
+      "success": true,
+      "data": { "is_wishlisted": true }
+    }
+  Success 200 (removed):
+    {
+      "success": true,
+      "data": { "is_wishlisted": false }
+    }
+  Error 400: matri_id missing.
+  Error 403: Cannot wishlist own profile.
+  Error 404: Profile not found.
+
+--- LIST USER WISHLIST ---
+GET /api/v1/wishlist/
+  Auth: Required (JWT)
+  Query params:
+    page  (default 1)
+    limit (default 10, max 50)
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total": 3,
+        "page": 1,
+        "limit": 10,
+        "profiles": [
+          {
+            "matri_id": "AM100012",
+            "name": "Priya Sharma",
+            "age": 26,
+            "location": "Mumbai, Maharashtra",
+            "education": "MBA",
+            "occupation": "Software Engineer",
+            "profile_photo": "https://cdn.site/profile/12.jpg",
+            "match_percentage": 95,
+            "is_online": true,
+            "last_seen": "10 minutes ago"
+          }
+        ]
+      }
+    }
+
+--- REMOVE FROM WISHLIST ---
+POST /api/v1/wishlist/remove/
+  Auth: Required (JWT)
+  Body (JSON):
+    { "matri_id": "AM100012" }
+  Logic:
+    - If profile exists in wishlist → remove it.
+    - If not present, operation is idempotent (still returns success).
+  Success 200:
+    { "success": true, "message": "Profile removed from wishlist." }
+  Error 400: matri_id missing.
+  Error 404: Profile not found.
+
+================================================================================
+ERROR RESPONSE FORMAT (DRF custom handler)
+================================================================================
+All error responses:
+{
+  "success": false,
+  "error": {
+    "code": 400 | 401 | 403 | 404 | 429 | 500,
+    "message": "Human-readable message",
+    "details": { ... validation or extra detail ... }
+  }
+}
+  400: Bad request (validation, invalid IDs, etc.)
+  401: Unauthorized (missing or invalid JWT)
+  403: Forbidden (e.g. admin-only action)
+  404: Not found
+  429: Too many requests (e.g. OTP rate limit)
+  500: Server error
+
+================================================================================
+ROLES & PERMISSIONS
+================================================================================
+User roles: Admin, Branch Manager (branch_manager), Staff, User.
+Branch-level data isolation: Staff can only access their branch data (enforced via core.permissions.BranchScoped).
+Permission classes: IsAdmin, IsBranchManager, IsStaff, IsUser, IsStaffOrAdmin (see core.permissions).
+
+================================================================================
+END OF API DOCUMENTATION
+================================================================================
