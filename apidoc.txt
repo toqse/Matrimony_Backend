@@ -35,9 +35,10 @@ POST /api/v1/auth/register/
     {
       "name": "string (required)",
       "phone_number": "string (required, with country code, e.g. +919496954772)",
-      "email": "string (required, valid email)",
+      "email": "string (optional, valid email)",
       "dob": "string (required, DD-MM-YYYY, e.g. 16-12-1990)",
-      "gender": "M | F | O (required)"
+      "gender": "M | F | O (required)",
+      "profile_for": "string (optional) — Who you are registering for: myself | son | daughter | brother | sister | friend | relative"
     }
 
   Validation rules:
@@ -184,6 +185,170 @@ POST /api/v1/auth/password/confirm/
   Auth: None
   Body (JSON): { "email" | "mobile", "otp", "new_password" (min 8 chars) }
   Response 200: { "success": true, "message": "Password updated." }
+
+================================================================================
+1b. DASHBOARD APIs (/api/v1/dashboard/, /api/v1/profile/, /api/v1/profiles/, /api/v1/interests/, /api/v1/plans/)
+================================================================================
+All Dashboard APIs require JWT authentication. Header: Authorization: Bearer <access_token>
+Error 401: Unauthorized if token missing or invalid.
+Error 403: Plan required (for send interest when limit reached).
+Error 404: Profile not found.
+
+--- Dashboard Summary ---
+GET /api/v1/dashboard/summary/
+  Returns summary stats for dashboard header.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "matri_id": "AM100014",
+        "profile_completion": 75,
+        "location": "Kerala",
+        "profile_views": 24,
+        "interests_received": 8,
+        "interests_sent": 0,
+        "new_matches": 12
+      }
+    }
+
+--- New Matches ---
+GET /api/v1/dashboard/new-matches/
+  Query params: limit (default 4, max 20)
+  Response 200:
+    {
+      "success": true,
+      "data": [
+        {
+          "matri_id": "AM100012",
+          "name": "Priya Sharma",
+          "age": 26,
+          "location": "Mumbai",
+          "profile_photo": "https://cdn.site/p1.jpg",
+          "match_percentage": 95,
+          "is_premium": true,
+          "is_new": true
+        }
+      ]
+    }
+
+--- Suggested Profiles ---
+GET /api/v1/dashboard/suggestions/
+  Suggest profiles based on partner preference, location, age range, education.
+  Query params: limit (default 8, max 50)
+  Response 200:
+    {
+      "success": true,
+      "data": [
+        {
+          "matri_id": "AM100021",
+          "name": "Sneha Patel",
+          "age": 27,
+          "location": "Ahmedabad",
+          "education": "B.Com",
+          "occupation": "CA",
+          "height": "5'6\"",
+          "religion": "Hindu",
+          "profile_photo": "https://cdn.site/p2.jpg",
+          "match_percentage": 92,
+          "is_online": true,
+          "is_verified": true,
+          "is_premium": true
+        }
+      ]
+    }
+
+--- Today's Picks ---
+GET /api/v1/dashboard/today-picks/
+  Returns curated profiles for today (recent profiles with photos).
+  Response 200:
+    {
+      "success": true,
+      "data": [
+        {
+          "matri_id": "AM100031",
+          "name": "Kavya Menon",
+          "age": 25,
+          "occupation": "Architect",
+          "profile_photo": "https://cdn.site/p3.jpg"
+        }
+      ]
+    }
+
+--- Profile Completion Status ---
+GET /api/v1/profile/completion/
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "completion_percentage": 75,
+        "steps_remaining": ["Upload photos", "Add partner preference"]
+      }
+    }
+
+--- Send Interest ---
+POST /api/v1/interests/send/
+  Body (JSON): { "receiver_matri_id": "AM100021" }
+  Response 200: { "success": true, "message": "Interest sent successfully" }
+  Error 400: Invalid request (missing receiver_matri_id, cannot send to self).
+  Error 403: Plan required or interest limit reached.
+  Error 404: Profile not found.
+
+--- Profile Preview ---
+GET /api/v1/profiles/{matri_id}/preview/
+  Used when clicking "View profile" on dashboard. Does NOT decrement profile view limits.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "matri_id": "AM100021",
+        "name": "Sneha Patel",
+        "age": 27,
+        "location": "Ahmedabad",
+        "education": "B.Com",
+        "occupation": "CA",
+        "height": "5'6\"",
+        "religion": "Hindu",
+        "about_me": "...",
+        "profile_photo": "https://cdn.site/p2.jpg"
+      }
+    }
+  Error 400: Cannot view own profile.
+  Error 404: Profile not found.
+
+--- Profile Views Count ---
+GET /api/v1/profile/views/
+  Response 200: { "success": true, "data": { "total_views": 24 } }
+
+--- User Basic Info (Sidebar) ---
+GET /api/v1/profile/basic/
+  Returns name, profile_photo, location, matri_id (and full basic details).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "name": "User Name",
+        "profile_photo": "https://cdn.site/me.jpg",
+        "location": "Kerala",
+        "matri_id": "AM100014",
+        "gender": "male",
+        "dob": "1990-12-16",
+        "email": "user@example.com",
+        "phone": "+919496954772"
+      }
+    }
+
+--- Quick Actions ---
+Upload Photos: POST /api/v1/profile/photos/
+  Content-Type: multipart/form-data
+  Body (form): profile_photo, full_photo, selfie_photo, family_photo (each optional file)
+
+Set Partner Preferences: POST /api/v1/profile/partner-preference/ or PATCH /api/v1/profile/partner-preferences/
+  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preference": "any"|"own_caste_only" }
+
+--- Plan Upgrade ---
+GET /api/v1/plans/
+  Returns active plans with service_charge and total_price. Used for Upgrade button.
+  Response 200: { "success": true, "data": { "plans": [...], "gender": "M" } }
 
 ================================================================================
 2. PROFILE (/api/v1/profile/)
@@ -742,7 +907,7 @@ LIST PLANS (ADMIN)
 
 LIST AVAILABLE PLANS
   GET /api/v1/plans/
-  Auth: Required (JWT). Returns active plans with service_charge and total_price from user profile (gender). Male: service 15000, remaining 14501; Female: service 10000, remaining 9501; Other: 5000.
+  Auth: Required (JWT). Returns active plans with service_charge and total_price from user profile (gender). Male: service 15000; Female: 10000; Other: 5000.
   Response 200:
     {
       "success": true,
@@ -755,8 +920,6 @@ LIST AVAILABLE PLANS
             "price": 1499,
             "service_charge": 15000,
             "total_price": 16499,
-            "first_payment": 499,
-            "service_charge_remaining": 14501,
             "duration_days": 180,
             "profile_view_limit": 30,
             "interest_limit": 30,
@@ -769,39 +932,61 @@ LIST AVAILABLE PLANS
       }
     }
 
-PLAN PURCHASE API (first payment: 499)
+PLAN PURCHASE API
   POST /api/v1/plans/purchase/
   Auth: Required (JWT).
   Body (JSON):
     {
       "plan_id": 3,
-      "payment_method": "razorpay"
+      "payment_method": "razorpay",
+      "payment_option": "plan_only"
     }
   payment_method: one of "razorpay", "stripe", "upi", "manual".
-  Backend: First payment is 499 only. Gets user gender, applies service charge (Male 15000, Female 1000, Other 5000). Creates Transaction(amount=499), creates/updates UserPlan with service_charge_paid=499 and service_charge_remaining=14501 (for Male). Plan is active; admin may contact customer. If service is required, customer pays remaining via Pay Remaining Service API.
-  Response 201:
+  payment_option (optional, default="plan_only"):
+    plan_only — User pays only the plan registration fee (plan.price).
+                The remaining service charge (service_charge - plan.price) can be paid
+                later via POST /api/v1/plans/pay-remaining-service/.
+    full      — User pays the remaining amount upfront (service_charge - plan.price).
+                service_charge_remaining will be 0 in the response.
+  Service charge by gender: Male=15000, Female=10000, Other=5000.
+  Amounts: plan.price is deducted from service charge (total = service_charge - plan.price).
+  Creates Transaction record and creates/updates UserPlan. Plan is active immediately.
+  Response 201 (plan_only):
     {
       "success": true,
-      "message": "Plan purchased successfully. Pay 499 now. If service required, admin will contact you for remaining payment.",
+      "message": "Plan purchased. Remaining service charge can be paid later.",
       "data": {
         "transaction_id": 1,
         "plan_name": "Gold",
-        "valid_until": "2026-09-10",
-        "amount_paid": 499,
-        "total_amount": 16499,
-        "service_charge_remaining": 14501
+        "payment_option": "plan_only",
+        "amount_paid": 1499,
+        "service_charge_remaining": 13501,
+        "valid_until": "2026-09-10"
       }
     }
-  Error 400: Invalid plan_id or payment_method. Error 401: Unauthorized.
+  Response 201 (full):
+    {
+      "success": true,
+      "message": "Plan purchased with full payment.",
+      "data": {
+        "transaction_id": 1,
+        "plan_name": "Gold",
+        "payment_option": "full",
+        "amount_paid": 13501,
+        "service_charge_remaining": 0,
+        "valid_until": "2026-09-10"
+      }
+    }
+  Error 400: Invalid plan_id, payment_method or payment_option. Error 401: Unauthorized.
 
-PAY REMAINING SERVICE (when admin confirms service required: 14501)
+PAY REMAINING SERVICE (for legacy plans with partial payment)
   POST /api/v1/plans/pay-remaining-service/
   Auth: Required (JWT).
   Body (JSON):
     {
       "payment_method": "razorpay"
     }
-  Backend: User must have an active UserPlan. Pays remaining service charge (e.g. 14501 = 15000 - 499). Creates Transaction for remaining amount, updates UserPlan.service_charge_paid to full service charge.
+  Backend: User must have an active UserPlan. Pays any remaining service charge (service_charge - service_charge_paid). Creates Transaction for remaining amount, updates UserPlan.service_charge_paid to full service charge. For new purchases (full payment upfront), remaining is 0.
   Response 201:
     {
       "success": true,
@@ -830,8 +1015,8 @@ MY PLAN DETAILS
         "chat_remaining": 10,
         "contact_view_remaining": 12,
         "horoscope_remaining": 8,
-        "service_charge_remaining": 14501,
-        "service_charge_paid": 499
+        "service_charge_remaining": 0,
+        "service_charge_paid": 15000
       }
     }
   When no active plan: is_plan_active false, plan_name null, valid_until null, *_remaining 0, service_charge_remaining 0, service_charge_paid 0.
@@ -1106,7 +1291,8 @@ GET /api/v1/chat/list/
             "other_user": {
               "matri_id": "AM100006",
               "name": "Amalnath C K",
-              "profile_photo": "https://cdn.site/profile/6.jpg"
+              "profile_photo": "https://cdn.site/profile/6.jpg",
+              "is_online": true
             },
             "last_message": {
               "preview": "Hi Anna, How are you?",
@@ -1118,6 +1304,8 @@ GET /api/v1/chat/list/
         ]
       }
     }
+  Note: is_online is true when the other user's last_seen is within the last 15 minutes.
+        last_seen is refreshed on JWT API activity (throttled) and when they connect/send via chat WebSocket.
 
 --- Chat Messages API ---
 GET /api/v1/chat/messages/{conversation_id}/
@@ -1129,6 +1317,13 @@ GET /api/v1/chat/messages/{conversation_id}/
       "success": true,
       "data": {
         "conversation_id": 1,
+        "other_user": {
+          "matri_id": "AM100006",
+          "name": "Amalnath C K",
+          "profile_photo": "https://...",
+          "is_online": true,
+          "last_seen": "5 minutes ago"
+        },
         "total": 45,
         "page": 1,
         "limit": 20,
@@ -1237,6 +1432,17 @@ WebSocket — Real-time chat (Django Channels)
   Messages are persisted to the database and conversation.updated_at is updated on each new message.
   Backend uses Redis channel layer (channels_redis) for broadcasting between workers.
 
+  Online status: Connecting to this WebSocket (or sending a message) updates the user's last_seen so
+  the other participant sees is_online in GET /api/v1/chat/list/ and GET /api/v1/chat/messages/...
+  when they refetch (within 15 minutes of activity).
+
+  WebSocket JSON events (in addition to chat messages):
+    - On connect, server sends the other user's current status:
+      { "type": "presence", "matri_id": "AM100006", "online": true|false }
+    - When the other participant connects to this chat WebSocket, you receive:
+      { "type": "presence", "matri_id": "<their matri_id>", "online": true }
+      Frontend should show "Online" when online is true for the chat partner's matri_id.
+
 ================================================================================
 4a. WISHLIST APIs (/api/v1/wishlist/)
 ================================================================================
@@ -1336,6 +1542,111 @@ ROLES & PERMISSIONS
 User roles: Admin, Branch Manager (branch_manager), Staff, User.
 Branch-level data isolation: Staff can only access their branch data (enforced via core.permissions.BranchScoped).
 Permission classes: IsAdmin, IsBranchManager, IsStaff, IsUser, IsStaffOrAdmin (see core.permissions).
+
+----------------------------------------
+TRANSACTION APIs (/api/v1/transactions/)
+----------------------------------------
+All endpoints require: Authorization: Bearer <access_token>
+Only returns transactions belonging to the authenticated user.
+Transactions ordered by created_at descending.
+
+Transaction types: plan_purchase | profile_boost | refund
+Transaction statuses: success | failed | pending | refunded
+Payment methods: razorpay | stripe | upi | manual
+
+--- API 1: Transaction Summary ---
+
+GET /api/v1/transactions/summary/
+  Auth: Required
+  Description: Returns dashboard summary cards — total spent, active plan name, next renewal date.
+  Response (200):
+    {
+      "success": true,
+      "data": {
+        "total_spent": 18995.0,
+        "active_plan": "Gold Plan",
+        "next_renewal": "2026-06-01"
+      }
+    }
+  Notes:
+    - total_spent: sum of all successful (payment_status=success) plan_purchase transactions.
+    - active_plan: name of the user's currently active UserPlan (null if none).
+    - next_renewal: UserPlan.valid_until formatted as YYYY-MM-DD (null if no active plan).
+
+--- API 2: Transaction List ---
+
+GET /api/v1/transactions/
+  Auth: Required
+  Query params:
+    page  (integer, default=1)  — page number
+    limit (integer, default=10, max=100) — items per page
+  Example: /api/v1/transactions/?page=1&limit=10
+  Response (200):
+    {
+      "success": true,
+      "data": {
+        "total": 6,
+        "page": 1,
+        "limit": 10,
+        "transactions": [
+          {
+            "plan_name": "Gold Plan",
+            "transaction_id": "TXN-20260301",
+            "amount": 4999.0,
+            "type": "plan_purchase",
+            "status": "success",
+            "date": "2026-03-01"
+          },
+          {
+            "plan_name": "Profile Boost",
+            "transaction_id": "TXN-20260215",
+            "amount": 499.0,
+            "type": "profile_boost",
+            "status": "success",
+            "date": "2026-02-15"
+          }
+        ]
+      }
+    }
+  Notes:
+    - plan_name: plan.name if a plan is linked, otherwise the transaction type label.
+    - amount: total_amount (includes service charge if applicable).
+
+--- API 3: Transaction Count ---
+
+GET /api/v1/transactions/count/
+  Auth: Required
+  Description: Returns total number of transactions for the logged-in user.
+  Response (200):
+    {
+      "success": true,
+      "data": {
+        "total_transactions": 6
+      }
+    }
+
+--- API 4: Transaction Detail ---
+
+GET /api/v1/transactions/{transaction_id}/
+  Auth: Required
+  Path param: transaction_id — the string transaction ID (e.g. TXN-20260301)
+  Response (200):
+    {
+      "success": true,
+      "data": {
+        "transaction_id": "TXN-20260301",
+        "plan_name": "Gold Plan",
+        "amount": 4999.0,
+        "status": "success",
+        "payment_method": "upi",
+        "date": "2026-03-01"
+      }
+    }
+  Error (404):
+    {
+      "success": false,
+      "error": { "code": 404, "message": "Transaction not found" }
+    }
 
 ================================================================================
 END OF API DOCUMENTATION

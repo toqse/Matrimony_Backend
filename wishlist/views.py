@@ -120,7 +120,7 @@ class WishlistListView(APIView):
                 rel, pers, edu, loc,
             )
 
-            data = _build_wishlist_profile_dict(viewer, u)
+            data = _build_wishlist_profile_dict(viewer, u, request=request)
             data['match_percentage'] = match_pct
             profiles.append(data)
 

@@ -7,6 +7,7 @@ from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
     UserFamily, UserEducation, UserPhotos,
 )
+from core.media import absolute_media_url
 
 
 class UserLocationSerializer(serializers.Serializer):
@@ -327,6 +328,7 @@ class BasicDetailsReadSerializer(serializers.Serializer):
     dob = serializers.DateField(format='%Y-%m-%d', allow_null=True)
     email = serializers.EmailField(allow_blank=True)
     phone = serializers.CharField(source='mobile', allow_blank=True)
+    profile_for = serializers.CharField(allow_blank=True, allow_null=True)
 
     def get_gender(self, obj):
         g = getattr(obj, 'gender', None)
@@ -452,21 +454,55 @@ class EducationDetailsReadSerializer(serializers.Serializer):
 
 
 class PhotosDetailsReadSerializer(serializers.Serializer):
-    profile_photo = serializers.ImageField(use_url=True, allow_null=True)
-    full_photo = serializers.ImageField(use_url=True, allow_null=True)
-    selfie_photo = serializers.ImageField(use_url=True, allow_null=True)
-    family_photo = serializers.ImageField(use_url=True, allow_null=True)
-    aadhaar_front = serializers.ImageField(use_url=True, allow_null=True)
-    aadhaar_back = serializers.ImageField(use_url=True, allow_null=True)
+    profile_photo = serializers.SerializerMethodField()
+    full_photo = serializers.SerializerMethodField()
+    selfie_photo = serializers.SerializerMethodField()
+    family_photo = serializers.SerializerMethodField()
+    aadhaar_front = serializers.SerializerMethodField()
+    aadhaar_back = serializers.SerializerMethodField()
+
+    def _url(self, obj, field_name: str):
+        request = self.context.get('request')
+        return absolute_media_url(request, getattr(obj, field_name, None))
+
+    def get_profile_photo(self, obj):
+        return self._url(obj, 'profile_photo')
+
+    def get_full_photo(self, obj):
+        return self._url(obj, 'full_photo')
+
+    def get_selfie_photo(self, obj):
+        return self._url(obj, 'selfie_photo')
+
+    def get_family_photo(self, obj):
+        return self._url(obj, 'family_photo')
+
+    def get_aadhaar_front(self, obj):
+        return self._url(obj, 'aadhaar_front')
+
+    def get_aadhaar_back(self, obj):
+        return self._url(obj, 'aadhaar_back')
 
 
 # --- PATCH input serializers (section-specific) ---
+
+PROFILE_FOR_CHOICES = [
+    ('myself', 'Myself'),
+    ('son', 'Son'),
+    ('daughter', 'Daughter'),
+    ('brother', 'Brother'),
+    ('sister', 'Sister'),
+    ('friend', 'Friend'),
+    ('relative', 'Relative'),
+]
+
 
 class BasicDetailsUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True)
     gender = serializers.ChoiceField(choices=[('male', 'Male'), ('female', 'Female'), ('other', 'Other')], required=False)
     dob = serializers.DateField(required=False, allow_null=True)
     email = serializers.EmailField(required=False, allow_blank=True)
+    profile_for = serializers.ChoiceField(choices=PROFILE_FOR_CHOICES, required=False, allow_blank=True, allow_null=True)
 
     def update(self, instance, validated_data):
         g = validated_data.get('gender')
@@ -481,6 +517,8 @@ class BasicDetailsUpdateSerializer(serializers.Serializer):
         for k in ('name', 'dob', 'email'):
             if k in validated_data:
                 setattr(instance, k, validated_data[k])
+        if 'profile_for' in validated_data:
+            instance.profile_for = validated_data['profile_for'] or None
         instance.save()
         return instance
 

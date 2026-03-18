@@ -8,11 +8,17 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 
+from core.media import absolute_media_url
 from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
     UserFamily, UserEducation, UserPhotos,
 )
-from .utils import mark_profile_step_completed, generate_about_me, generate_about_me_suggestions
+from .utils import (
+    mark_profile_step_completed,
+    generate_about_me,
+    generate_about_me_suggestions,
+    get_profile_completion_data,
+)
 from .serializers import (
     UserLocationSerializer,
     UserReligionSerializer,
@@ -66,7 +72,7 @@ class ProfileDetailView(APIView):
             'id': str(user.pk),
             'matri_id': user.matri_id or '',
             'basic_details': basic_ser.data,
-            'photos': PhotosDetailsReadSerializer(photos).data if photos else _empty_photos(),
+            'photos': PhotosDetailsReadSerializer(photos, context={'request': request}).data if photos else _empty_photos(),
             'religion_details': ReligionDetailsReadSerializer(rel).data if rel else {},
             'personal_details': PersonalDetailsReadSerializer(pers).data if pers else {},
             'location_details': LocationDetailsReadSerializer(loc).data if loc else {},
@@ -77,7 +83,7 @@ class ProfileDetailView(APIView):
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
 
-def _build_profile_data_for_user(user, include_contact=False, include_family=True):
+def _build_profile_data_for_user(user, request=None, include_contact=False, include_family=True):
     """Build profile dict for a given user (for public profile view)."""
     from .serializers import (
         BasicDetailsReadSerializer, ReligionDetailsReadSerializer,
@@ -110,7 +116,7 @@ def _build_profile_data_for_user(user, include_contact=False, include_family=Tru
         'id': str(user.pk),
         'matri_id': user.matri_id or '',
         'basic_details': basic_data,
-        'photos': PhotosDetailsReadSerializer(photos).data if photos else _empty_photos(),
+        'photos': PhotosDetailsReadSerializer(photos, context={'request': request}).data if photos else _empty_photos(),
         'religion_details': ReligionDetailsReadSerializer(rel).data if rel else {},
         'personal_details': PersonalDetailsReadSerializer(pers).data if pers else {},
         'location_details': LocationDetailsReadSerializer(loc).data if loc else {},
@@ -136,6 +142,7 @@ class ProfilePreviewByMatriIdView(APIView):
         from accounts.models import User
         from matches.utils import age_from_dob
         from plans.services import can_view_contact
+        from plans.models import ProfileView as ProfileViewModel
 
         viewer = request.user
         try:
@@ -152,8 +159,10 @@ class ProfilePreviewByMatriIdView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        is_viewed_by_me = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
+
         # Reuse existing helper to gather profile data without contact details.
-        profile = _build_profile_data_for_user(profile_user, include_contact=False, include_family=True)
+        profile = _build_profile_data_for_user(profile_user, request=request, include_contact=False, include_family=True)
         basic = profile.get('basic_details') or {}
         personal = profile.get('personal_details') or {}
         location = profile.get('location_details') or {}
@@ -206,7 +215,19 @@ class ProfilePreviewByMatriIdView(APIView):
             'contact_locked': not can_view_contact_flag,
         }
 
-        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
+        out = {'success': True, 'data': {**data, 'is_viewed_by_me': is_viewed_by_me}}
+
+        # If the viewer already unlocked this profile via a prior full-view,
+        # include full details here too (without consuming profile view credits again).
+        if is_viewed_by_me:
+            out['data']['profile'] = _build_profile_data_for_user(
+                profile_user, request=request, include_contact=True, include_family=True
+            )
+
+        return Response(
+            out,
+            status=status.HTTP_200_OK,
+        )
 
 
 class PublicProfileByMatriIdView(APIView):
@@ -221,6 +242,7 @@ class PublicProfileByMatriIdView(APIView):
         from accounts.models import User
         from plans.services import PlanLimitService, get_plan_info_for_response
         from plans.models import ProfileView as ProfileViewModel
+        from django.db import transaction
 
         viewer = request.user
         try:
@@ -236,6 +258,7 @@ class PublicProfileByMatriIdView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        already_viewed = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
         can_view, remaining = PlanLimitService.can_view_profile(viewer)
         plan_info = get_plan_info_for_response(viewer)
         # Build plan block for "view details" UI so frontend can display plan
@@ -247,17 +270,22 @@ class PublicProfileByMatriIdView(APIView):
             'chat_remaining': plan_info.get('chat_remaining'),
         }
 
-        if can_view:
-            # Full profile; decrement and record view
-            data = _build_profile_data_for_user(profile_user, include_contact=True, include_family=True)
-            ProfileViewModel.objects.create(viewer=viewer, viewed_user=profile_user)
-            PlanLimitService.consume_profile_view(viewer)
-            # Refresh plan_block after decrement
+        if already_viewed:
+            # Already unlocked earlier; do not decrement again.
+            data = _build_profile_data_for_user(profile_user, request=request, include_contact=True, include_family=True)
+        elif can_view:
+            # First-time full view: record view and consume once (idempotent with get_or_create).
+            data = _build_profile_data_for_user(profile_user, request=request, include_contact=True, include_family=True)
+            with transaction.atomic():
+                _, created = ProfileViewModel.objects.get_or_create(viewer=viewer, viewed_user=profile_user)
+                if created:
+                    PlanLimitService.consume_profile_view(viewer)
+            # Refresh plan_block after potential decrement
             plan_info = get_plan_info_for_response(viewer)
             plan_block['profile_views_remaining'] = plan_info.get('profile_views_remaining')
         else:
             # Limited profile: no contact, no family
-            data = _build_profile_data_for_user(profile_user, include_contact=False, include_family=False)
+            data = _build_profile_data_for_user(profile_user, request=request, include_contact=False, include_family=False)
 
         return Response({
             'success': True,
@@ -268,12 +296,81 @@ class PublicProfileByMatriIdView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class ProfileCompletionView(APIView):
+    """
+    GET /api/v1/profile/completion/
+    Returns completion percentage and steps remaining for dashboard quick actions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        completion = get_profile_completion_data(request.user)
+        steps_remaining = []
+        step_labels = {
+            'location': 'Add location',
+            'religion': 'Add religion',
+            'personal': 'Add personal details',
+            'family': 'Add family details',
+            'education': 'Add education',
+            'about': 'Add about me',
+            'photos': 'Upload photos',
+        }
+        for step in ('location', 'religion', 'personal', 'family', 'education', 'about', 'photos'):
+            if not completion['profile_steps'].get(step, False):
+                steps_remaining.append(step_labels.get(step, step))
+        rel = UserReligion.objects.filter(user=request.user).first()
+        if not rel or (getattr(rel, 'partner_preference_type', None) or '') == '':
+            if 'Add partner preference' not in steps_remaining:
+                steps_remaining.append('Add partner preference')
+        return Response({
+            'success': True,
+            'data': {
+                'completion_percentage': completion['profile_completion_percentage'],
+                'steps_remaining': steps_remaining,
+            },
+        }, status=status.HTTP_200_OK)
+
+
+class ProfileViewsView(APIView):
+    """
+    GET /api/v1/profile/views/
+    Returns total profile views count.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from plans.models import ProfileView
+        total = ProfileView.objects.filter(viewed_user=request.user).count()
+        return Response({
+            'success': True,
+            'data': {'total_views': total},
+        }, status=status.HTTP_200_OK)
+
+
 class BasicDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        ser = BasicDetailsReadSerializer(request.user)
-        return Response({'success': True, 'data': ser.data}, status=status.HTTP_200_OK)
+        user = request.user
+        ser = BasicDetailsReadSerializer(user)
+        data = dict(ser.data)
+        photos = UserPhotos.objects.filter(user=user).first()
+        loc = UserLocation.objects.filter(user=user).select_related('state', 'city').first()
+        profile_photo = None
+        if photos and photos.profile_photo:
+            profile_photo = absolute_media_url(request, photos.profile_photo)
+        location_str = None
+        if loc:
+            parts = []
+            if loc.city:
+                parts.append(loc.city.name)
+            if loc.state:
+                parts.append(loc.state.name)
+            location_str = ', '.join(parts) if parts else None
+        data['profile_photo'] = profile_photo
+        data['location'] = location_str or ''
+        data['matri_id'] = user.matri_id or ''
+        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
         ser = BasicDetailsUpdateSerializer(request.user, data=request.data, partial=True)
@@ -380,6 +477,13 @@ class PartnerPreferencesView(APIView):
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
+        return self._update_preferences(request)
+
+    def post(self, request):
+        """POST for quick action 'Set Partner Preferences' - same as PATCH."""
+        return self._update_preferences(request)
+
+    def _update_preferences(self, request):
         ser = PartnerPreferencesUpdateSerializer(data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         rel, _ = UserReligion.objects.get_or_create(user=request.user, defaults={})
@@ -448,6 +552,7 @@ class ProfileFamilyView(APIView):
         for k in ser.validated_data:
             setattr(fam, k, ser.validated_data[k])
         fam.save()
+        mark_profile_step_completed(request.user, 'family')
         return Response({'success': True, 'data': FamilyDetailsReadSerializer(fam).data}, status=status.HTTP_200_OK)
 
 
@@ -543,7 +648,7 @@ class ProfilePhotosView(APIView):
             return Response({'success': True, 'data': {}}, status=status.HTTP_200_OK)
         return Response({
             'success': True,
-            'data': PhotosDetailsReadSerializer(photos).data,
+            'data': PhotosDetailsReadSerializer(photos, context={'request': request}).data,
         }, status=status.HTTP_200_OK)
 
     def patch(self, request):
@@ -554,7 +659,7 @@ class ProfilePhotosView(APIView):
         mark_profile_step_completed(request.user, 'photos')
         return Response({
             'success': True,
-            'data': PhotosDetailsReadSerializer(ser.instance).data,
+            'data': PhotosDetailsReadSerializer(ser.instance, context={'request': request}).data,
         }, status=status.HTTP_200_OK)
 
     def post(self, request):

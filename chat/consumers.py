@@ -9,6 +9,9 @@ from channels.db import database_sync_to_async
 from django.utils import timezone
 
 from plans.models import Conversation, Message
+from plans.services import has_accepted_interest_between
+
+from core.last_seen import touch_user_last_seen, mark_user_offline
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -29,7 +32,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return None, 'Conversation not found'
         if user.pk != conv.user1_id and user.pk != conv.user2_id:
             return None, 'Not a participant'
+        other = conv.user2 if user.pk == conv.user1_id else conv.user1
+        if not has_accepted_interest_between(user, other):
+            return None, 'Interest not accepted'
         return conv, None
+
+    @database_sync_to_async
+    def _peer_presence_payload(self, conv, current_user):
+        """matri_id + is_online for the other participant (15-min last_seen rule)."""
+        other = (
+            conv.user2
+            if current_user.pk == conv.user1_id
+            else conv.user1
+        )
+        last = getattr(other, 'last_seen', None)
+        online = bool(
+            last and (timezone.now() - last) < timezone.timedelta(minutes=15)
+        )
+        return {
+            'matri_id': getattr(other, 'matri_id', '') or '',
+            'online': online,
+        }
 
     async def connect(self):
         self.conversation_id = self.scope['url_route']['kwargs']['conversation_id']
@@ -38,11 +61,67 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if err or not conv:
             await self.close(code=4403)
             return
+        # Mark existing unread messages from the other user as read when
+        # this user opens the WebSocket for this conversation.
+        await self.mark_messages_read_for_user(conv, user)
         self.room_group_name = f'chat_{self.conversation_id}'
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
+        # So the other participant sees this user as online (REST uses last_seen).
+        await self._touch_last_seen(user.pk, force=True)
+        matri_id = getattr(user, 'matri_id', '') or ''
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'chat_presence',
+                'matri_id': matri_id,
+                'online': True,
+            },
+        )
+        peer = await self._peer_presence_payload(conv, user)
+        if peer.get('matri_id'):
+            await self.send(
+                text_data=json.dumps({
+                    'type': 'presence',
+                    'matri_id': peer['matri_id'],
+                    'online': peer['online'],
+                })
+            )
+
+    @database_sync_to_async
+    def _touch_last_seen(self, user_pk, *, force=False, min_interval_seconds=45):
+        touch_user_last_seen(
+            user_pk, force=force, min_interval_seconds=min_interval_seconds
+        )
+
+    @database_sync_to_async
+    def mark_messages_read_for_user(self, conv, user):
+        """Mark all messages from the other user as read when user connects via WebSocket."""
+        if not user or not getattr(user, 'is_authenticated', False) or not user.is_authenticated:
+            return
+        Message.objects.filter(
+            conversation=conv,
+            read_at__isnull=True
+        ).exclude(sender=user).update(read_at=timezone.now())
 
     async def disconnect(self, close_code):
+        # Notify the other participant immediately (real-time Offline) and
+        # move last_seen outside the 15-min "online" window.
+        user = self.scope.get('user')
+        try:
+            if user and getattr(user, 'is_authenticated', False) and getattr(user, 'matri_id', None):
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'chat_presence',
+                        'matri_id': user.matri_id,
+                        'online': False,
+                    },
+                )
+                # Force last_seen out of the window so REST refetch shows Offline quickly.
+                await database_sync_to_async(mark_user_offline)(user.pk)
+        except Exception:
+            pass
         if self.room_group_name:
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
@@ -76,10 +155,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps({'error': 'Message text required'}))
             return
         msg_id, created_at = await self.save_message_and_touch_conversation(user.pk, text)
+        await self._touch_last_seen(user.pk, min_interval_seconds=30)
         payload = {
             'type': 'chat_message',
             'message_id': msg_id,
-            'sender_id': user.pk,
+            # Cast UUID primary key to string so Redis/msgpack can serialize it
+            'sender_id': str(user.pk),
             'sender_matri_id': getattr(user, 'matri_id', None) or '',
             'sender_name': getattr(user, 'name', None) or '',
             'text': text,
@@ -100,3 +181,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'text': event['text'],
             'created_at': event['created_at'],
         }))
+
+    async def chat_presence(self, event):
+        """Peer opened chat WebSocket — notify other participant (real-time Online)."""
+        me = self.scope.get('user')
+        if not me:
+            return
+        if (event.get('matri_id') or '') == (getattr(me, 'matri_id', None) or ''):
+            return
+        await self.send(
+            text_data=json.dumps({
+                'type': 'presence',
+                'matri_id': event['matri_id'],
+                'online': bool(event.get('online', True)),
+            })
+        )

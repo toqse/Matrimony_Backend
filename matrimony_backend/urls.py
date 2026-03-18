@@ -13,6 +13,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/auth/', include('accounts.urls')),
     path('api/v1/profile/', include('profiles.urls')),
+    path('api/v1/dashboard/', include('dashboard.urls')),
     path('api/v1/profiles/<str:matri_id>/preview/', ProfilePreviewByMatriIdView.as_view()),
     path('api/v1/profiles/<str:matri_id>/full/', PublicProfileByMatriIdView.as_view()),
     path('api/v1/profiles/<str:matri_id>/', PublicProfileByMatriIdView.as_view()),
@@ -26,6 +27,7 @@ urlpatterns = [
     path('api/v1/settings/', include('user_settings.urls')),
     path('api/v1/contact/unlock/', ContactUnlockView.as_view()),
     path('api/v1/my/plan/', MyPlanView.as_view()),
+    path('api/v1/transactions/', include('plans.urls_transactions')),
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

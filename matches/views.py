@@ -15,6 +15,7 @@ from wishlist.models import Wishlist
 
 from .utils import age_from_dob, dob_range_for_age, compute_match_percentage
 from .serializers import MatchListProfileSerializer, format_last_seen
+from core.media import absolute_media_url
 
 
 def _match_queryset(request):
@@ -212,7 +213,7 @@ class MatchListView(APIView):
 
             photo_url = None
             if photos and photos.profile_photo:
-                photo_url = photos.profile_photo.url if hasattr(photos.profile_photo, 'url') else str(photos.profile_photo)
+                photo_url = absolute_media_url(request, photos.profile_photo)
 
             match_pct = compute_match_percentage(
                 viewer, u,

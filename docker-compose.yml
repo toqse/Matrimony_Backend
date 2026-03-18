@@ -1,7 +1,7 @@
 services:
   django:
     build: .
-    command: ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "matrimony_backend.wsgi:application"]
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "matrimony_backend.asgi:application"]
     volumes:
       - .:/app
     ports:

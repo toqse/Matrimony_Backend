@@ -11,8 +11,17 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 
 User = get_user_model()
 
-# Match accounts.models.User.GENDER_CHOICES (avoid import-order issues with get_user_model)
+# Match accounts.models.User (avoid import-order issues with get_user_model)
 GENDER_CHOICES = [('M', 'Male'), ('F', 'Female'), ('O', 'Other')]
+PROFILE_FOR_CHOICES = [
+    ('myself', 'Myself'),
+    ('son', 'Son'),
+    ('daughter', 'Daughter'),
+    ('brother', 'Brother'),
+    ('sister', 'Sister'),
+    ('friend', 'Friend'),
+    ('relative', 'Relative'),
+]
 
 
 def validate_phone_number(phone):
@@ -65,12 +74,27 @@ class DOBField(serializers.Field):
 class RegisterSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=150, required=True)
     phone_number = serializers.CharField(required=True)
-    email = serializers.EmailField(required=True)
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     dob = DOBField(required=True)
     gender = serializers.ChoiceField(choices=GENDER_CHOICES, required=True)
+    profile_for = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate_profile_for(self, value):
+        """Normalize to lowercase; must be one of: myself, son, daughter, brother, sister, friend, relative."""
+        if not value or not str(value).strip():
+            return None
+        val = str(value).strip().lower()
+        allowed = {c[0] for c in PROFILE_FOR_CHOICES}
+        if val not in allowed:
+            raise serializers.ValidationError(
+                f'Must be one of: {", ".join(sorted(allowed))}'
+            )
+        return val
 
     def validate_email(self, value):
-        value = (value or '').strip().lower()
+        if not value or not str(value).strip():
+            return None
+        value = value.strip().lower()
         try:
             validate_email(value)
         except DjangoValidationError:
@@ -145,7 +169,7 @@ class VerifyOTPSerializer(serializers.Serializer):
         return data
 
 
-def get_verify_otp_response_data(user, tokens):
+def get_verify_otp_response_data(user, tokens, request=None):
     """
     Build the full data payload for POST /api/v1/auth/verify-otp/ response.
     Includes tokens, matri_id, registration flags, profile completion fields,
@@ -153,7 +177,7 @@ def get_verify_otp_response_data(user, tokens):
     """
     from profiles.utils import get_profile_completion_data, get_full_profile_data
     completion = get_profile_completion_data(user)
-    profile_data = get_full_profile_data(user)
+    profile_data = get_full_profile_data(user, request=request)
     return {
         'access_token': tokens['access'],
         'refresh_token': tokens['refresh'],

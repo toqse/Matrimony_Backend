@@ -7,6 +7,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from .models import Plan, ServiceCharge, UserPlan, Transaction, Interest
 from matches.utils import age_from_dob
 from profiles.models import UserLocation, UserEducation, UserPhotos
+from core.media import absolute_media_url
 
 
 class PlanSerializer(serializers.ModelSerializer):
@@ -39,7 +40,15 @@ class PlanListForUserSerializer(serializers.Serializer):
 
 
 class PlanPurchaseSerializer(serializers.Serializer):
-    """Body for POST /api/v1/plans/purchase/."""
+    """Body for POST /api/v1/plans/purchase/.
+
+    payment_option:
+      plan_only — pay only the plan registration fee (plan.price).
+      full      — pay the remaining amount (service_charge - plan.price) upfront.
+    """
+    PAYMENT_OPTION_PLAN_ONLY = 'plan_only'
+    PAYMENT_OPTION_FULL = 'full'
+
     plan_id = serializers.IntegerField()
     payment_method = serializers.ChoiceField(
         choices=[
@@ -49,6 +58,14 @@ class PlanPurchaseSerializer(serializers.Serializer):
             Transaction.PAYMENT_MANUAL,
         ],
         default=Transaction.PAYMENT_MANUAL,
+    )
+    payment_option = serializers.ChoiceField(
+        choices=[PAYMENT_OPTION_PLAN_ONLY, PAYMENT_OPTION_FULL],
+        default=PAYMENT_OPTION_PLAN_ONLY,
+        help_text=(
+            'plan_only: pay only the plan registration fee. '
+            'full: pay service_charge minus plan price upfront.'
+        ),
     )
 
     def validate_plan_id(self, value):
@@ -94,7 +111,7 @@ class InterestSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'sender', 'receiver', 'created_at']
 
 
-def _get_user_brief_profile(user):
+def _get_user_brief_profile(user, request=None):
     """
     Return brief profile dict for interest cards:
     matri_id, name, age, location, education, occupation, profile_photo.
@@ -138,7 +155,7 @@ def _get_user_brief_profile(user):
         photos = user.user_photos
     except ObjectDoesNotExist:
         photos = None
-    profile_photo = photos.profile_photo.url if photos and photos.profile_photo else None
+    profile_photo = absolute_media_url(request, photos.profile_photo) if photos and photos.profile_photo else None
 
     return {
         'matri_id': user.matri_id or '',
@@ -169,13 +186,14 @@ class InterestListSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
 
     def to_representation(self, instance):
+        request = self.context.get('request')
         direction = self.context.get('direction')
         if direction == 'sent':
             other_user = instance.receiver
         else:
             other_user = instance.sender
 
-        profile = _get_user_brief_profile(other_user)
+        profile = _get_user_brief_profile(other_user, request=request)
 
         return {
             'interest_id': instance.id,

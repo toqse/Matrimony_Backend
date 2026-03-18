@@ -13,6 +13,7 @@ from rest_framework.viewsets import ModelViewSet
 from accounts.models import User
 from core.permissions import IsAdmin
 from user_settings.models import UserSettings
+from django.db import transaction
 from .models import Interest, Plan, ServiceCharge, UserPlan, Transaction, Conversation
 from .serializers import (
     PlanSerializer,
@@ -29,6 +30,7 @@ from .services import (
     is_plan_expired,
     plan_expired_response,
     get_user_plan_status,
+    has_accepted_interest_between,
 )
 
 
@@ -56,7 +58,7 @@ class PlanListView(APIView):
 
     def get(self, request):
         plans = Plan.objects.filter(is_active=True).order_by('price')
-        # Service charge from user profile (gender): Male 15000 (remaining 14501), Female 10000 (remaining 9501)
+        # Service charge from user profile (gender): Male 15000, Female 10000, Other 5000
         gender = getattr(request.user, 'gender', None) or 'M'
         if not gender:
             gender = 'M'
@@ -65,19 +67,15 @@ class PlanListView(APIView):
             service_charge = sc.amount
         except ServiceCharge.DoesNotExist:
             service_charge = Decimal('0')
-        first_payment = Decimal('499')
-        service_charge_remaining = max(Decimal('0'), service_charge - first_payment)
         out = []
         for plan in plans:
-            total = (plan.price or Decimal('0')) + service_charge
+            total = service_charge - (plan.price or Decimal('0'))
             out.append({
                 'id': plan.id,
                 'name': plan.name,
                 'price': float(plan.price or 0),
                 'service_charge': float(service_charge),
                 'total_price': float(total),
-                'first_payment': float(first_payment),
-                'service_charge_remaining': float(service_charge_remaining),
                 'duration_days': plan.duration_days,
                 'profile_view_limit': plan.profile_view_limit,
                 'interest_limit': plan.interest_limit,
@@ -98,8 +96,20 @@ class PlanListView(APIView):
 class PlanPurchaseView(APIView):
     """
     POST /api/v1/plans/purchase/
-    Body: { "plan_id": 3, "payment_method": "razorpay" }
-    Creates Transaction and UserPlan (or updates existing UserPlan).
+    Body: {
+      "plan_id": 3,
+      "payment_method": "razorpay",
+      "payment_option": "plan_only" | "full"
+    }
+
+    payment_option:
+      plan_only (default) — user pays only plan.price (registration fee).
+                            Remaining service charge can be paid later via
+                            POST /api/v1/plans/pay-remaining-service/.
+      full                — user pays the remaining amount upfront
+                            (service_charge - plan.price).
+
+    Creates/updates UserPlan and records a Transaction.
     """
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser]
@@ -111,60 +121,123 @@ class PlanPurchaseView(APIView):
                 'success': False,
                 'error': {'code': 400, 'message': 'Validation failed.', 'details': ser.errors},
             }, status=status.HTTP_400_BAD_REQUEST)
+
         plan_id = ser.validated_data['plan_id']
         payment_method = ser.validated_data['payment_method']
+        payment_option = ser.validated_data['payment_option']
         plan = Plan.objects.get(pk=plan_id)
         user = request.user
-        gender = getattr(user, 'gender', None) or 'M'
-        try:
-            sc = ServiceCharge.objects.get(gender=gender)
-            service_charge_total = sc.amount
-        except ServiceCharge.DoesNotExist:
-            service_charge_total = Decimal('0')
-        plan_price = plan.price or Decimal('0')
-        # First payment: 499 only. Admin follows up; if service required, customer pays remaining 14501.
-        initial_payment = Decimal('499')
-        total_amount_full = plan_price + service_charge_total  # e.g. 16499
-        service_charge_remaining = service_charge_total - initial_payment  # e.g. 14501
-        txn = Transaction.objects.create(
-            user=user,
-            plan=plan,
-            amount=initial_payment,
-            service_charge=service_charge_total,
-            total_amount=total_amount_full,
-            payment_method=payment_method,
-            payment_status=Transaction.STATUS_SUCCESS,
-            transaction_id='',
-        )
-        valid_from = timezone.now().date()
-        valid_until = valid_from + timezone.timedelta(days=plan.duration_days)
-        user_plan, created = UserPlan.objects.update_or_create(
-            user=user,
-            defaults={
-                'plan': plan,
-                'price_paid': plan_price,
-                'service_charge': service_charge_total,
-                'service_charge_paid': initial_payment,
-                'valid_from': valid_from,
-                'valid_until': valid_until,
-                'is_active': True,
-                'profile_views_used': 0,
-                'interests_used': 0,
-                'chat_used': 0,
-                'horoscope_used': 0,
-                'contact_views_used': 0,
-            },
-        )
+        today = timezone.now().date()
+
+        with transaction.atomic():
+            # Lock the user's plan row (if any) to avoid concurrent upgrade double-counting.
+            any_up = (
+                UserPlan.objects
+                .select_for_update()
+                .select_related('plan')
+                .filter(user=user)
+                .first()
+            )
+            # Carry-forward applies only if still active and not expired.
+            old_up = any_up if (any_up and any_up.is_active and (any_up.valid_until is None or any_up.valid_until >= today)) else None
+
+            gender = getattr(user, 'gender', None) or 'M'
+            try:
+                sc = ServiceCharge.objects.get(gender=gender)
+                service_charge_total = sc.amount
+            except ServiceCharge.DoesNotExist:
+                service_charge_total = Decimal('0')
+
+            plan_price = plan.price or Decimal('0')
+            # remaining = service_charge - plan_price (the amount still owed after registration fee)
+            remaining_amount = max(service_charge_total - plan_price, Decimal('0'))
+
+            if payment_option == PlanPurchaseSerializer.PAYMENT_OPTION_FULL:
+                # User pays the remaining service charge upfront
+                amount_paid = remaining_amount
+                service_charge_paid = service_charge_total
+                payment_message = 'Plan purchased with full payment.'
+            else:
+                # plan_only: user pays only the registration/plan fee now
+                amount_paid = plan_price
+                service_charge_paid = Decimal('0')
+                payment_message = 'Plan purchased. Remaining service charge can be paid later.'
+
+            txn = Transaction.objects.create(
+                user=user,
+                plan=plan,
+                amount=amount_paid,
+                service_charge=service_charge_total,
+                total_amount=amount_paid,
+                payment_method=payment_method,
+                payment_status=Transaction.STATUS_SUCCESS,
+                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                transaction_id='',
+            )
+
+            valid_from = today
+            if old_up:
+                # Carry forward remaining quotas from old plan and extend validity.
+                def _remaining(plan_limit, bonus, used):
+                    if plan_limit == 0:
+                        return 0  # unlimited plans can't be carried forward as a finite bonus
+                    effective = (plan_limit or 0) + (bonus or 0)
+                    return max(0, effective - (used or 0))
+
+                carry_profile = _remaining(old_up.plan.profile_view_limit, getattr(old_up, 'profile_view_bonus', 0), old_up.profile_views_used)
+                carry_interest = _remaining(old_up.plan.interest_limit, getattr(old_up, 'interest_bonus', 0), old_up.interests_used)
+                carry_chat = _remaining(old_up.plan.chat_limit, getattr(old_up, 'chat_bonus', 0), old_up.chat_used)
+                carry_contact = _remaining(old_up.plan.contact_view_limit, getattr(old_up, 'contact_view_bonus', 0), old_up.contact_views_used)
+                carry_horo = _remaining(old_up.plan.horoscope_match_limit, getattr(old_up, 'horoscope_bonus', 0), old_up.horoscope_used)
+
+                valid_until = (old_up.valid_until or today) + timezone.timedelta(days=plan.duration_days)
+                payment_message = 'Plan upgraded successfully with carry forward.'
+            else:
+                carry_profile = carry_interest = carry_chat = carry_contact = carry_horo = 0
+                valid_until = valid_from + timezone.timedelta(days=plan.duration_days)
+
+            UserPlan.objects.update_or_create(
+                user=user,
+                defaults={
+                    'plan': plan,
+                    'price_paid': plan_price,
+                    'service_charge': service_charge_total,
+                    'service_charge_paid': service_charge_paid,
+                    'valid_from': valid_from,
+                    'valid_until': valid_until,
+                    'is_active': True,
+                    'profile_view_bonus': carry_profile,
+                    'interest_bonus': carry_interest,
+                    'chat_bonus': carry_chat,
+                    'horoscope_bonus': carry_horo,
+                    'contact_view_bonus': carry_contact,
+                    'profile_views_used': 0,
+                    'interests_used': 0,
+                    'chat_used': 0,
+                    'horoscope_used': 0,
+                    'contact_views_used': 0,
+                },
+            )
+
+        service_charge_remaining = service_charge_total - service_charge_paid
+
         return Response({
             'success': True,
-            'message': 'Plan purchased successfully. Pay 499 now. If service required, admin will contact you for remaining payment.',
+            'message': payment_message,
             'data': {
                 'transaction_id': txn.id,
                 'plan_name': plan.name,
-                'valid_until': valid_until.isoformat(),
-                'amount_paid': float(initial_payment),
-                'total_amount': float(total_amount_full),
+                'payment_option': payment_option,
+                'amount_paid': float(amount_paid),
                 'service_charge_remaining': float(service_charge_remaining),
+                'valid_until': valid_until.isoformat(),
+                'carry_forward': {
+                    'profile_views': int(carry_profile),
+                    'interests': int(carry_interest),
+                    'chats': int(carry_chat),
+                    'contacts': int(carry_contact),
+                    'horoscope': int(carry_horo),
+                },
             },
         }, status=status.HTTP_201_CREATED)
 
@@ -281,6 +354,29 @@ class SendInterestView(APIView):
                 'error': {'code': 400, 'message': 'Cannot send interest to yourself.'}
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # If connection already exists (interest accepted in either direction),
+        # do not allow sending again—return a clear message for UI.
+        if has_accepted_interest_between(request.user, receiver):
+            return Response({
+                'success': True,
+                'message': 'Already connected.',
+                'data': {'status': Interest.STATUS_ACCEPTED},
+            }, status=status.HTTP_200_OK)
+
+        # If the receiver already sent an interest request to the current user,
+        # don't create a duplicate request—ask user to accept instead.
+        incoming = Interest.objects.filter(
+            sender=receiver,
+            receiver=request.user,
+            status=Interest.STATUS_PENDING,
+        ).first()
+        if incoming:
+            return Response({
+                'success': True,
+                'message': 'This user already sent you an interest request. Please accept it.',
+                'data': {'status': Interest.STATUS_PENDING, 'interest_id': incoming.id},
+            }, status=status.HTTP_200_OK)
+
         _, created = Interest.objects.get_or_create(
             sender=request.user,
             receiver=receiver,
@@ -289,7 +385,8 @@ class SendInterestView(APIView):
         if not created:
             return Response({
                 'success': True,
-                'message': 'Interest already sent.'
+                'message': 'Interest already sent.',
+                'data': {'status': Interest.STATUS_PENDING},
             }, status=status.HTTP_200_OK)
 
         PlanLimitService.consume_interest(request.user)
@@ -313,10 +410,10 @@ class MyInterestsView(APIView):
         received_qs = Interest.objects.filter(receiver=user).select_related('sender').order_by('-created_at')
 
         sent_ser = InterestListSerializer(
-            sent_qs, many=True, context={'direction': 'sent'}
+            sent_qs, many=True, context={'direction': 'sent', 'request': request}
         )
         received_ser = InterestListSerializer(
-            received_qs, many=True, context={'direction': 'received'}
+            received_qs, many=True, context={'direction': 'received', 'request': request}
         )
 
         return Response({
@@ -361,7 +458,7 @@ class SentInterestsView(APIView):
         page_qs = qs[start:end]
 
         ser = InterestListSerializer(
-            page_qs, many=True, context={'direction': 'sent'}
+            page_qs, many=True, context={'direction': 'sent', 'request': request}
         )
         return Response({
             'success': True,
@@ -399,7 +496,7 @@ class ReceivedInterestsView(APIView):
         page_qs = qs[start:end]
 
         ser = InterestListSerializer(
-            page_qs, many=True, context={'direction': 'received'}
+            page_qs, many=True, context={'direction': 'received', 'request': request}
         )
         return Response({
             'success': True,
@@ -532,6 +629,13 @@ class ChatPermissionView(APIView):
                 'error': {'code': 404, 'message': 'Profile not found.'}
             }, status=status.HTTP_404_NOT_FOUND)
 
+        # Require accepted interest before chat is allowed.
+        if not has_accepted_interest_between(request.user, profile_user):
+            return Response({
+                'success': True,
+                'data': {'can_chat': False}
+            }, status=status.HTTP_200_OK)
+
         can_chat_flag, _ = can_chat(request.user)
         return Response({
             'success': True,
@@ -625,6 +729,13 @@ class ChatStartView(APIView):
                 'success': False,
                 'error': {'code': 400, 'message': 'Cannot chat with yourself.'}
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Require accepted interest before starting a chat.
+        if not has_accepted_interest_between(request.user, other):
+            return Response({
+                'success': False,
+                'error': {'code': 403, 'message': 'Please accept the interest request to start chat.'}
+            }, status=status.HTTP_403_FORBIDDEN)
 
         can_chat_flag, _ = can_chat(request.user)
         if not can_chat_flag:

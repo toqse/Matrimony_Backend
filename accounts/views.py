@@ -7,6 +7,8 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from django.utils import timezone
+from core.last_seen import mark_user_offline
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -75,7 +77,7 @@ def _set_refresh_cookie(response, refresh_token):
 class RegisterView(APIView):
     """
     POST /api/v1/auth/register/
-    Body: name, phone_number, email, dob, gender.
+    Body: name, phone_number, dob, gender. (email is optional)
     Creates/updates user, sends OTP. Returns matri_id, phone_number.
     """
     permission_classes = [AllowAny]
@@ -99,7 +101,7 @@ class RegisterView(APIView):
                     'success': False,
                     'error': {'code': 400, 'message': 'Phone number already registered'},
                 }, status=status.HTTP_400_BAD_REQUEST)
-            email = (data['email'] or '').strip().lower() or None
+            email = data.get('email') or None
             if email and User.objects.filter(email__iexact=email).exclude(pk=existing.pk).exists():
                 return Response({
                     'success': False,
@@ -110,15 +112,18 @@ class RegisterView(APIView):
             user.email = email
             user.dob = data['dob']
             user.gender = data['gender']
-            user.save(update_fields=['name', 'email', 'dob', 'gender', 'updated_at'])
+            user.profile_for = data.get('profile_for') or None
+            user.save(update_fields=['name', 'email', 'dob', 'gender', 'profile_for', 'updated_at'])
         else:
+            profile_for = data.get('profile_for') or None
             user = User.objects.create_user(
-                email=data['email'],
+                email=data.get('email'),
                 mobile=phone,
                 password=User.objects.make_random_password(),
                 name=data['name'],
                 dob=data['dob'],
                 gender=data['gender'],
+                profile_for=profile_for,
             )
         otp = generate_otp(identifier)
         _send_otp_mobile(phone, otp)
@@ -154,7 +159,7 @@ class VerifyOTPView(APIView):
         tokens = _tokens_for_user(user)
         response = Response({
             'success': True,
-            'data': get_verify_otp_response_data(user, tokens),
+            'data': get_verify_otp_response_data(user, tokens, request=request),
         }, status=status.HTTP_200_OK)
         if getattr(settings, 'JWT_REFRESH_COOKIE_NAME', None):
             _set_refresh_cookie(response, tokens['refresh'])
@@ -168,6 +173,12 @@ class RegisterMobileView(APIView):
         ser = RegisterMobileSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         mobile = ser.validated_data['mobile']
+        user = User.objects.filter(mobile=mobile, mobile_verified=True).first()
+        if not user:
+            return Response({
+                'success': False,
+                'error': {'code': 404, 'message': 'No registered account found with this mobile number. Please register first.'},
+            }, status=status.HTTP_404_NOT_FOUND)
         identifier = f'mobile:{mobile}'
         otp = generate_otp(identifier)
         _send_otp_mobile(mobile, otp)
@@ -209,7 +220,7 @@ class VerifyMobileView(APIView):
         tokens = _tokens_for_user(user)
         response = Response({
             'success': True,
-            'data': get_verify_otp_response_data(user, tokens),
+            'data': get_verify_otp_response_data(user, tokens, request=request),
         }, status=status.HTTP_200_OK)
         if getattr(settings, 'JWT_REFRESH_COOKIE_NAME', None):
             _set_refresh_cookie(response, tokens['refresh'])
@@ -328,6 +339,22 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Mark user offline immediately:
+        # chat/views.py considers a user online if last_seen is within 15 minutes.
+        # On logout we push last_seen outside that window so UI doesn't keep showing "Online"
+        # for up to 15 minutes after logout.
+        try:
+            mark_user_offline(request.user.pk)
+        except Exception:
+            pass
+        # Invalidate all existing access tokens for this user.
+        # Otherwise, a client that keeps using an old access token can still call APIs,
+        # which would refresh last_seen and make the user appear online again.
+        try:
+            request.user.tokens_invalid_before = timezone.now()
+            request.user.save(update_fields=["tokens_invalid_before", "updated_at"])
+        except Exception:
+            pass
         try:
             refresh = request.data.get('refresh')
             if refresh:

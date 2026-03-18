@@ -4,6 +4,7 @@ from accounts.models import User
 from matches.utils import age_from_dob
 from matches.serializers import format_last_seen
 from profiles.models import UserLocation, UserEducation, UserPhotos
+from core.media import absolute_media_url
 from .models import Wishlist
 
 
@@ -32,7 +33,7 @@ class WishlistProfileSerializer(serializers.Serializer):
     last_seen = serializers.CharField(allow_null=True)
 
 
-def _build_wishlist_profile_dict(viewer: User, profile_user: User) -> dict:
+def _build_wishlist_profile_dict(viewer: User, profile_user: User, request=None) -> dict:
     """
     Build the wishlist card data for a single profile user.
     Reuses existing profile-related models; computes:
@@ -64,7 +65,7 @@ def _build_wishlist_profile_dict(viewer: User, profile_user: User) -> dict:
     # Photo
     photos = getattr(profile_user, 'user_photos', None) or UserPhotos.objects.filter(user=profile_user).first()
     if photos and photos.profile_photo:
-        profile_photo = photos.profile_photo.url if hasattr(photos.profile_photo, 'url') else str(photos.profile_photo)
+        profile_photo = absolute_media_url(request, photos.profile_photo)
     else:
         profile_photo = None
 

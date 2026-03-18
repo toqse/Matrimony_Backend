@@ -59,6 +59,15 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         ('F', 'Female'),
         ('O', 'Other'),
     ]
+    PROFILE_FOR_CHOICES = [
+        ('myself', 'Myself'),
+        ('son', 'Son'),
+        ('daughter', 'Daughter'),
+        ('brother', 'Brother'),
+        ('sister', 'Sister'),
+        ('friend', 'Friend'),
+        ('relative', 'Relative'),
+    ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     matri_id = models.CharField(max_length=20, unique=True, editable=False, db_index=True, null=True, blank=True)
     email = models.EmailField(unique=True, null=True, blank=True)
@@ -67,6 +76,13 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     name = models.CharField(max_length=150, blank=True)
     dob = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=1, choices=GENDER_CHOICES, blank=True)
+    profile_for = models.CharField(
+        max_length=20,
+        choices=PROFILE_FOR_CHOICES,
+        null=True,
+        blank=True,
+        help_text='Who the profile is being registered for (e.g. Myself, Son, Daughter)',
+    )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='user')
     branch = models.ForeignKey(
         'master.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='users'
@@ -80,6 +96,11 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_seen = models.DateTimeField(null=True, blank=True, help_text='Last activity for online status')
+    tokens_invalid_before = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='If set, reject JWTs issued before this time (e.g. after logout).',
+    )
 
     objects = UserManager()
     USERNAME_FIELD = 'email'

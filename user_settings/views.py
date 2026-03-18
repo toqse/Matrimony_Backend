@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from accounts.models import User
 from plans.services import _get_user_plan
 from profiles.models import UserLocation, UserPhotos
+from core.media import absolute_media_url
 from .models import UserSettings
 from .serializers import (
     ProfileVisibilitySerializer,
@@ -54,11 +55,11 @@ def _location_display(user):
     return ', '.join(parts) if parts else None
 
 
-def _profile_photo_url(user):
+def _profile_photo_url(request, user):
     try:
         photos = UserPhotos.objects.filter(user=user).first()
         if photos and photos.profile_photo:
-            return photos.profile_photo.url if hasattr(photos.profile_photo, 'url') else str(photos.profile_photo)
+            return absolute_media_url(request, photos.profile_photo)
     except Exception:
         pass
     return None
@@ -76,7 +77,7 @@ class ProfileSettingsView(APIView):
             'data': {
                 'name': user.name or '',
                 'matri_id': user.matri_id or '',
-                'profile_photo': _profile_photo_url(user),
+                'profile_photo': _profile_photo_url(request, user),
                 'location': _location_display(user) or '',
                 'plan': _plan_display_name(user),
                 'profile_visibility': settings_obj.profile_visibility,

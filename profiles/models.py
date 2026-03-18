@@ -23,10 +23,11 @@ class UserProfile(TimeStampedModel):
     )
     about_me = models.TextField(blank=True)
 
-    # Multi-step profile completion flags (order: location -> religion -> personal -> education -> about -> photos)
+    # Multi-step profile completion flags
     location_completed = models.BooleanField(default=False)
     religion_completed = models.BooleanField(default=False)
     personal_completed = models.BooleanField(default=False)
+    family_completed = models.BooleanField(default=False)
     education_completed = models.BooleanField(default=False)
     about_completed = models.BooleanField(default=False)
     photos_completed = models.BooleanField(default=False)

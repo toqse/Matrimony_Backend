@@ -91,6 +91,7 @@ class PlanLimitService:
         limit = up.plan.profile_view_limit
         if limit == 0:
             return True, None
+        limit = limit + (getattr(up, 'profile_view_bonus', 0) or 0)
         used = up.profile_views_used or 0
         remaining = max(0, limit - used)
         return remaining > 0, remaining
@@ -113,6 +114,7 @@ class PlanLimitService:
         limit = up.plan.interest_limit
         if limit == 0:
             return True, None
+        limit = limit + (getattr(up, 'interest_bonus', 0) or 0)
         used = up.interests_used or 0
         remaining = max(0, limit - used)
         return remaining > 0, remaining
@@ -135,6 +137,7 @@ class PlanLimitService:
         limit = up.plan.chat_limit
         if limit == 0:
             return True, None
+        limit = limit + (getattr(up, 'chat_bonus', 0) or 0)
         used = up.chat_used or 0
         remaining = max(0, limit - used)
         return remaining > 0, remaining
@@ -157,6 +160,7 @@ class PlanLimitService:
         limit = up.plan.contact_view_limit
         if limit == 0:
             return True, None
+        limit = limit + (getattr(up, 'contact_view_bonus', 0) or 0)
         used = up.contact_views_used or 0
         remaining = max(0, limit - used)
         return remaining > 0, remaining
@@ -210,24 +214,58 @@ def get_plan_info_for_response(user):
         }
     p = up.plan
 
-    def _rem(limit, used):
+    def _rem(limit, used, bonus=0):
         if limit == 0:
             return None  # unlimited
-        return max(0, limit - (used or 0))
+        return max(0, (limit + (bonus or 0)) - (used or 0))
 
-    service_charge_total = up.service_charge or 0
+    # Match the same logic as GET /api/v1/plans/:
+    # service_charge is based on user's gender, and remaining amount is (service_charge - plan.price).
+    from decimal import Decimal
+    from .models import ServiceCharge
+
+    gender = getattr(user, 'gender', None) or 'M'
+    try:
+        sc = ServiceCharge.objects.get(gender=gender)
+        service_charge_total = sc.amount
+    except ServiceCharge.DoesNotExist:
+        service_charge_total = Decimal('0')
+
+    plan_price = p.price or Decimal('0')
+    # "Remaining" shown in UI/cards is the amount after paying plan price.
+    service_charge_remaining = max(Decimal('0'), service_charge_total - plan_price)
     service_charge_paid = getattr(up, 'service_charge_paid', 0) or 0
-    service_charge_remaining = max(0, service_charge_total - service_charge_paid)
 
     return {
         'is_plan_active': True,
         'plan_name': p.name,
         'valid_until': up.valid_until.isoformat() if up.valid_until else None,
-        'profile_views_remaining': _rem(p.profile_view_limit, up.profile_views_used),
-        'interests_remaining': _rem(p.interest_limit, up.interests_used),
-        'chat_remaining': _rem(p.chat_limit, up.chat_used),
-        'contact_view_remaining': _rem(p.contact_view_limit, up.contact_views_used),
-        'horoscope_remaining': _rem(p.horoscope_match_limit, up.horoscope_used),
+        'profile_views_remaining': _rem(p.profile_view_limit, up.profile_views_used, getattr(up, 'profile_view_bonus', 0) or 0),
+        'interests_remaining': _rem(p.interest_limit, up.interests_used, getattr(up, 'interest_bonus', 0) or 0),
+        'chat_remaining': _rem(p.chat_limit, up.chat_used, getattr(up, 'chat_bonus', 0) or 0),
+        'contact_view_remaining': _rem(p.contact_view_limit, up.contact_views_used, getattr(up, 'contact_view_bonus', 0) or 0),
+        'horoscope_remaining': _rem(p.horoscope_match_limit, up.horoscope_used, getattr(up, 'horoscope_bonus', 0) or 0),
+        'service_charge': float(service_charge_total),
+        'plan_price': float(plan_price),
+        'total_price': float(service_charge_remaining),
         'service_charge_remaining': float(service_charge_remaining),
         'service_charge_paid': float(service_charge_paid),
     }
+
+
+def has_accepted_interest_between(user_a, user_b):
+    """
+    Return True if there is an accepted Interest between the two users in either direction.
+    Used to gate chat until the interest request is accepted.
+    """
+    if not user_a or not user_b:
+        return False
+    if not getattr(user_a, 'is_authenticated', False) or not getattr(user_b, 'is_authenticated', False):
+        return False
+    from django.db.models import Q
+    from .models import Interest
+
+    return Interest.objects.filter(
+        Q(sender=user_a, receiver=user_b) | Q(sender=user_b, receiver=user_a),
+        status=Interest.STATUS_ACCEPTED,
+    ).exists()

@@ -95,6 +95,13 @@ class UserPlan(TimeStampedModel):
         max_digits=12, decimal_places=2, default=0,
         help_text='Amount of service charge paid so far (first payment 499, then remaining 14501)'
     )
+    # Carry-forward / bonus quotas added on upgrade (effective_limit = plan.limit + bonus).
+    # These are applied only when plan.limit > 0 (0 = unlimited).
+    profile_view_bonus = models.PositiveIntegerField(default=0)
+    interest_bonus = models.PositiveIntegerField(default=0)
+    chat_bonus = models.PositiveIntegerField(default=0)
+    horoscope_bonus = models.PositiveIntegerField(default=0)
+    contact_view_bonus = models.PositiveIntegerField(default=0)
     profile_views_used = models.PositiveIntegerField(default=0)
     interests_used = models.PositiveIntegerField(default=0)
     chat_used = models.PositiveIntegerField(default=0)
@@ -114,7 +121,7 @@ class UserPlan(TimeStampedModel):
 
 
 class Transaction(TimeStampedModel):
-    """Payment transaction for plan purchase."""
+    """Payment transaction for plan purchase, profile boost or refund."""
     PAYMENT_RAZORPAY = 'razorpay'
     PAYMENT_STRIPE = 'stripe'
     PAYMENT_UPI = 'upi'
@@ -135,6 +142,14 @@ class Transaction(TimeStampedModel):
         (STATUS_FAILED, 'Failed'),
         (STATUS_REFUNDED, 'Refunded'),
     ]
+    TYPE_PLAN_PURCHASE = 'plan_purchase'
+    TYPE_PROFILE_BOOST = 'profile_boost'
+    TYPE_REFUND = 'refund'
+    TYPE_CHOICES = [
+        (TYPE_PLAN_PURCHASE, 'Plan Purchase'),
+        (TYPE_PROFILE_BOOST, 'Profile Boost'),
+        (TYPE_REFUND, 'Refund'),
+    ]
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -143,7 +158,9 @@ class Transaction(TimeStampedModel):
     plan = models.ForeignKey(
         Plan,
         on_delete=models.PROTECT,
-        related_name='transactions'
+        related_name='transactions',
+        null=True,
+        blank=True,
     )
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     service_charge = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -158,6 +175,11 @@ class Transaction(TimeStampedModel):
         choices=STATUS_CHOICES,
         default=STATUS_PENDING
     )
+    transaction_type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default=TYPE_PLAN_PURCHASE,
+    )
     transaction_id = models.CharField(max_length=255, blank=True, db_index=True)
 
     class Meta:
@@ -165,7 +187,8 @@ class Transaction(TimeStampedModel):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'{self.user.matri_id} - {self.plan.name} - {self.total_amount}'
+        plan_name = self.plan.name if self.plan_id else self.get_transaction_type_display()
+        return f'{self.user.matri_id} - {plan_name} - {self.total_amount}'
 
 
 class ProfileView(TimeStampedModel):
@@ -188,6 +211,9 @@ class ProfileView(TimeStampedModel):
         indexes = [
             models.Index(fields=['viewer', 'viewed_user']),
             models.Index(fields=['viewer', 'timestamp']),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['viewer', 'viewed_user'], name='uniq_profile_view_pair'),
         ]
 
     def __str__(self):

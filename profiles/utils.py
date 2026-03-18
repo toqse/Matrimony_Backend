@@ -12,6 +12,7 @@ PROFILE_STEP_ORDER = (
     'location',
     'religion',
     'personal',
+    'family',
     'education',
     'about',
     'photos',
@@ -34,6 +35,7 @@ def get_profile_completion_data(user):
             'location_completed': False,
             'religion_completed': False,
             'personal_completed': False,
+            'family_completed': False,
             'education_completed': False,
             'about_completed': False,
             'photos_completed': False,
@@ -43,6 +45,7 @@ def get_profile_completion_data(user):
         'location': profile.location_completed,
         'religion': profile.religion_completed,
         'personal': profile.personal_completed,
+        'family': getattr(profile, 'family_completed', False),
         'education': profile.education_completed,
         'about': profile.about_completed,
         'photos': profile.photos_completed,
@@ -67,7 +70,7 @@ def get_profile_completion_data(user):
     }
 
 
-def get_full_profile_data(user):
+def get_full_profile_data(user, request=None):
     """
     Build the full profile dict for a user (same structure as GET /api/v1/profile/).
     Used e.g. in verify-OTP response to return all previously saved profile data.
@@ -102,7 +105,7 @@ def get_full_profile_data(user):
         'id': str(user.pk),
         'matri_id': user.matri_id or '',
         'basic_details': basic_ser.data,
-        'photos': PhotosDetailsReadSerializer(photos).data if photos else _empty_photos(),
+        'photos': PhotosDetailsReadSerializer(photos, context={'request': request}).data if photos else _empty_photos(),
         'religion_details': ReligionDetailsReadSerializer(rel).data if rel else {},
         'personal_details': PersonalDetailsReadSerializer(pers).data if pers else {},
         'location_details': LocationDetailsReadSerializer(loc).data if loc else {},
@@ -115,12 +118,13 @@ def get_full_profile_data(user):
 def mark_profile_step_completed(user, step):
     """
     Mark a profile step as completed for the user.
-    step: one of 'location', 'religion', 'personal', 'education', 'about', 'photos'
+    step: one of 'location', 'religion', 'personal', 'family', 'education', 'about', 'photos'
     """
     step_to_field = {
         'location': 'location_completed',
         'religion': 'religion_completed',
         'personal': 'personal_completed',
+        'family': 'family_completed',
         'education': 'education_completed',
         'about': 'about_completed',
         'photos': 'photos_completed',
@@ -132,6 +136,7 @@ def mark_profile_step_completed(user, step):
         'location_completed': False,
         'religion_completed': False,
         'personal_completed': False,
+        'family_completed': False,
         'education_completed': False,
         'about_completed': False,
         'photos_completed': False,

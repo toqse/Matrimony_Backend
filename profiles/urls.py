@@ -12,14 +12,19 @@ from .views import (
     ProfileAboutView,
     ProfilePhotosView,
     ProfileCompleteView,
+    ProfileCompletionView,
+    ProfileViewsView,
 )
 
 urlpatterns = [
     path('', ProfileDetailView.as_view()),
     path('basic/', BasicDetailsView.as_view()),
+    path('completion/', ProfileCompletionView.as_view()),
+    path('views/', ProfileViewsView.as_view()),
     path('location/', ProfileLocationView.as_view()),
     path('religion/', ProfileReligionView.as_view()),
     path('partner-preferences/', PartnerPreferencesView.as_view()),
+    path('partner-preference/', PartnerPreferencesView.as_view()),
     path('personal/', ProfilePersonalView.as_view()),
     path('family/', ProfileFamilyView.as_view()),
     path('education/', ProfileEducationView.as_view()),
