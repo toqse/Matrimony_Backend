@@ -15,7 +15,7 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.commissions.models import Commission
-from admin_panel.enquiries.models import Enquiry
+from admin_panel.enquiries.models import Enquiry, EnquiryNote
 from admin_panel.enquiries.scoping import admin_branch_for_manager
 from core.permissions import IsStaffOrAdmin
 from master.models import Branch
@@ -53,6 +53,28 @@ def _growth_percent(current: Decimal, previous: Decimal) -> float:
     if previous <= 0:
         return 100.0 if current > 0 else 0.0
     return round(((current - previous) / previous) * 100.0, 1)
+
+
+def _relative_time_label(ts):
+    if not ts:
+        return ""
+    now = timezone.now()
+    delta = now - ts
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hr ago"
+    days = hours // 24
+    if days == 1:
+        return "Yesterday"
+    if days < 7:
+        return f"{days} days ago"
+    return ts.strftime("%d-%m-%Y")
 
 
 class SummaryView(APIView):
@@ -369,27 +391,102 @@ class RecentActivityView(APIView):
                     {"success": False, "error": {"code": 400, "message": "Staff profile not found."}},
                     status=400,
                 )
-            logs = (
-                NotificationLog.objects.filter(
-                    is_deleted=False,
-                    user__staff_assignment__staff=staff_profile,
-                )
-                .order_by("-sent_at")
-                .values("id", "channel", "recipient", "success", "sent_at")[:10]
+            activities = []
+
+            assignments = (
+                CustomerStaffAssignment.objects.filter(staff=staff_profile)
+                .select_related("user")
+                .order_by("-created_at")[:10]
             )
-            results = []
-            for l in logs:
-                sent_at = l["sent_at"]
-                results.append(
+            for a in assignments:
+                activities.append(
                     {
-                        "id": l["id"],
-                        "type": "notification",
-                        "channel": l["channel"],
-                        "recipient": l["recipient"],
-                        "success": bool(l["success"]),
-                        "created_at": sent_at.strftime("%d-%m-%Y") if sent_at else "",
+                        "id": f"profile-{a.id}",
+                        "type": "profile",
+                        "message": f"Created profile for {a.user.name or a.user.matri_id}",
+                        "created_at": a.created_at,
                     }
                 )
+
+            sales = (
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                    user__staff_assignment__staff=staff_profile,
+                )
+                .select_related("user", "plan")
+                .order_by("-created_at")[:10]
+            )
+            for s in sales:
+                plan_name = s.plan.name if getattr(s, "plan_id", None) and s.plan else "subscription"
+                activities.append(
+                    {
+                        "id": f"sale-{s.id}",
+                        "type": "subscription_sale",
+                        "message": f"Sold {plan_name} subscription to {s.user.name or s.user.matri_id}",
+                        "created_at": s.created_at,
+                    }
+                )
+
+            enquiries = (
+                Enquiry.objects.filter(assigned_to=request.user)
+                .order_by("-created_at")
+                .values("id", "name", "status", "created_at")[:10]
+            )
+            for e in enquiries:
+                activities.append(
+                    {
+                        "id": f"enquiry-{e['id']}",
+                        "type": "enquiry",
+                        "message": f"Created enquiry for {e['name']}",
+                        "created_at": e["created_at"],
+                    }
+                )
+
+            notes = (
+                EnquiryNote.objects.filter(created_by=request.user)
+                .select_related("enquiry")
+                .order_by("-created_at")[:10]
+            )
+            for n in notes:
+                activities.append(
+                    {
+                        "id": f"note-{n.id}",
+                        "type": "follow_up_note",
+                        "message": f"Added follow-up note for {n.enquiry.name}",
+                        "created_at": n.created_at,
+                    }
+                )
+
+            commissions = (
+                Commission.objects.filter(staff=staff_profile)
+                .select_related("customer")
+                .order_by("-created_at")[:10]
+            )
+            for c in commissions:
+                activities.append(
+                    {
+                        "id": f"commission-{c.id}",
+                        "type": "commission",
+                        "message": f"Commission {c.status} for {c.customer.name or c.customer.matri_id}",
+                        "created_at": c.created_at,
+                    }
+                )
+
+            activities.sort(key=lambda x: x["created_at"] or timezone.now(), reverse=True)
+            results = []
+            for item in activities[:10]:
+                ts = item["created_at"]
+                results.append(
+                    {
+                        "id": item["id"],
+                        "type": item["type"],
+                        "message": item["message"],
+                        "created_at": ts.isoformat() if ts else "",
+                        "relative_time": _relative_time_label(ts),
+                    }
+                )
+
             return Response({"success": True, "data": {"logs": results}})
 
         logs = (
