@@ -45,6 +45,7 @@ from .serializers import (
     EducationDetailsUpdateSerializer,
     PhotosDetailsReadSerializer,
     AboutDetailsUpdateSerializer,
+    BirthDetailsUpdateSerializer,
 )
 
 
@@ -791,6 +792,36 @@ class ProfileCompleteView(APIView):
             'success': True,
             'message': 'Profile marked as complete.',
             'data': {'is_registration_profile_completed': True},
+        }, status=status.HTTP_200_OK)
+
+
+class ProfileBirthDetailsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = UserProfile.objects.filter(user=request.user).first()
+        if not profile:
+            return Response({'success': True, 'data': {}}, status=status.HTTP_200_OK)
+        data = {
+            'time_of_birth': profile.time_of_birth,
+            'place_of_birth': profile.place_of_birth,
+        }
+        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = BirthDetailsUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        profile, _ = UserProfile.objects.get_or_create(user=request.user, defaults={})
+        profile.time_of_birth = serializer.validated_data['time_of_birth']
+        profile.place_of_birth = serializer.validated_data['place_of_birth']
+        profile.save(update_fields=['time_of_birth', 'place_of_birth', 'updated_at'])
+        return Response({
+            'success': True,
+            'message': 'Birth details updated successfully.',
+            'data': {
+                'time_of_birth': profile.time_of_birth,
+                'place_of_birth': profile.place_of_birth,
+            },
         }, status=status.HTTP_200_OK)
 
 

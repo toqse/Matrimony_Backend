@@ -47,6 +47,7 @@ urlpatterns = [
     path('api/v1/admin/master/', include('admin_panel.master.urls')),
 
     path('api/v1/profile/', include('profiles.urls')),
+    path('api/v1/astrology/', include('astrology.urls')),
     path('api/v1/dashboard/', include('dashboard.urls')),
     path('api/v1/profiles/<str:matri_id>/preview/', ProfilePreviewByMatriIdView.as_view()),
     path('api/v1/profiles/<str:matri_id>/full/', PublicProfileByMatriIdView.as_view()),

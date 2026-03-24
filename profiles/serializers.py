@@ -856,3 +856,14 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
 
 class AboutDetailsUpdateSerializer(serializers.Serializer):
     about_me = serializers.CharField(required=False, allow_blank=True)
+
+
+class BirthDetailsUpdateSerializer(serializers.Serializer):
+    time_of_birth = serializers.TimeField(required=True)
+    place_of_birth = serializers.CharField(required=True, allow_blank=False, max_length=255)
+
+    def validate_place_of_birth(self, value):
+        cleaned = (value or '').strip()
+        if not cleaned:
+            raise serializers.ValidationError('place_of_birth cannot be empty.')
+        return cleaned

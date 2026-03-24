@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'master',
     'accounts',
     'profiles',
+    'astrology.apps.AstrologyConfig',
     'plans',
     'matches',
     'wishlist',

@@ -8,6 +8,7 @@ Admin Profiles (profile admin): /api/v1/admin/profiles/  (staff assigned list: /
 Admin Subscriptions: /api/v1/admin/subscriptions/ | Admin Commissions: /api/v1/admin/commissions/ | Branch Manager Commissions (approval): /api/v1/branch/commissions/ | Branch Manager My Commissions: /api/v1/branch/my-commissions/ | Branch Manager My Profiles: /api/v1/branch/my-profiles/ | Admin Payroll: /api/v1/admin/payroll/ | Branch Manager Payroll: /api/v1/branch/payroll/ | Admin Enquiries: /api/v1/admin/enquiries/ | Branch Manager Enquiries: /api/v1/branch/enquiries/
 Profile Base: /api/v1/profile/
 Master Base: /api/v1/master/
+Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt)
 
 --- Authentication ---
 All authenticated endpoints require header: Authorization: Bearer <access_token>

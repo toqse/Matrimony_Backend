@@ -41,6 +41,8 @@ class UserProfile(TimeStampedModel):
         help_text='Horoscope document available (admin/UI badge).',
     )
     horoscope_data = models.JSONField(default=dict, blank=True)
+    time_of_birth = models.TimeField(null=True, blank=True)
+    place_of_birth = models.CharField(max_length=255, blank=True)
 
     class Meta:
         db_table = 'profiles_user_profile'
