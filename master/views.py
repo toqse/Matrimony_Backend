@@ -13,13 +13,14 @@ from .filters import CasteFilter
 from .models import (
     Country, State, District, City,
     Religion, Caste, MotherTongue, Height, MaritalStatus, IncomeRange,
-    Education, EducationSubject, Occupation,
+    Education, EducationSubject, Occupation, EmploymentStatus,
 )
 from .serializers import (
     CountrySerializer, StateSerializer, DistrictSerializer, CitySerializer,
     ReligionSerializer, CasteSerializer, MotherTongueSerializer, HeightSerializer,
     MaritalStatusSerializer, IncomeRangeSerializer,
     EducationSerializer, EducationSubjectSerializer, OccupationSerializer,
+    EmploymentStatusSerializer,
 )
 
 
@@ -146,10 +147,13 @@ class EducationSubjectList(generics.ListAPIView):
 
     def get_queryset(self):
         qs = EducationSubject.objects.filter(is_active=True).order_by('name')
+        education_id = self.request.query_params.get('education_id')
+        if education_id:
+            qs = qs.filter(educations__id=education_id, educations__is_active=True)
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(name__icontains=search)
-        return qs
+        return qs.distinct()
 
 
 class OccupationList(generics.ListAPIView):
@@ -164,28 +168,58 @@ class OccupationList(generics.ListAPIView):
         return qs
 
 
+class EmploymentStatusList(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = EmploymentStatusSerializer
+
+    def get_queryset(self):
+        qs = EmploymentStatus.objects.filter(is_active=True).order_by('name')
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(name__icontains=search)
+        return qs
+
+
 # --- CRUD ViewSets (Admin create/update/delete; everyone can read) ---
 
 class ReligionViewSet(viewsets.ModelViewSet):
-    queryset = Religion.objects.all().order_by('name')
     serializer_class = ReligionSerializer
     permission_classes = [ReadOnlyOrAdmin]
     filter_backends = [SearchFilter]
     search_fields = ['name']
 
+    def get_queryset(self):
+        qs = Religion.objects.all().order_by('name')
+        user = self.request.user
+        if user.is_authenticated and getattr(user, 'role', None) == 'admin':
+            return qs
+        return qs.filter(is_active=True)
+
 
 class CasteViewSet(viewsets.ModelViewSet):
-    queryset = Caste.objects.all().select_related('religion').order_by('name')
     serializer_class = CasteSerializer
     permission_classes = [ReadOnlyOrAdmin]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = CasteFilter
     search_fields = ['name']
 
+    def get_queryset(self):
+        qs = Caste.objects.all().select_related('religion').order_by('name')
+        user = self.request.user
+        if user.is_authenticated and getattr(user, 'role', None) == 'admin':
+            return qs
+        return qs.filter(is_active=True, religion__is_active=True)
+
 
 class MotherTongueViewSet(viewsets.ModelViewSet):
-    queryset = MotherTongue.objects.all().order_by('name')
     serializer_class = MotherTongueSerializer
     permission_classes = [ReadOnlyOrAdmin]
     filter_backends = [SearchFilter]
     search_fields = ['name']
+
+    def get_queryset(self):
+        qs = MotherTongue.objects.all().order_by('name')
+        user = self.request.user
+        if user.is_authenticated and getattr(user, 'role', None) == 'admin':
+            return qs
+        return qs.filter(is_active=True)

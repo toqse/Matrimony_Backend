@@ -6,7 +6,7 @@ from rest_framework import serializers
 from .models import (
     Country, State, District, City,
     Religion, Caste, MotherTongue, Height, MaritalStatus, IncomeRange,
-    Education, EducationSubject, Occupation,
+    Education, EducationSubject, Occupation, EmploymentStatus,
 )
 
 
@@ -85,4 +85,10 @@ class EducationSubjectSerializer(serializers.ModelSerializer):
 class OccupationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Occupation
+        fields = ['id', 'name']
+
+
+class EmploymentStatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmploymentStatus
         fields = ['id', 'name']

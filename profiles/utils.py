@@ -18,6 +18,9 @@ PROFILE_STEP_ORDER = (
     'photos',
 )
 
+# Visibility threshold: 6/7 completed steps -> int(85.71) == 85
+PROFILE_VISIBILITY_MIN_PERCENTAGE = 85
+
 
 def get_profile_completion_data(user):
     """
@@ -68,6 +71,14 @@ def get_profile_completion_data(user):
         'next_step': next_step,
         'profile_status': profile_status,
     }
+
+
+def is_profile_visible_to_others(user):
+    """
+    Profile should be discoverable only after reaching minimum completion threshold.
+    """
+    completion = get_profile_completion_data(user)
+    return completion['profile_completion_percentage'] >= PROFILE_VISIBILITY_MIN_PERCENTAGE
 
 
 def get_full_profile_data(user, request=None):

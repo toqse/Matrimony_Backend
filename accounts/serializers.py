@@ -58,6 +58,25 @@ def parse_dob(dob_str):
         raise serializers.ValidationError('Date of birth must be in DD-MM-YYYY format (e.g. 16-12-1990).')
 
 
+def parse_optional_dob(dob_str):
+    """
+    For PATCH profile basic: None or blank -> None; else DD-MM-YYYY or YYYY-MM-DD.
+    """
+    if dob_str is None:
+        return None
+    s = str(dob_str).strip()
+    if not s:
+        return None
+    for fmt in ('%d-%m-%Y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    raise serializers.ValidationError(
+        'Date has wrong format. Use DD-MM-YYYY (YYYY-MM-DD is also accepted).'
+    )
+
+
 class DOBField(serializers.Field):
     """
     Accepts DOB as string in DD-MM-YYYY only. Never use DateField (which expects YYYY-MM-DD).
@@ -123,6 +142,12 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'non_field_errors': ['Email already registered'],
             })
+        if email:
+            taken = User.objects.filter(email__iexact=email).exclude(mobile=phone).exists()
+            if taken:
+                raise serializers.ValidationError({
+                    'non_field_errors': ['Email already registered'],
+                })
         return attrs
 
 
@@ -152,19 +177,38 @@ class VerifyOTPSerializer(serializers.Serializer):
             except Exception:
                 phone = raw_phone
         data['phone_number'] = phone
-        from .services import verify_otp
+        from .services import verify_otp, pop_pending_registration
         identifier = f"phone:{data['phone_number']}"
         ok, msg = verify_otp(identifier, data['otp'])
         if not ok:
             raise serializers.ValidationError(msg)
-        user = User.objects.filter(mobile=data['phone_number']).first()
-        if not user:
-            raise serializers.ValidationError('User not found.')
-        # Activate account on successful OTP verify (so no "Account is not active" anywhere)
-        if not user.mobile_verified or not user.is_active:
-            user.mobile_verified = True
-            user.is_active = True
-            user.save(update_fields=['mobile_verified', 'is_active', 'updated_at'])
+        pending = pop_pending_registration(data['phone_number'])
+        if pending:
+            from datetime import date
+            dob_val = pending['dob']
+            if isinstance(dob_val, str):
+                dob_val = date.fromisoformat(dob_val)
+            user = User.objects.create_user(
+                email=pending.get('email') or None,
+                mobile=data['phone_number'],
+                password=User.objects.make_random_password(),
+                name=pending['name'],
+                dob=dob_val,
+                gender=pending['gender'],
+                profile_for=pending.get('profile_for') or None,
+                mobile_verified=True,
+                is_active=True,
+            )
+        else:
+            user = User.objects.filter(mobile=data['phone_number']).first()
+            if not user:
+                raise serializers.ValidationError(
+                    'Registration session expired or invalid. Please register again and verify the OTP.',
+                )
+            if not user.mobile_verified or not user.is_active:
+                user.mobile_verified = True
+                user.is_active = True
+                user.save(update_fields=['mobile_verified', 'is_active', 'updated_at'])
         data['user'] = user
         return data
 

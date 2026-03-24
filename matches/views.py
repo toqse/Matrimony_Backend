@@ -1,7 +1,8 @@
 """
 Match list API and Filter options API.
 """
-from django.db.models import Q
+from django.db.models import Q, IntegerField, Value
+from django.db.models.functions import Cast, Coalesce
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
+from plans.models import ProfileView as ProfileViewModel, Interest
 from plans.services import can_view_profile, can_send_interest, can_chat, _get_user_plan
 from user_settings.models import UserSettings
 from wishlist.models import Wishlist
@@ -28,7 +30,17 @@ def _match_queryset(request):
     elif gender == 'F':
         qs = qs.filter(gender='M')
     # 'O' -> both, no filter
-    return qs
+    completion_score = (
+        Coalesce(Cast('user_profile__location_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__religion_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__personal_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__family_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__education_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__about_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__photos_completed', IntegerField()), Value(0))
+    )
+    # 6 of 7 completed steps => int((6/7) * 100) == 85
+    return qs.annotate(profile_completion_steps=completion_score).filter(profile_completion_steps__gte=6)
 
 
 class MatchListView(APIView):
@@ -171,7 +183,24 @@ class MatchListView(APIView):
             'user_photos', 'user_location',
         ).distinct()[start:start + limit]
 
-        # Plan permissions for viewer
+        page_users = list(qs)
+        viewed_user_ids = set(
+            ProfileViewModel.objects.filter(
+                viewer=request.user,
+                viewed_user_id__in=[u.pk for u in page_users],
+            ).values_list('viewed_user_id', flat=True)
+        )
+        sent_interest_rows = list(
+            Interest.objects.filter(
+                sender=request.user,
+                receiver_id__in=[u.pk for u in page_users],
+            ).values_list('receiver_id', 'status')
+        )
+        interest_status_by_receiver_id = {
+            receiver_id: status for receiver_id, status in sent_interest_rows
+        }
+
+        # Plan permissions for viewer (first-time full view quota)
         can_view, _ = can_view_profile(request.user)
         can_send, _ = can_send_interest(request.user)
         can_chat_flag, _ = can_chat(request.user)
@@ -195,7 +224,7 @@ class MatchListView(APIView):
         )
 
         profiles_data = []
-        for u in qs:
+        for u in page_users:
             pers = getattr(u, 'user_personal', None)
             edu = getattr(u, 'user_education', None)
             photos = getattr(u, 'user_photos', None)
@@ -214,6 +243,9 @@ class MatchListView(APIView):
             photo_url = None
             if photos and photos.profile_photo:
                 photo_url = absolute_media_url(request, photos.profile_photo)
+            full_photo_url = None
+            if photos and photos.full_photo:
+                full_photo_url = absolute_media_url(request, photos.full_photo)
 
             match_pct = compute_match_percentage(
                 viewer, u,
@@ -224,6 +256,23 @@ class MatchListView(APIView):
             last_seen = getattr(u, 'last_seen', None)
             is_online = last_seen and (timezone.now() - last_seen) < timedelta(minutes=15) if last_seen else False
 
+            is_already_viewed = u.pk in viewed_user_ids
+            is_able_to_view = is_already_viewed or can_view
+
+            raw_interest_status = interest_status_by_receiver_id.get(u.pk)
+            if raw_interest_status == Interest.STATUS_ACCEPTED:
+                interest_status = 'accepted'
+            elif raw_interest_status == Interest.STATUS_REJECTED:
+                interest_status = 'rejected'
+            elif raw_interest_status == Interest.STATUS_PENDING:
+                interest_status = 'sent'
+            elif raw_interest_status == Interest.STATUS_CANCELLED:
+                # Product rule: self-cancelled interest should appear as pending
+                # so user can send interest again from UI.
+                interest_status = 'pending'
+            else:
+                interest_status = 'pending'
+
             profiles_data.append({
                 'matri_id': u.matri_id or '',
                 'name': u.name or '',
@@ -232,14 +281,20 @@ class MatchListView(APIView):
                 'education': edu.highest_education.name if edu and edu.highest_education_id else None,
                 'occupation': edu.occupation.name if edu and edu.occupation_id else None,
                 'profile_photo': photo_url,
+                'full_photo': full_photo_url,
                 'is_online': is_online,
                 'last_seen': format_last_seen(last_seen) if last_seen else None,
                 'is_new': u.created_at >= new_threshold if u.created_at else False,
                 'match_percentage': match_pct,
                 'is_wishlisted': (u.matri_id in wishlist_matri_ids),
-                'can_view_details': can_view,
+                'is_able_to_view': is_able_to_view,
+                'is_already_viewed': is_already_viewed,
+                'can_view_details': is_able_to_view,
                 'can_send_interest': can_send,
                 'can_chat': can_chat_flag,
+                'is_interest_sent': raw_interest_status in (Interest.STATUS_PENDING, Interest.STATUS_ACCEPTED),
+                'interest_status': interest_status,
+                'is_horoscope_sent': False,
             })
 
         # Re-sort by match_percentage if sort_by is best_match or most_relevant

@@ -158,6 +158,9 @@ class Education(TimeStampedModel):
 
 class EducationSubject(TimeStampedModel):
     name = models.CharField(max_length=150)
+    educations = models.ManyToManyField(
+        Education, blank=True, related_name='subjects'
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -175,6 +178,19 @@ class Occupation(TimeStampedModel):
     class Meta:
         db_table = 'master_occupation'
         ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class EmploymentStatus(TimeStampedModel):
+    name = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'master_employment_status'
+        ordering = ['name']
+        verbose_name_plural = 'Employment statuses'
 
     def __str__(self):
         return self.name

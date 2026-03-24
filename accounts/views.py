@@ -24,7 +24,12 @@ from .serializers import (
     PasswordResetSerializer,
     PasswordConfirmSerializer,
 )
-from .services import generate_otp, verify_otp, check_otp_rate_limit
+from .services import (
+    generate_otp,
+    verify_otp,
+    check_otp_rate_limit,
+    set_pending_registration,
+)
 from .models import User
 
 
@@ -78,7 +83,8 @@ class RegisterView(APIView):
     """
     POST /api/v1/auth/register/
     Body: name, phone_number, dob, gender. (email is optional)
-    Creates/updates user, sends OTP. Returns matri_id, phone_number.
+    Stores registration data until OTP is verified; sends OTP. No user row is created until
+    POST /api/v1/auth/verify-otp/ succeeds. Returns phone_number (matri_id only after verify).
     """
     permission_classes = [AllowAny]
 
@@ -94,48 +100,40 @@ class RegisterView(APIView):
                 'success': False,
                 'error': {'code': 429, 'message': msg},
             }, status=status.HTTP_429_TOO_MANY_REQUESTS)
-        existing = User.objects.filter(mobile=phone).first()
-        if existing:
-            if existing.mobile_verified:
-                return Response({
-                    'success': False,
-                    'error': {'code': 400, 'message': 'Phone number already registered'},
-                }, status=status.HTTP_400_BAD_REQUEST)
-            email = data.get('email') or None
-            if email and User.objects.filter(email__iexact=email).exclude(pk=existing.pk).exists():
-                return Response({
-                    'success': False,
-                    'error': {'code': 400, 'message': 'Email already registered'},
-                }, status=status.HTTP_400_BAD_REQUEST)
-            user = existing
-            user.name = data['name']
-            user.email = email
-            user.dob = data['dob']
-            user.gender = data['gender']
-            user.profile_for = data.get('profile_for') or None
-            user.save(update_fields=['name', 'email', 'dob', 'gender', 'profile_for', 'updated_at'])
-        else:
-            profile_for = data.get('profile_for') or None
-            user = User.objects.create_user(
-                email=data.get('email'),
-                mobile=phone,
-                password=User.objects.make_random_password(),
-                name=data['name'],
-                dob=data['dob'],
-                gender=data['gender'],
-                profile_for=profile_for,
-            )
+        if User.objects.filter(mobile=phone, mobile_verified=True).exists():
+            return Response({
+                'success': False,
+                'error': {'code': 400, 'message': 'Phone number already registered'},
+            }, status=status.HTTP_400_BAD_REQUEST)
+        # Remove incomplete registrations so the DB has no account until OTP verification.
+        User.objects.filter(mobile=phone, mobile_verified=False).delete()
+        profile_for = data.get('profile_for') or None
+        email = data.get('email') or None
+        set_pending_registration(
+            phone,
+            {
+                'name': data['name'],
+                'email': email,
+                'dob': data['dob'].isoformat(),
+                'gender': data['gender'],
+                'profile_for': profile_for,
+            },
+        )
         otp = generate_otp(identifier)
         _send_otp_mobile(phone, otp)
-        return Response({
+        payload = {
             'success': True,
-            'message': 'Registration successful. OTP has been sent to your phone number. Please verify to continue.',
+            'message': 'OTP has been sent to your phone number. Verify to create your account.',
             'data': {
-                'matri_id': user.matri_id,
-                'phone_number': user.mobile,
+                'phone_number': phone,
                 'otp_sent': True,
+                'registration_pending': True,
             },
-        }, status=status.HTTP_200_OK)
+        }
+        # Expose OTP only in development/testing to simplify QA.
+        if getattr(settings, 'DEBUG', False):
+            payload['data']['otp'] = otp
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class VerifyOTPView(APIView):
@@ -152,6 +150,11 @@ class VerifyOTPView(APIView):
         ser = VerifyOTPSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         user = ser.validated_data['user']
+        if getattr(user, 'is_blocked', False):
+            return Response({
+                'success': False,
+                'error': {'code': 403, 'message': 'Your account has been blocked.'},
+            }, status=status.HTTP_403_FORBIDDEN)
         if not user.mobile_verified:
             user.mobile_verified = True
             user.is_active = True
@@ -182,11 +185,15 @@ class RegisterMobileView(APIView):
         identifier = f'mobile:{mobile}'
         otp = generate_otp(identifier)
         _send_otp_mobile(mobile, otp)
-        return Response({
+        payload = {
             'success': True,
             'message': 'OTP sent to mobile',
             'data': {'mobile': mobile},
-        }, status=status.HTTP_200_OK)
+        }
+        # Expose OTP in development/testing only.
+        if getattr(settings, 'DEBUG', False):
+            payload['data']['otp'] = otp
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class VerifyMobileView(APIView):

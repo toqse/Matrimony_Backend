@@ -31,5 +31,6 @@ urlpatterns = [
     path('generate-about/', ProfileGenerateAboutView.as_view()),
     path('about/', ProfileAboutView.as_view()),
     path('photos/', ProfilePhotosView.as_view()),
+    path('photos/<int:photo_id>/', ProfilePhotosView.as_view()),
     path('complete/', ProfileCompleteView.as_view()),
 ]

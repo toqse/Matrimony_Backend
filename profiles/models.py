@@ -32,6 +32,16 @@ class UserProfile(TimeStampedModel):
     about_completed = models.BooleanField(default=False)
     photos_completed = models.BooleanField(default=False)
 
+    admin_verified = models.BooleanField(
+        default=False,
+        help_text='Platform verification (admin). Distinct from mobile_verified.',
+    )
+    has_horoscope = models.BooleanField(
+        default=False,
+        help_text='Horoscope document available (admin/UI badge).',
+    )
+    horoscope_data = models.JSONField(default=dict, blank=True)
+
     class Meta:
         db_table = 'profiles_user_profile'
 
@@ -103,6 +113,7 @@ class UserReligion(TimeStampedModel):
         max_length=20, choices=PARTNER_CASTE_CHOICES,
         default=PARTNER_CASTE_ANY, blank=True
     )
+    gothram = models.CharField(max_length=150, blank=True)
 
     class Meta:
         db_table = 'profiles_user_religion'
@@ -127,6 +138,7 @@ class UserPersonal(TimeStampedModel):
     colour = models.CharField(max_length=50, blank=True)
     blood_group = models.CharField(max_length=10, blank=True)
     number_of_children = models.PositiveSmallIntegerField(default=0, db_column='children_count')
+    children_living_with = models.CharField(max_length=200, blank=True)
 
     class Meta:
         db_table = 'profiles_user_personal'
@@ -148,6 +160,8 @@ class UserFamily(TimeStampedModel):
     sisters = models.PositiveSmallIntegerField(default=0)
     married_sisters = models.PositiveSmallIntegerField(default=0)
     about_family = models.TextField(blank=True)
+    family_type = models.CharField(max_length=100, blank=True)
+    family_status = models.CharField(max_length=100, blank=True)
 
     class Meta:
         db_table = 'profiles_user_family'
@@ -174,6 +188,8 @@ class UserEducation(TimeStampedModel):
         'master.IncomeRange', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
     )
     employment_status = models.CharField(max_length=50, blank=True)
+    company = models.CharField(max_length=200, blank=True)
+    working_location = models.CharField(max_length=200, blank=True)
 
     class Meta:
         db_table = 'profiles_user_education'
@@ -192,6 +208,7 @@ class UserPhotos(TimeStampedModel):
     family_photo = models.ImageField(upload_to='profiles/%Y/%m/', null=True, blank=True)
     aadhaar_front = models.ImageField(upload_to='profiles/aadhaar/%Y/%m/', null=True, blank=True)
     aadhaar_back = models.ImageField(upload_to='profiles/aadhaar/%Y/%m/', null=True, blank=True)
+    profile_photo_url = models.URLField(max_length=500, blank=True)
 
     class Meta:
         db_table = 'profiles_user_photos'

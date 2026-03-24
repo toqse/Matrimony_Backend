@@ -9,20 +9,31 @@ def dedupe_profile_views(apps, schema_editor):
     (viewer, viewed_user). Keeps the earliest row per pair (by smallest id).
     """
     ProfileView = apps.get_model("plans", "ProfileView")
-    db_alias = schema_editor.connection.alias
 
     # Use raw SQL for speed and minimal memory. This keeps the lowest id per pair.
     table = ProfileView._meta.db_table
     with schema_editor.connection.cursor() as cursor:
-        cursor.execute(
-            f"""
-            DELETE FROM {table} pv
-            USING {table} pv2
-            WHERE pv.viewer_id = pv2.viewer_id
-              AND pv.viewed_user_id = pv2.viewed_user_id
-              AND pv.id > pv2.id
-            """
-        )
+        if schema_editor.connection.vendor == "sqlite":
+            cursor.execute(
+                f"""
+                DELETE FROM {table}
+                WHERE id NOT IN (
+                    SELECT MIN(id)
+                    FROM {table}
+                    GROUP BY viewer_id, viewed_user_id
+                )
+                """
+            )
+        else:
+            cursor.execute(
+                f"""
+                DELETE FROM {table} pv
+                USING {table} pv2
+                WHERE pv.viewer_id = pv2.viewer_id
+                  AND pv.viewed_user_id = pv2.viewed_user_id
+                  AND pv.id > pv2.id
+                """
+            )
 
 
 class Migration(migrations.Migration):

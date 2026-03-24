@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Country, State, District, City,
     Religion, Caste, MotherTongue, Height, MaritalStatus, IncomeRange,
-    Education, EducationSubject, Occupation, Branch,
+    Education, EducationSubject, Occupation, EmploymentStatus, Branch,
 )
 
 
@@ -75,6 +75,11 @@ class EducationSubjectAdmin(admin.ModelAdmin):
 
 @admin.register(Occupation)
 class OccupationAdmin(admin.ModelAdmin):
+    list_display = ['name', 'is_active']
+
+
+@admin.register(EmploymentStatus)
+class EmploymentStatusAdmin(admin.ModelAdmin):
     list_display = ['name', 'is_active']
 
 

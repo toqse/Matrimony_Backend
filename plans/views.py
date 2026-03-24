@@ -14,7 +14,7 @@ from accounts.models import User
 from core.permissions import IsAdmin
 from user_settings.models import UserSettings
 from django.db import transaction
-from .models import Interest, Plan, ServiceCharge, UserPlan, Transaction, Conversation
+from .models import Interest, Plan, ProfileView as ProfileViewModel, ServiceCharge, UserPlan, Transaction, Conversation
 from .serializers import (
     PlanSerializer,
     PlanPurchaseSerializer,
@@ -163,18 +163,6 @@ class PlanPurchaseView(APIView):
                 service_charge_paid = Decimal('0')
                 payment_message = 'Plan purchased. Remaining service charge can be paid later.'
 
-            txn = Transaction.objects.create(
-                user=user,
-                plan=plan,
-                amount=amount_paid,
-                service_charge=service_charge_total,
-                total_amount=amount_paid,
-                payment_method=payment_method,
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-                transaction_id='',
-            )
-
             valid_from = today
             if old_up:
                 # Carry forward remaining quotas from old plan and extend validity.
@@ -217,6 +205,19 @@ class PlanPurchaseView(APIView):
                     'horoscope_used': 0,
                     'contact_views_used': 0,
                 },
+            )
+
+            # After UserPlan exists so commission signal can link subscription (see admin_panel.commissions.signals).
+            txn = Transaction.objects.create(
+                user=user,
+                plan=plan,
+                amount=amount_paid,
+                service_charge=service_charge_total,
+                total_amount=amount_paid,
+                payment_method=payment_method,
+                payment_status=Transaction.STATUS_SUCCESS,
+                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                transaction_id='',
             )
 
         service_charge_remaining = service_charge_total - service_charge_paid
@@ -377,12 +378,24 @@ class SendInterestView(APIView):
                 'data': {'status': Interest.STATUS_PENDING, 'interest_id': incoming.id},
             }, status=status.HTTP_200_OK)
 
-        _, created = Interest.objects.get_or_create(
+        interest, created = Interest.objects.get_or_create(
             sender=request.user,
             receiver=receiver,
             defaults={'status': Interest.STATUS_PENDING}
         )
         if not created:
+            # Allow re-sending after sender cancelled or receiver rejected.
+            # Re-activate the same row back to pending so match list flags
+            # (is_interest_sent / interest_status) stay consistent.
+            if interest.status in (Interest.STATUS_CANCELLED, Interest.STATUS_REJECTED):
+                interest.status = Interest.STATUS_PENDING
+                interest.save(update_fields=['status', 'updated_at'])
+                PlanLimitService.consume_interest(request.user)
+                return Response({
+                    'success': True,
+                    'message': 'Interest sent successfully.',
+                    'data': {'status': Interest.STATUS_PENDING},
+                }, status=status.HTTP_200_OK)
             return Response({
                 'success': True,
                 'message': 'Interest already sent.',
@@ -648,11 +661,15 @@ class ContactUnlockView(APIView):
     POST /api/v1/contact/unlock/
     Body: { "matri_id": "AM100012" }
     Uses PlanLimitService.can_view_contact and consume_contact_view.
+    If the viewer has not opened this profile before, also records ProfileView and
+    consume_profile_view (blocked with 403 when profile view quota is exhausted).
     """
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser]
 
     def post(self, request):
+        from profiles.views import _build_profile_data_for_user
+
         matri_id = (request.data.get('matri_id') or '').strip()
         if not matri_id:
             return Response({
@@ -684,13 +701,40 @@ class ContactUnlockView(APIView):
                 'error': {'code': 403, 'message': 'Upgrade plan to view contact'}
             }, status=status.HTTP_403_FORBIDDEN)
 
-        PlanLimitService.consume_contact_view(request.user)
+        already_viewed = ProfileViewModel.objects.filter(
+            viewer=request.user, viewed_user=target
+        ).exists()
+        if not already_viewed:
+            can_profile, _ = PlanLimitService.can_view_profile(request.user)
+            if not can_profile:
+                return Response({
+                    'success': False,
+                    'error': {
+                        'code': 403,
+                        'message': 'Upgrade plan to view profile',
+                    }
+                }, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            PlanLimitService.consume_contact_view(request.user)
+            if not already_viewed:
+                _, created = ProfileViewModel.objects.get_or_create(
+                    viewer=request.user, viewed_user=target
+                )
+                if created:
+                    PlanLimitService.consume_profile_view(request.user)
+
+        profile = _build_profile_data_for_user(
+            target, request=request, include_contact=True, include_family=True
+        )
 
         return Response({
             'success': True,
             'data': {
                 'phone': target.mobile or '',
                 'email': target.email or '',
+                'is_viewed_by_me': True,
+                'profile': profile,
             },
         }, status=status.HTTP_200_OK)
 
@@ -734,7 +778,7 @@ class ChatStartView(APIView):
         if not has_accepted_interest_between(request.user, other):
             return Response({
                 'success': False,
-                'error': {'code': 403, 'message': 'Please accept the interest request to start chat.'}
+                'error': {'code': 403, 'message': 'Interest is not Accepted by the other user.'}
             }, status=status.HTTP_403_FORBIDDEN)
 
         can_chat_flag, _ = can_chat(request.user)

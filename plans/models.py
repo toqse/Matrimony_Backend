@@ -40,6 +40,10 @@ class Plan(TimeStampedModel):
         help_text='Number of contact views allowed; 0 = unlimited'
     )
     description = models.TextField(blank=True)
+    is_highlighted = models.BooleanField(
+        default=False,
+        help_text="Show this plan prominently on user-facing plans page.",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:

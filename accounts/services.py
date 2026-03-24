@@ -16,6 +16,34 @@ def _otp_rate_limit_key(identifier):
     return f'otp_rate:{identifier}'
 
 
+def _pending_register_key(phone_e164: str) -> str:
+    return f'pending_register:{phone_e164}'
+
+
+def set_pending_registration(phone_e164: str, payload: dict) -> None:
+    """
+    Store registration fields until OTP is verified. TTL matches OTP expiry.
+    """
+    expiry_minutes = getattr(settings, 'OTP_EXPIRY_MINUTES', 5)
+    cache.set(
+        _pending_register_key(phone_e164),
+        payload,
+        timeout=max(60, expiry_minutes * 60 + 30),
+    )
+
+
+def get_pending_registration(phone_e164: str) -> dict | None:
+    return cache.get(_pending_register_key(phone_e164))
+
+
+def pop_pending_registration(phone_e164: str) -> dict | None:
+    key = _pending_register_key(phone_e164)
+    data = cache.get(key)
+    if data is not None:
+        cache.delete(key)
+    return data
+
+
 def _hash_otp(otp: str) -> str:
     return hashlib.sha256(otp.encode()).hexdigest()
 

@@ -3,6 +3,7 @@ Profile serializers for location, religion, personal, education, about, photos.
 GET response serializers and PATCH input serializers for profile section APIs.
 """
 from rest_framework import serializers
+from accounts.models import User
 from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
     UserFamily, UserEducation, UserPhotos,
@@ -263,6 +264,23 @@ class UserEducationSerializer(serializers.Serializer):
         from master.models import IncomeRange
         return self._resolve_by_name(IncomeRange, value, 'annual_income')
 
+    def validate(self, attrs):
+        highest_education_id = attrs.get('highest_education')
+        education_subject_id = attrs.get('education_subject')
+        if highest_education_id and education_subject_id:
+            from master.models import EducationSubject
+            is_mapped = EducationSubject.objects.filter(
+                pk=education_subject_id,
+                is_active=True,
+                educations__id=highest_education_id,
+                educations__is_active=True,
+            ).exists()
+            if not is_mapped:
+                raise serializers.ValidationError({
+                    'education_subject': 'Selected subject is not available for the chosen highest education.'
+                })
+        return attrs
+
     def create(self, validated_data):
         user = self.context['request'].user
         defaults = {}
@@ -325,7 +343,7 @@ class BasicDetailsReadSerializer(serializers.Serializer):
     """GET /api/v1/profile/basic/ response."""
     name = serializers.CharField()
     gender = serializers.SerializerMethodField()
-    dob = serializers.DateField(format='%Y-%m-%d', allow_null=True)
+    dob = serializers.DateField(format='%d-%m-%Y', allow_null=True)
     email = serializers.EmailField(allow_blank=True)
     phone = serializers.CharField(source='mobile', allow_blank=True)
     profile_for = serializers.CharField(allow_blank=True, allow_null=True)
@@ -333,11 +351,11 @@ class BasicDetailsReadSerializer(serializers.Serializer):
     def get_gender(self, obj):
         g = getattr(obj, 'gender', None)
         if g == 'M':
-            return 'male'
+            return 'Male'
         if g == 'F':
-            return 'female'
+            return 'Female'
         if g == 'O':
-            return 'other'
+            return 'Other'
         return g or ''
 
 
@@ -350,7 +368,7 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
     mother_tongue = serializers.SerializerMethodField()
     partner_religion_preference = serializers.CharField()
     partner_preference_type = serializers.CharField()
-    partner_religion_ids = serializers.ListField(child=serializers.IntegerField())
+    partner_religion_ids = serializers.SerializerMethodField()
     partner_caste_preference = serializers.CharField()
 
     def get_religion(self, obj):
@@ -361,6 +379,17 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
 
     def get_mother_tongue(self, obj):
         return obj.mother_tongue.name if obj.mother_tongue_id else None
+
+    def get_partner_religion_ids(self, obj):
+        ids = obj.partner_religion_ids or []
+        if not ids:
+            return []
+        from master.models import Religion
+        religion_map = {
+            rel.id: rel.name
+            for rel in Religion.objects.filter(pk__in=ids, is_active=True)
+        }
+        return [{'id': rid, 'name': religion_map.get(rid, '')} for rid in ids]
 
 
 class PersonalDetailsReadSerializer(serializers.Serializer):
@@ -500,9 +529,25 @@ PROFILE_FOR_CHOICES = [
 class BasicDetailsUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True)
     gender = serializers.ChoiceField(choices=[('male', 'Male'), ('female', 'Female'), ('other', 'Other')], required=False)
-    dob = serializers.DateField(required=False, allow_null=True)
+    dob = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     email = serializers.EmailField(required=False, allow_blank=True)
     profile_for = serializers.ChoiceField(choices=PROFILE_FOR_CHOICES, required=False, allow_blank=True, allow_null=True)
+
+    def validate_dob(self, value):
+        from accounts.serializers import parse_optional_dob
+        return parse_optional_dob(value)
+
+    def validate_email(self, value):
+        normalized = (value or '').strip().lower()
+        if not normalized:
+            return None
+        instance = getattr(self, 'instance', None)
+        qs = User.objects.filter(email__iexact=normalized)
+        if instance is not None:
+            qs = qs.exclude(pk=instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('Email already exists. Please use a different email.')
+        return normalized
 
     def update(self, instance, validated_data):
         g = validated_data.get('gender')
@@ -619,20 +664,72 @@ class ReligionDetailsUpdateSerializer(serializers.Serializer):
 
 
 class PersonalDetailsUpdateSerializer(serializers.Serializer):
-    marital_status_id = serializers.IntegerField(required=False, allow_null=True)
+    marital_status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    has_children = serializers.BooleanField(required=False, allow_null=True)
     children_count = serializers.IntegerField(source='number_of_children', required=False, min_value=0)
+    number_of_children = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     height_cm = serializers.IntegerField(required=False, allow_null=True)
+    height = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     weight_kg = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
+    weight = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
+    complexion = serializers.ChoiceField(
+        choices=['Fair', 'Wheatish', 'Dark', 'Very Fair'],
+        required=False,
+        allow_null=True,
+    )
     colour = serializers.CharField(required=False, allow_blank=True)
     blood_group = serializers.CharField(required=False, allow_blank=True)
 
-    def validate_marital_status_id(self, v):
-        if v is None:
-            return v
+    def to_internal_value(self, data):
+        data = dict(data) if not isinstance(data, dict) else data.copy()
+        raw = data.get('has_children')
+        if isinstance(raw, str):
+            raw_normalized = raw.strip().lower()
+            if raw_normalized in ('true', 'yes', '1'):
+                data['has_children'] = True
+            elif raw_normalized in ('false', 'no', '0'):
+                data['has_children'] = False
+        return super().to_internal_value(data)
+
+    def validate_marital_status(self, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
         from master.models import MaritalStatus
-        if not MaritalStatus.objects.filter(pk=v, is_active=True).exists():
-            raise serializers.ValidationError('Invalid marital_status_id.')
-        return v
+        name = value.strip()
+        obj = MaritalStatus.objects.filter(name__iexact=name, is_active=True).first()
+        if obj is None:
+            valid = list(MaritalStatus.objects.filter(is_active=True).values_list('name', flat=True)[:10])
+            raise serializers.ValidationError(
+                f'Marital status "{name}" not found. Use one of: {", ".join(valid)}'
+            )
+        return obj.id
+
+    def validate(self, attrs):
+        """
+        Keep PATCH compatibility with POST payload rules.
+        """
+        marital_status_name = self.initial_data.get('marital_status')
+
+        has_children = attrs.get('has_children', None)
+        number_of_children = attrs.get('number_of_children', None)
+
+        # If legacy children_count alias is used, it populates number_of_children via source.
+        if number_of_children is None and 'children_count' in attrs:
+            number_of_children = attrs.get('children_count')
+
+        requires_children_flag = False
+        if isinstance(marital_status_name, str):
+            requires_children_flag = marital_status_name.strip().lower() in ('separated', 'widowed', 'divorced')
+
+        if requires_children_flag and has_children is None:
+            raise serializers.ValidationError('Please specify whether you have children.')
+        if has_children is True and number_of_children is None:
+            raise serializers.ValidationError('Please specify the number of children.')
+        if has_children is False:
+            # Keep DB value non-null and semantically consistent.
+            attrs['number_of_children'] = 0
+
+        return attrs
 
 
 class LocationDetailsUpdateSerializer(serializers.Serializer):
@@ -725,6 +822,36 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
         if not IncomeRange.objects.filter(pk=v, is_active=True).exists():
             raise serializers.ValidationError('Invalid annual_income_id.')
         return v
+
+    def validate(self, attrs):
+        subject_id = attrs.get('education_subject_id')
+        if subject_id is None:
+            return attrs
+
+        education_id = attrs.get('highest_education_id')
+        if education_id is None:
+            request = self.context.get('request')
+            if request and request.user and request.user.is_authenticated:
+                existing = UserEducation.objects.filter(user=request.user).first()
+                if existing:
+                    education_id = existing.highest_education_id
+
+        if education_id is None:
+            # Partial payload without education context cannot enforce mapping yet.
+            return attrs
+
+        from master.models import EducationSubject
+        is_mapped = EducationSubject.objects.filter(
+            pk=subject_id,
+            is_active=True,
+            educations__id=education_id,
+            educations__is_active=True,
+        ).exists()
+        if not is_mapped:
+            raise serializers.ValidationError({
+                'education_subject_id': 'Selected subject is not available for the chosen highest education.'
+            })
+        return attrs
 
 
 class AboutDetailsUpdateSerializer(serializers.Serializer):

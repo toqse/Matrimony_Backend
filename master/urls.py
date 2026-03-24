@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     CountryList, StateList, DistrictList, CityList,
     ReligionList, MotherTongueList, HeightList, MaritalStatusList, IncomeRangeList,
-    EducationList, EducationSubjectList, OccupationList,
+    EducationList, EducationSubjectList, OccupationList, EmploymentStatusList,
     ReligionViewSet, CasteViewSet, MotherTongueViewSet,
 )
 
@@ -24,4 +24,5 @@ urlpatterns = [
     path('educations/', EducationList.as_view()),
     path('education-subjects/', EducationSubjectList.as_view()),
     path('occupations/', OccupationList.as_view()),
+    path('employment-statuses/', EmploymentStatusList.as_view()),
 ]

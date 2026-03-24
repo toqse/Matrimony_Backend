@@ -101,6 +101,10 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         blank=True,
         help_text='If set, reject JWTs issued before this time (e.g. after logout).',
     )
+    is_blocked = models.BooleanField(
+        default=False,
+        help_text='Blocked by admin; cannot use the app.',
+    )
 
     objects = UserManager()
     USERNAME_FIELD = 'email'

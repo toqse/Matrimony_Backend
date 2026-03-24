@@ -7,6 +7,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
+from django.db import IntegrityError
+from rest_framework.exceptions import ValidationError
 
 from core.media import absolute_media_url
 from .models import (
@@ -18,6 +20,7 @@ from .utils import (
     generate_about_me,
     generate_about_me_suggestions,
     get_profile_completion_data,
+    is_profile_visible_to_others,
 )
 from .serializers import (
     UserLocationSerializer,
@@ -141,8 +144,9 @@ class ProfilePreviewByMatriIdView(APIView):
     def get(self, request, matri_id):
         from accounts.models import User
         from matches.utils import age_from_dob
-        from plans.services import can_view_contact
-        from plans.models import ProfileView as ProfileViewModel
+        from plans.services import can_view_contact, can_view_profile, can_send_interest, can_chat
+        from plans.models import ProfileView as ProfileViewModel, Interest
+        from wishlist.models import Wishlist
 
         viewer = request.user
         try:
@@ -158,8 +162,28 @@ class ProfilePreviewByMatriIdView(APIView):
                 {'success': False, 'error': {'code': 400, 'message': 'Cannot view own profile here.'}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if not is_profile_visible_to_others(profile_user):
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         is_viewed_by_me = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
+        raw_interest_status = Interest.objects.filter(
+            sender=viewer,
+            receiver=profile_user,
+        ).values_list('status', flat=True).first()
+        is_interest_sent = raw_interest_status in (Interest.STATUS_PENDING, Interest.STATUS_ACCEPTED)
+        if raw_interest_status == Interest.STATUS_ACCEPTED:
+            interest_status = 'accepted'
+        elif raw_interest_status == Interest.STATUS_REJECTED:
+            interest_status = 'rejected'
+        elif raw_interest_status == Interest.STATUS_PENDING:
+            interest_status = 'sent'
+        else:
+            # Includes cancelled or no row.
+            interest_status = 'pending'
+        is_wishlisted = Wishlist.objects.filter(user=viewer, profile=profile_user).exists()
 
         # Reuse existing helper to gather profile data without contact details.
         profile = _build_profile_data_for_user(profile_user, request=request, include_contact=False, include_family=True)
@@ -190,11 +214,16 @@ class ProfilePreviewByMatriIdView(APIView):
 
         mother_tongue = religion.get('mother_tongue')
         profile_photo = photos.get('profile_photo')
+        full_photo = photos.get('full_photo')
 
         about_me = profile.get('about_me') or ''
         family_background = family.get('about_family') or ''
 
         can_view_contact_flag, _ = can_view_contact(viewer)
+        can_view_flag, _ = can_view_profile(viewer)
+        can_send_interest_flag, _ = can_send_interest(viewer)
+        can_chat_flag, _ = can_chat(viewer)
+        is_able_to_view = bool(is_viewed_by_me or can_view_flag)
 
         data = {
             'matri_id': profile_user.matri_id or '',
@@ -210,9 +239,19 @@ class ProfilePreviewByMatriIdView(APIView):
             'height': height_str,
             'mother_tongue': mother_tongue,
             'profile_photo': profile_photo,
+            'full_photo': full_photo,
             'about_me': about_me,
             'family_background': family_background,
             'contact_locked': not can_view_contact_flag,
+            'is_wishlisted': is_wishlisted,
+            'is_able_to_view': is_able_to_view,
+            'is_already_viewed': is_viewed_by_me,
+            'can_view_details': is_able_to_view,
+            'can_send_interest': can_send_interest_flag,
+            'can_chat': can_chat_flag,
+            'is_interest_sent': is_interest_sent,
+            'interest_status': interest_status,
+            'is_horoscope_sent': False,
         }
 
         out = {'success': True, 'data': {**data, 'is_viewed_by_me': is_viewed_by_me}}
@@ -256,6 +295,11 @@ class PublicProfileByMatriIdView(APIView):
             return Response(
                 {'success': False, 'error': {'code': 400, 'message': 'Cannot view own profile here.'}},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+        if not is_profile_visible_to_others(profile_user):
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
+                status=status.HTTP_404_NOT_FOUND
             )
 
         already_viewed = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
@@ -375,7 +419,10 @@ class BasicDetailsView(APIView):
     def patch(self, request):
         ser = BasicDetailsUpdateSerializer(request.user, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
-        ser.save()
+        try:
+            ser.save()
+        except IntegrityError:
+            raise ValidationError({'email': ['Email already exists. Please use a different email.']})
         return Response({'success': True, 'data': BasicDetailsReadSerializer(ser.instance).data}, status=status.HTTP_200_OK)
 
 
@@ -510,14 +557,26 @@ class ProfilePersonalView(APIView):
         ser = PersonalDetailsUpdateSerializer(data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         pers, _ = UserPersonal.objects.get_or_create(user=request.user, defaults={})
-        if ser.validated_data.get('marital_status_id') is not None:
-            pers.marital_status_id = ser.validated_data['marital_status_id']
+        if ser.validated_data.get('marital_status') is not None:
+            pers.marital_status_id = ser.validated_data['marital_status']
+        if 'has_children' in ser.validated_data:
+            pers.has_children = ser.validated_data['has_children']
+            if ser.validated_data['has_children'] is False and 'number_of_children' not in ser.validated_data:
+                pers.number_of_children = 0
         if 'number_of_children' in ser.validated_data:
-            pers.number_of_children = ser.validated_data['number_of_children']
-        if ser.validated_data.get('height_cm') is not None:
-            pers.height_text = f"{ser.validated_data['height_cm']} cm"
-        if ser.validated_data.get('weight_kg') is not None:
-            pers.weight = ser.validated_data['weight_kg']
+            pers.number_of_children = ser.validated_data['number_of_children'] if ser.validated_data['number_of_children'] is not None else 0
+        height_val = ser.validated_data.get('height_cm')
+        if height_val is None and ser.validated_data.get('height') is not None:
+            height_val = ser.validated_data['height']
+        if height_val is not None:
+            pers.height_text = f"{height_val} cm"
+        weight_val = ser.validated_data.get('weight_kg')
+        if weight_val is None and ser.validated_data.get('weight') is not None:
+            weight_val = ser.validated_data['weight']
+        if weight_val is not None:
+            pers.weight = weight_val
+        if 'complexion' in ser.validated_data:
+            pers.colour = ser.validated_data['complexion'] or ''
         if 'colour' in ser.validated_data:
             pers.colour = ser.validated_data['colour']
         if 'blood_group' in ser.validated_data:
@@ -568,7 +627,9 @@ class ProfileEducationView(APIView):
         return Response({'success': True, 'data': EducationDetailsReadSerializer(edu).data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
-        ser = EducationDetailsUpdateSerializer(data=request.data, partial=True)
+        ser = EducationDetailsUpdateSerializer(
+            data=request.data, partial=True, context={'request': request}
+        )
         ser.is_valid(raise_exception=True)
         edu, _ = UserEducation.objects.get_or_create(user=request.user, defaults={})
         if ser.validated_data.get('highest_education_id') is not None:
@@ -641,6 +702,14 @@ class ProfileAboutView(APIView):
 class ProfilePhotosView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, FormParser, MultiPartParser]
+    PHOTO_FIELD_MAP = {
+        1: 'profile_photo',
+        2: 'full_photo',
+        3: 'selfie_photo',
+        4: 'family_photo',
+        5: 'aadhaar_front',
+        6: 'aadhaar_back',
+    }
 
     def get(self, request):
         photos = UserPhotos.objects.filter(user=request.user).first()
@@ -668,6 +737,47 @@ class ProfilePhotosView(APIView):
         ser.save()
         mark_profile_step_completed(request.user, 'photos')
         return Response({'success': True, 'message': 'Photos saved.'}, status=status.HTTP_200_OK)
+
+    def delete(self, request, photo_id):
+        field_name = self.PHOTO_FIELD_MAP.get(photo_id)
+        if not field_name:
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 400,
+                        'message': 'Invalid photo_id. Use 1=profile_photo, 2=full_photo, 3=selfie_photo, 4=family_photo, 5=aadhaar_front, 6=aadhaar_back.',
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        photos = UserPhotos.objects.filter(user=request.user).first()
+        if not photos:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'No photos found for this user.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_field = getattr(photos, field_name, None)
+        if not image_field:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': f'No image found for photo_id {photo_id}.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_field.delete(save=False)
+        setattr(photos, field_name, None)
+        photos.save()
+
+        return Response(
+            {
+                'success': True,
+                'message': f'Photo deleted for photo_id {photo_id}.',
+                'data': PhotosDetailsReadSerializer(photos, context={'request': request}).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProfileCompleteView(APIView):

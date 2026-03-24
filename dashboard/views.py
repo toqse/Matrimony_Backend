@@ -3,7 +3,8 @@ Dashboard APIs: summary, new-matches, suggestions, today-picks.
 All require JWT authentication.
 """
 from datetime import timedelta
-from django.db.models import Q
+from django.db.models import Q, IntegerField, Value
+from django.db.models.functions import Cast, Coalesce
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
@@ -28,7 +29,17 @@ def _match_queryset(user):
         qs = qs.filter(gender='F')
     elif gender == 'F':
         qs = qs.filter(gender='M')
-    return qs
+    completion_score = (
+        Coalesce(Cast('user_profile__location_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__religion_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__personal_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__family_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__education_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__about_completed', IntegerField()), Value(0)) +
+        Coalesce(Cast('user_profile__photos_completed', IntegerField()), Value(0))
+    )
+    # 6 of 7 completed steps => int((6/7) * 100) == 85
+    return qs.annotate(profile_completion_steps=completion_score).filter(profile_completion_steps__gte=6)
 
 
 def _apply_partner_preference(qs, user):
