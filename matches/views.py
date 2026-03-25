@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
-from plans.models import ProfileView as ProfileViewModel
+from plans.models import Interest, ProfileView as ProfileViewModel
 from plans.services import (
     bulk_interest_ui_states_for_viewer,
     can_view_profile,
@@ -24,6 +24,26 @@ from wishlist.models import Wishlist
 from .utils import age_from_dob, dob_range_for_age, compute_match_percentage
 from .serializers import MatchListProfileSerializer, format_last_seen
 from core.media import absolute_media_url
+
+
+def _optional_fk_id(raw):
+    """Parse query id for filters; treat '', 0, 'any' as unset (no filter)."""
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if not s or s in ('0', 'any', 'null', 'none'):
+        return None
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _wants_profile_with_photo(request):
+    v = request.query_params.get('profile_with_photo')
+    if v is None:
+        return False
+    return str(v).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 def _match_queryset(request):
@@ -126,40 +146,25 @@ class MatchListView(APIView):
         if height_max is not None:
             qs = qs.filter(user_personal__height__value_cm__lte=height_max)
 
-        # Optional filters
-        religion_id = request.query_params.get('religion_id')
-        if religion_id:
-            try:
-                qs = qs.filter(user_religion__religion_id=int(religion_id))
-            except (TypeError, ValueError):
-                pass
-        caste_id = request.query_params.get('caste_id')
-        if caste_id:
-            try:
-                qs = qs.filter(user_religion__caste_fk_id=int(caste_id))
-            except (TypeError, ValueError):
-                pass
-        education_id = request.query_params.get('education_id')
-        if education_id:
-            try:
-                qs = qs.filter(user_education__highest_education_id=int(education_id))
-            except (TypeError, ValueError):
-                pass
-        occupation_id = request.query_params.get('occupation_id')
-        if occupation_id:
-            try:
-                qs = qs.filter(user_education__occupation_id=int(occupation_id))
-            except (TypeError, ValueError):
-                pass
-        marital_status = request.query_params.get('marital_status')
-        if marital_status:
-            try:
-                qs = qs.filter(user_personal__marital_status_id=int(marital_status))
-            except (TypeError, ValueError):
-                pass
+        # Optional filters (FK ids; skip 0/any so "Any" in UI does not filter to id=0)
+        religion_id = _optional_fk_id(request.query_params.get('religion_id'))
+        if religion_id is not None:
+            qs = qs.filter(user_religion__religion_id=religion_id)
+        caste_id = _optional_fk_id(request.query_params.get('caste_id'))
+        if caste_id is not None:
+            qs = qs.filter(user_religion__caste_fk_id=caste_id)
+        education_id = _optional_fk_id(request.query_params.get('education_id'))
+        if education_id is not None:
+            qs = qs.filter(user_education__highest_education_id=education_id)
+        occupation_id = _optional_fk_id(request.query_params.get('occupation_id'))
+        if occupation_id is not None:
+            qs = qs.filter(user_education__occupation_id=occupation_id)
+        marital_status_id = _optional_fk_id(request.query_params.get('marital_status'))
+        if marital_status_id is not None:
+            qs = qs.filter(user_personal__marital_status_id=marital_status_id)
 
         # Only with profile photo
-        if request.query_params.get('profile_with_photo') in ('1', 'true', 'yes'):
+        if _wants_profile_with_photo(request):
             qs = qs.filter(user_photos__profile_photo__isnull=False)
 
         qs = qs.distinct()
@@ -203,6 +208,16 @@ class MatchListView(APIView):
         can_view, _ = can_view_profile(request.user)
         can_send, _ = can_send_interest(request.user)
         can_chat_flag, _ = can_chat(request.user)
+
+        accepted_pair_rows = Interest.objects.filter(
+            Q(sender=request.user, receiver_id__in=page_user_ids)
+            | Q(receiver=request.user, sender_id__in=page_user_ids),
+            status=Interest.STATUS_ACCEPTED,
+        ).values_list('sender_id', 'receiver_id')
+        uid = request.user.pk
+        chat_allowed_with_ids = {
+            (r if s == uid else s) for s, r in accepted_pair_rows
+        }
 
         # Load viewer's profile for match %
         viewer = request.user
@@ -278,7 +293,7 @@ class MatchListView(APIView):
                 'is_already_viewed': is_already_viewed,
                 'can_view_details': is_able_to_view,
                 'can_send_interest': can_send,
-                'can_chat': can_chat_flag,
+                'can_chat': can_chat_flag and (u.pk in chat_allowed_with_ids),
                 'is_interest_sent': is_interest_sent,
                 'interest_status': interest_status,
                 'is_horoscope_sent': False,
@@ -286,7 +301,7 @@ class MatchListView(APIView):
 
         # Re-sort by match_percentage if sort_by is best_match or most_relevant
         if sort_by in ('best_match', 'most_relevant'):
-            profiles_data.sort(key=lambda x: x['match_percentage'] or 0, reverse=True)
+            profiles_data.sort(key=lambda x: x.get('match_percentage') or 0, reverse=True)
 
         return Response({
             'success': True,

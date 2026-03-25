@@ -7,7 +7,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from profiles.views import PublicProfileByMatriIdView, ProfilePreviewByMatriIdView
-from plans.views import MyPlanView, ContactUnlockView
+from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -62,6 +62,7 @@ urlpatterns = [
     path('api/v1/interests/', include('plans.urls')),
     path('api/v1/wishlist/', include('wishlist.urls')),
     path('api/v1/plans/', include('plans.urls_plans')),
+    path('api/v1/website/plans/', WebsitePlanListView.as_view()),
     path('api/v1/admin/plans/', include('admin_panel.plans.urls')),
     path('api/v1/chat/', include('chat.urls')),
     path('api/v1/settings/', include('user_settings.urls')),

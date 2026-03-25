@@ -151,6 +151,7 @@ class ProfilePreviewByMatriIdView(APIView):
             can_send_interest,
             can_chat,
             get_interest_ui_state_for_viewer,
+            has_accepted_interest_between,
         )
         from plans.models import ProfileView as ProfileViewModel
         from wishlist.models import Wishlist
@@ -217,6 +218,9 @@ class ProfilePreviewByMatriIdView(APIView):
         can_view_flag, _ = can_view_profile(viewer)
         can_send_interest_flag, _ = can_send_interest(viewer)
         can_chat_flag, _ = can_chat(viewer)
+        can_chat_effective = bool(
+            can_chat_flag and has_accepted_interest_between(viewer, profile_user)
+        )
         is_able_to_view = bool(is_viewed_by_me or can_view_flag)
 
         data = {
@@ -242,7 +246,7 @@ class ProfilePreviewByMatriIdView(APIView):
             'is_already_viewed': is_viewed_by_me,
             'can_view_details': is_able_to_view,
             'can_send_interest': can_send_interest_flag,
-            'can_chat': can_chat_flag,
+            'can_chat': can_chat_effective,
             'is_interest_sent': is_interest_sent,
             'interest_status': interest_status,
             'is_horoscope_sent': False,

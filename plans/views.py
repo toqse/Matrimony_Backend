@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import JSONParser
 from rest_framework.viewsets import ModelViewSet
 
@@ -89,6 +89,58 @@ class PlanListView(APIView):
             'data': {
                 'plans': out,
                 'gender': gender,
+            },
+        }, status=status.HTTP_200_OK)
+
+
+class WebsitePlanListView(APIView):
+    """
+    GET /api/v1/website/plans/
+    Public plan list for website (no token required).
+    Returns active plans and pricing breakdown for each gender.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        plans = Plan.objects.filter(is_active=True).order_by('price')
+        service_charges = {
+            row.gender: row.amount for row in ServiceCharge.objects.all()
+        }
+
+        out = []
+        for plan in plans:
+            price = plan.price or Decimal('0')
+            male_sc = service_charges.get('M', Decimal('0'))
+            female_sc = service_charges.get('F', Decimal('0'))
+            other_sc = service_charges.get('O', Decimal('0'))
+
+            out.append({
+                'id': plan.id,
+                'name': plan.name,
+                'price': float(price),
+                'duration_days': plan.duration_days,
+                'profile_view_limit': plan.profile_view_limit,
+                'interest_limit': plan.interest_limit,
+                'chat_limit': plan.chat_limit,
+                'horoscope_match_limit': plan.horoscope_match_limit,
+                'contact_view_limit': plan.contact_view_limit,
+                'description': plan.description or '',
+                'service_charge': {
+                    'male': float(male_sc),
+                    'female': float(female_sc),
+                    'other': float(other_sc),
+                },
+                'total_price': {
+                    'male': float(male_sc + price),
+                    'female': float(female_sc + price),
+                    'other': float(other_sc + price),
+                },
+            })
+
+        return Response({
+            'success': True,
+            'data': {
+                'plans': out,
             },
         }, status=status.HTTP_200_OK)
 
