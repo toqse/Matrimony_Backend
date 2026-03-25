@@ -482,13 +482,13 @@ Auth: Required, **active plan required**
 Description:
 - Compares bride/groom horoscopes and returns Kerala **Dashakoot** scores: **koota_points** (0 / 0.5 / 1 per koota),
   **poruthams** booleans (matched = points >= 0.5), **score** (sum of points, float), **max_score** 10.
-- Scoring rules are aligned to Prokerala’s published porutham tables (notably **Rasi Porutham**, **Rasyadhipathi**,
-  **Yoni**, **Rajju**) and may differ from older boolean-only approximations.
+- Scoring is **table-driven** for all 10 kootas using Prokerala-parity fixtures (with pair-level overrides where
+  empirical Prokerala outputs differ from generic published formulas).
+- This is intentionally not a pure formula-only engine; priority is matching Prokerala Kerala Dashakoot outputs.
 - Notes on strictness:
-  - **Rasi Porutham** uses the Prokerala rule: bride’s rasi must be in 1,3,4,5,7,9,10,11 from groom’s rasi.
-  - **Rasyadhipathi** uses Prokerala’s Friendly/Neutral/Enemy table (Enemy => 0 points, else 1 point).
-  - **Yoni** is scored as 0 only for enemy animal pairs; otherwise 1.
-  - **Rajju** is derived from the pair’s **nakshatra groups** (not from stored `horoscope.rajju` text).
+  - `koota_points` come from lookup matrices (0/0.5/1) per koota.
+  - `poruthams[key]` is derived from points (`true` when points >= 0.5).
+  - Existing request/response contract is unchanged; only scoring internals are upgraded.
 - Uses stored horoscope data only (no recalculation).
 - Each successful 200 consumes **one** horoscope match quota unit (see section 0). If quota is exhausted, HTTP 403.
 
