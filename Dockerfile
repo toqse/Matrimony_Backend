@@ -8,6 +8,9 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
+    libraqm0 \
+    libharfbuzz0b \
+    libfribidi0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

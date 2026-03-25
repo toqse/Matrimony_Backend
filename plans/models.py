@@ -149,10 +149,14 @@ class Transaction(TimeStampedModel):
     TYPE_PLAN_PURCHASE = 'plan_purchase'
     TYPE_PROFILE_BOOST = 'profile_boost'
     TYPE_REFUND = 'refund'
+    TYPE_JATHAKAM_PDF = 'jathakam_pdf'
+    TYPE_THALAKURI_PDF = 'thalakuri_pdf'
     TYPE_CHOICES = [
         (TYPE_PLAN_PURCHASE, 'Plan Purchase'),
         (TYPE_PROFILE_BOOST, 'Profile Boost'),
         (TYPE_REFUND, 'Refund'),
+        (TYPE_JATHAKAM_PDF, 'Jathakam PDF'),
+        (TYPE_THALAKURI_PDF, 'Thalakuri PDF'),
     ]
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

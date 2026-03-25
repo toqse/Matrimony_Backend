@@ -80,6 +80,17 @@ def plan_expired_response(user=None):
     }
 
 
+def horoscope_quota_exhausted_response():
+    """403 payload when horoscope match limit is reached (distinct from no active plan)."""
+    return {
+        'success': False,
+        'error': {
+            'code': 403,
+            'message': 'You have used all horoscope matches included in your plan. Upgrade or wait for renewal.',
+        },
+    }
+
+
 class PlanLimitService:
     """
     Service to check and consume plan limits: profile view, interest, chat, contact view.
@@ -179,6 +190,32 @@ class PlanLimitService:
         up.contact_views_used = (up.contact_views_used or 0) + 1
         up.save(update_fields=['contact_views_used', 'updated_at'])
 
+    @staticmethod
+    def can_horoscope_match(user):
+        """
+        Check if user may run a compatibility / horoscope match action.
+        Returns (allowed: bool, remaining: int | None). None remaining = unlimited.
+        """
+        up = _get_user_plan(user)
+        if not up:
+            return False, 0
+        limit = up.plan.horoscope_match_limit
+        if limit == 0:
+            return True, None
+        limit = limit + (getattr(up, 'horoscope_bonus', 0) or 0)
+        used = up.horoscope_used or 0
+        remaining = max(0, limit - used)
+        return remaining > 0, remaining
+
+    @staticmethod
+    def consume_horoscope_match(user):
+        """Increment horoscope_used after a successful match report. No-op if unlimited or no plan."""
+        up = _get_user_plan(user)
+        if not up or up.plan.horoscope_match_limit == 0:
+            return
+        up.horoscope_used = (up.horoscope_used or 0) + 1
+        up.save(update_fields=['horoscope_used', 'updated_at'])
+
 
 # Backward-compatible module-level functions (delegate to PlanLimitService)
 def can_view_profile(user):
@@ -195,6 +232,14 @@ def can_chat(user):
 
 def can_view_contact(user):
     return PlanLimitService.can_view_contact(user)
+
+
+def can_horoscope_match(user):
+    return PlanLimitService.can_horoscope_match(user)
+
+
+def consume_horoscope_match(user):
+    return PlanLimitService.consume_horoscope_match(user)
 
 
 def get_plan_info_for_response(user):
