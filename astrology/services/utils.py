@@ -18,6 +18,38 @@ PLANET_NAME_MAP = {
     'ketu': 'Ke',
 }
 
+PLANET_FULL_NAMES = {
+    'sun': 'Sun',
+    'moon': 'Moon',
+    'mars': 'Mars',
+    'mercury': 'Mercury',
+    'jupiter': 'Jupiter',
+    'venus': 'Venus',
+    'saturn': 'Saturn',
+    'rahu': 'Rahu',
+    'ketu': 'Ketu',
+}
+
+
+def enrich_grahanila_planets(grahanila):
+    """Add full_name to each planet dict for API consumers (backward compatible for stored rows)."""
+    if not isinstance(grahanila, dict):
+        return grahanila
+    out = dict(grahanila)
+    planets = out.get('planets')
+    if not isinstance(planets, dict):
+        return out
+    new_planets = {}
+    for key, val in planets.items():
+        if isinstance(val, dict):
+            pv = dict(val)
+            pv.setdefault('full_name', PLANET_FULL_NAMES.get(key, key.replace('_', ' ').title()))
+            new_planets[key] = pv
+        else:
+            new_planets[key] = val
+    out['planets'] = new_planets
+    return out
+
 
 def normalize_degree(value: float) -> float:
     return float(value) % 360.0

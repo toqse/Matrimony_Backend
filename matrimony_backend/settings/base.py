@@ -2,6 +2,7 @@
 Base Django settings for matrimony_backend.
 """
 import os
+from decimal import Decimal
 from pathlib import Path
 import environ
 
@@ -232,6 +233,21 @@ OTP_ATTEMPT_LIMIT = 5
 OTP_LENGTH = 6
 OTP_RATE_LIMIT_REQUESTS = 5
 OTP_RATE_LIMIT_WINDOW_MINUTES = 10
+
+# Astrology: signed chart / match-PDF URLs (seconds, default 30 days)
+ASTROLOGY_PUBLIC_URL_MAX_AGE = env.int('ASTROLOGY_PUBLIC_URL_MAX_AGE', default=60 * 60 * 24 * 30)
+# Swiss Ephemeris: True = Lahiri sidereal (Prokerala-style Vedic); False = legacy tropical positions
+ASTROLOGY_SIDEREAL = env.bool('ASTROLOGY_SIDEREAL', default=True)
+# Dev-only: include debug trace fields in horoscope output (JD UTC, ayanamsa, flags, lat/lon source)
+ASTROLOGY_DEBUG_TRACE = env.bool('ASTROLOGY_DEBUG_TRACE', default=False)
+
+# Razorpay (Jathakam / Thalakuri PDF purchases)
+RAZORPAY_KEY_ID = env('RAZORPAY_KEY_ID', default='')
+RAZORPAY_KEY_SECRET = env('RAZORPAY_KEY_SECRET', default='')
+
+# Catalog prices (INR); Razorpay orders use paise (amount * 100)
+ASTROLOGY_JATHAKAM_PRICE_INR = Decimal(str(env('ASTROLOGY_JATHAKAM_PRICE_INR', default='175')))
+ASTROLOGY_THALAKURI_PRICE_INR = Decimal(str(env('ASTROLOGY_THALAKURI_PRICE_INR', default='20')))
 
 # JWT refresh in HTTP-only cookie (optional)
 JWT_REFRESH_COOKIE_NAME = env('JWT_REFRESH_COOKIE_NAME', default='refresh_token')
