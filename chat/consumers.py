@@ -9,9 +9,14 @@ from channels.db import database_sync_to_async
 from django.utils import timezone
 
 from plans.models import Conversation, Message
-from plans.services import has_accepted_interest_between
+from plans.services import has_accepted_interest_between, user_has_active_plan
 
 from core.last_seen import touch_user_last_seen, mark_user_offline
+
+
+@database_sync_to_async
+def _viewer_has_active_plan(user):
+    return user_has_active_plan(user)
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -32,6 +37,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return None, 'Conversation not found'
         if user.pk != conv.user1_id and user.pk != conv.user2_id:
             return None, 'Not a participant'
+        if not user_has_active_plan(user):
+            return None, 'Active plan required'
         other = conv.user2 if user.pk == conv.user1_id else conv.user1
         if not has_accepted_interest_between(user, other):
             return None, 'Interest not accepted'
@@ -144,6 +151,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         user = self.scope.get('user')
         if not user or not getattr(user, 'is_authenticated', False) or not user.is_authenticated:
             await self.send(text_data=json.dumps({'error': 'Authentication required'}))
+            return
+        if not await _viewer_has_active_plan(user):
+            await self.send(text_data=json.dumps({'error': 'Active plan required'}))
             return
         try:
             data = json.loads(text_data)

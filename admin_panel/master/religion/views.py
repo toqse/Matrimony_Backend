@@ -32,9 +32,6 @@ class ReligionListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        if not self._is_admin(request):
-            return _error("Insufficient permissions", 403)
-
         qs = Religion.objects.filter(is_active=True)
         search = (request.query_params.get("search") or "").strip()
         if search:

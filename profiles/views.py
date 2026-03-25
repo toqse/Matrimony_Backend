@@ -145,8 +145,14 @@ class ProfilePreviewByMatriIdView(APIView):
     def get(self, request, matri_id):
         from accounts.models import User
         from matches.utils import age_from_dob
-        from plans.services import can_view_contact, can_view_profile, can_send_interest, can_chat
-        from plans.models import ProfileView as ProfileViewModel, Interest
+        from plans.services import (
+            can_view_contact,
+            can_view_profile,
+            can_send_interest,
+            can_chat,
+            get_interest_ui_state_for_viewer,
+        )
+        from plans.models import ProfileView as ProfileViewModel
         from wishlist.models import Wishlist
 
         viewer = request.user
@@ -170,20 +176,7 @@ class ProfilePreviewByMatriIdView(APIView):
             )
 
         is_viewed_by_me = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
-        raw_interest_status = Interest.objects.filter(
-            sender=viewer,
-            receiver=profile_user,
-        ).values_list('status', flat=True).first()
-        is_interest_sent = raw_interest_status in (Interest.STATUS_PENDING, Interest.STATUS_ACCEPTED)
-        if raw_interest_status == Interest.STATUS_ACCEPTED:
-            interest_status = 'accepted'
-        elif raw_interest_status == Interest.STATUS_REJECTED:
-            interest_status = 'rejected'
-        elif raw_interest_status == Interest.STATUS_PENDING:
-            interest_status = 'sent'
-        else:
-            # Includes cancelled or no row.
-            interest_status = 'pending'
+        interest_status, is_interest_sent = get_interest_ui_state_for_viewer(viewer, profile_user)
         is_wishlisted = Wishlist.objects.filter(user=viewer, profile=profile_user).exists()
 
         # Reuse existing helper to gather profile data without contact details.

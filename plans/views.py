@@ -364,18 +364,21 @@ class SendInterestView(APIView):
                 'data': {'status': Interest.STATUS_ACCEPTED},
             }, status=status.HTTP_200_OK)
 
-        # If the receiver already sent an interest request to the current user,
-        # don't create a duplicate request—ask user to accept instead.
+        # Mutual interest: they already sent you a pending request; reciprocating accepts both sides.
         incoming = Interest.objects.filter(
             sender=receiver,
             receiver=request.user,
             status=Interest.STATUS_PENDING,
         ).first()
         if incoming:
+            with transaction.atomic():
+                incoming.status = Interest.STATUS_ACCEPTED
+                incoming.save(update_fields=['status', 'updated_at'])
+                PlanLimitService.consume_interest(request.user)
             return Response({
                 'success': True,
-                'message': 'This user already sent you an interest request. Please accept it.',
-                'data': {'status': Interest.STATUS_PENDING, 'interest_id': incoming.id},
+                'message': 'You both expressed interest. Connection accepted.',
+                'data': {'status': Interest.STATUS_ACCEPTED, 'interest_id': incoming.id},
             }, status=status.HTTP_200_OK)
 
         interest, created = Interest.objects.get_or_create(
@@ -558,6 +561,9 @@ class RespondInterestView(APIView):
                     'message': 'Permission denied.',
                 },
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if action == 'accept' and get_user_plan_status(request.user) != 'active':
+            return Response(plan_expired_response(request.user), status=status.HTTP_403_FORBIDDEN)
 
         if action == 'accept':
             interest.status = Interest.STATUS_ACCEPTED
@@ -757,7 +763,7 @@ class ChatStartView(APIView):
                 'error': {'code': 400, 'message': 'matri_id is required.'}
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        if is_plan_expired(request.user):
+        if get_user_plan_status(request.user) != 'active':
             return Response(plan_expired_response(request.user), status=status.HTTP_403_FORBIDDEN)
 
         try:

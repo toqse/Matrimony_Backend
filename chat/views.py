@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from accounts.models import User
 from plans.models import Conversation, Message
-from plans.services import has_accepted_interest_between
+from plans.services import has_accepted_interest_between, get_user_plan_status, plan_expired_response
 from profiles.models import UserPhotos
 from matches.serializers import format_last_seen
 from core.media import absolute_media_url
@@ -39,6 +39,8 @@ class ChatListView(APIView):
 
     def get(self, request):
         user = request.user
+        if get_user_plan_status(user) != 'active':
+            return Response(plan_expired_response(user), status=status.HTTP_403_FORBIDDEN)
         convs = (
             Conversation.objects.filter(
                 Q(user1=user) | Q(user2=user)
@@ -89,6 +91,8 @@ class ChatMessagesView(APIView):
 
     def get(self, request, conversation_id):
         user = request.user
+        if get_user_plan_status(user) != 'active':
+            return Response(plan_expired_response(user), status=status.HTTP_403_FORBIDDEN)
         try:
             conv = Conversation.objects.select_related('user1', 'user2').get(pk=conversation_id)
         except Conversation.DoesNotExist:

@@ -10,8 +10,14 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
-from plans.models import ProfileView as ProfileViewModel, Interest
-from plans.services import can_view_profile, can_send_interest, can_chat, _get_user_plan
+from plans.models import ProfileView as ProfileViewModel
+from plans.services import (
+    bulk_interest_ui_states_for_viewer,
+    can_view_profile,
+    can_send_interest,
+    can_chat,
+    _get_user_plan,
+)
 from user_settings.models import UserSettings
 from wishlist.models import Wishlist
 
@@ -190,15 +196,8 @@ class MatchListView(APIView):
                 viewed_user_id__in=[u.pk for u in page_users],
             ).values_list('viewed_user_id', flat=True)
         )
-        sent_interest_rows = list(
-            Interest.objects.filter(
-                sender=request.user,
-                receiver_id__in=[u.pk for u in page_users],
-            ).values_list('receiver_id', 'status')
-        )
-        interest_status_by_receiver_id = {
-            receiver_id: status for receiver_id, status in sent_interest_rows
-        }
+        page_user_ids = [u.pk for u in page_users]
+        interest_ui_by_other_id = bulk_interest_ui_states_for_viewer(request.user.pk, page_user_ids)
 
         # Plan permissions for viewer (first-time full view quota)
         can_view, _ = can_view_profile(request.user)
@@ -259,19 +258,7 @@ class MatchListView(APIView):
             is_already_viewed = u.pk in viewed_user_ids
             is_able_to_view = is_already_viewed or can_view
 
-            raw_interest_status = interest_status_by_receiver_id.get(u.pk)
-            if raw_interest_status == Interest.STATUS_ACCEPTED:
-                interest_status = 'accepted'
-            elif raw_interest_status == Interest.STATUS_REJECTED:
-                interest_status = 'rejected'
-            elif raw_interest_status == Interest.STATUS_PENDING:
-                interest_status = 'sent'
-            elif raw_interest_status == Interest.STATUS_CANCELLED:
-                # Product rule: self-cancelled interest should appear as pending
-                # so user can send interest again from UI.
-                interest_status = 'pending'
-            else:
-                interest_status = 'pending'
+            interest_status, is_interest_sent = interest_ui_by_other_id.get(u.pk, ('pending', False))
 
             profiles_data.append({
                 'matri_id': u.matri_id or '',
@@ -292,7 +279,7 @@ class MatchListView(APIView):
                 'can_view_details': is_able_to_view,
                 'can_send_interest': can_send,
                 'can_chat': can_chat_flag,
-                'is_interest_sent': raw_interest_status in (Interest.STATUS_PENDING, Interest.STATUS_ACCEPTED),
+                'is_interest_sent': is_interest_sent,
                 'interest_status': interest_status,
                 'is_horoscope_sent': False,
             })

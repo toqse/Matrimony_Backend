@@ -25,6 +25,11 @@ def _get_user_plan(user):
     return up
 
 
+def user_has_active_plan(user):
+    """True when the user has a valid, non-expired active subscription (same as get_user_plan_status == 'active')."""
+    return get_user_plan_status(user) == 'active'
+
+
 def get_user_plan_status(user):
     """
     Return a simple status string for the user's plan:
@@ -269,3 +274,58 @@ def has_accepted_interest_between(user_a, user_b):
         Q(sender=user_a, receiver=user_b) | Q(sender=user_b, receiver=user_a),
         status=Interest.STATUS_ACCEPTED,
     ).exists()
+
+
+def interest_ui_state_from_pair_states(out_status, inc_status):
+    """
+    Map outgoing/incoming Interest.status (or None) to API interest_status + is_interest_sent.
+    out_status: row viewer -> other; inc_status: row other -> viewer.
+    """
+    from .models import Interest
+
+    if out_status == Interest.STATUS_ACCEPTED or inc_status == Interest.STATUS_ACCEPTED:
+        return 'accepted', True
+    if out_status:
+        if out_status == Interest.STATUS_PENDING:
+            return 'sent', True
+        if out_status == Interest.STATUS_REJECTED:
+            return 'rejected', False
+        if out_status == Interest.STATUS_CANCELLED:
+            return 'pending', False
+    return 'pending', False
+
+
+def bulk_interest_ui_states_for_viewer(viewer_id, other_user_ids):
+    """
+    For many profile user ids, return {other_id: (interest_status, is_interest_sent)}.
+    """
+    from django.db.models import Q
+    from .models import Interest
+
+    if not other_user_ids:
+        return {}
+    other_user_ids = list({x for x in other_user_ids})
+    rows = Interest.objects.filter(
+        Q(sender_id=viewer_id, receiver_id__in=other_user_ids)
+        | Q(sender_id__in=other_user_ids, receiver_id=viewer_id)
+    ).values_list('sender_id', 'receiver_id', 'status')
+    by_other = {oid: {'out': None, 'inc': None} for oid in other_user_ids}
+    for sid, rid, st in rows:
+        if sid == viewer_id:
+            if rid in by_other:
+                by_other[rid]['out'] = st
+        elif rid == viewer_id:
+            if sid in by_other:
+                by_other[sid]['inc'] = st
+    return {
+        oid: interest_ui_state_from_pair_states(d['out'], d['inc'])
+        for oid, d in by_other.items()
+    }
+
+
+def get_interest_ui_state_for_viewer(viewer, profile_user):
+    """Single-pair helper for profile preview and similar endpoints."""
+    if not viewer or not profile_user:
+        return 'pending', False
+    m = bulk_interest_ui_states_for_viewer(viewer.pk, [profile_user.pk])
+    return m.get(profile_user.pk, ('pending', False))

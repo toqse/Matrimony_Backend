@@ -25,6 +25,9 @@ from .merge_service import merge_user_accounts
 from .patch_helpers import SECTION_HANDLERS
 from .serializers import AdminProfileListSerializer, _age_from_dob
 
+STAFF_VERIFY_FORBIDDEN_MSG = "Profile verification requires Branch Manager or Admin role."
+STAFF_DELETE_FORBIDDEN_MSG = "Profile deletion requires Admin role."
+
 
 def _staff_profile_for_admin_user(user):
     mobile = (getattr(user, "mobile", "") or "").strip()
@@ -248,6 +251,11 @@ class AdminProfileDetailAPIView(APIView):
             return Response({"success": False, "error": {"code": 404, "message": "Profile not found"}}, status=404)
         if not _can_edit(request, user):
             return Response({"success": False, "error": {"code": 403, "message": "Access denied"}}, status=403)
+        if getattr(request.user, "role", None) == AdminUser.ROLE_STAFF and "admin_verified" in request.data:
+            return Response(
+                {"success": False, "error": {"code": 403, "message": STAFF_VERIFY_FORBIDDEN_MSG}},
+                status=403,
+            )
 
         profile, _ = UserProfile.objects.get_or_create(user=user)
         if "admin_verified" in request.data:
@@ -281,6 +289,11 @@ class AdminProfileDetailAPIView(APIView):
         return Response({"success": True, "data": data})
 
     def delete(self, request, matri_id):
+        if getattr(request.user, "role", None) == AdminUser.ROLE_STAFF:
+            return Response(
+                {"success": False, "error": {"code": 403, "message": STAFF_DELETE_FORBIDDEN_MSG}},
+                status=403,
+            )
         if not _can_delete(request):
             return Response({"success": False, "error": {"code": 403, "message": "Insufficient permissions"}}, status=403)
         user = _get_user_by_matri(matri_id)
@@ -302,6 +315,11 @@ class AdminProfileVerifyAPIView(AuditLogMixin, APIView):
         user = _get_user_by_matri(matri_id)
         if not user:
             return Response({"success": False, "error": {"code": 404, "message": "Profile not found"}}, status=404)
+        if getattr(request.user, "role", None) == AdminUser.ROLE_STAFF:
+            return Response(
+                {"success": False, "error": {"code": 403, "message": STAFF_VERIFY_FORBIDDEN_MSG}},
+                status=403,
+            )
         if not _can_edit(request, user):
             return Response({"success": False, "error": {"code": 403, "message": "Access denied"}}, status=403)
         completion = get_profile_completion_data(user)

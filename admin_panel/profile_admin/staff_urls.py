@@ -1,7 +1,3 @@
-from django.urls import path
+# Staff My Profiles routes: admin_panel.staff_profiles.urls (api/v1/staff/profiles/).
 
-from .views import StaffProfileListAPIView
-
-urlpatterns = [
-    path("", StaffProfileListAPIView.as_view(), name="staff-profiles-list"),
-]
+urlpatterns: list = []

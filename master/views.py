@@ -26,6 +26,7 @@ from .serializers import (
 
 class CountryList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = CountrySerializer
 
     def get_queryset(self):
@@ -38,6 +39,7 @@ class CountryList(generics.ListAPIView):
 
 class StateList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = StateSerializer
 
     def get_queryset(self):
@@ -53,6 +55,7 @@ class StateList(generics.ListAPIView):
 
 class DistrictList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = DistrictSerializer
 
     def get_queryset(self):
@@ -68,6 +71,7 @@ class DistrictList(generics.ListAPIView):
 
 class CityList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = CitySerializer
 
     def get_queryset(self):
@@ -83,6 +87,7 @@ class CityList(generics.ListAPIView):
 
 class ReligionList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = ReligionSerializer
 
     def get_queryset(self):
@@ -95,6 +100,7 @@ class ReligionList(generics.ListAPIView):
 
 class MotherTongueList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = MotherTongueSerializer
 
     def get_queryset(self):
@@ -107,6 +113,7 @@ class MotherTongueList(generics.ListAPIView):
 
 class HeightList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = HeightSerializer
 
     def get_queryset(self):
@@ -115,6 +122,7 @@ class HeightList(generics.ListAPIView):
 
 class MaritalStatusList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = MaritalStatusSerializer
 
     def get_queryset(self):
@@ -123,6 +131,7 @@ class MaritalStatusList(generics.ListAPIView):
 
 class IncomeRangeList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = IncomeRangeSerializer
 
     def get_queryset(self):
@@ -131,6 +140,7 @@ class IncomeRangeList(generics.ListAPIView):
 
 class EducationList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = EducationSerializer
 
     def get_queryset(self):
@@ -143,6 +153,7 @@ class EducationList(generics.ListAPIView):
 
 class EducationSubjectList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = EducationSubjectSerializer
 
     def get_queryset(self):
@@ -158,6 +169,7 @@ class EducationSubjectList(generics.ListAPIView):
 
 class OccupationList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = OccupationSerializer
 
     def get_queryset(self):
@@ -170,6 +182,7 @@ class OccupationList(generics.ListAPIView):
 
 class EmploymentStatusList(generics.ListAPIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     serializer_class = EmploymentStatusSerializer
 
     def get_queryset(self):
@@ -185,6 +198,7 @@ class EmploymentStatusList(generics.ListAPIView):
 class ReligionViewSet(viewsets.ModelViewSet):
     serializer_class = ReligionSerializer
     permission_classes = [ReadOnlyOrAdmin]
+    authentication_classes = []
     filter_backends = [SearchFilter]
     search_fields = ['name']
 
@@ -199,6 +213,7 @@ class ReligionViewSet(viewsets.ModelViewSet):
 class CasteViewSet(viewsets.ModelViewSet):
     serializer_class = CasteSerializer
     permission_classes = [ReadOnlyOrAdmin]
+    authentication_classes = []
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = CasteFilter
     search_fields = ['name']
@@ -214,6 +229,7 @@ class CasteViewSet(viewsets.ModelViewSet):
 class MotherTongueViewSet(viewsets.ModelViewSet):
     serializer_class = MotherTongueSerializer
     permission_classes = [ReadOnlyOrAdmin]
+    authentication_classes = []
     filter_backends = [SearchFilter]
     search_fields = ['name']
 

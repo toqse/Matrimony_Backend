@@ -35,6 +35,19 @@ def staff_profile_for(user: AdminUser) -> StaffProfile | None:
     )
 
 
+def staff_enquiries_queryset(user: AdminUser):
+    """
+    Staff panel scope: only enquiries assigned to this admin user.
+    """
+    from .models import Enquiry
+
+    return (
+        Enquiry.objects.filter(assigned_to=user)
+        .select_related("assigned_to", "branch")
+        .prefetch_related("enquiry_notes__created_by")
+    )
+
+
 def branch_manager_branch_enquiry_scope(request):
     """
     Branch Manager only: returns (admin_panel.branches.Branch | None, error Response | None).

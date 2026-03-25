@@ -37,9 +37,21 @@ def _base_queryset():
 
 
 def _staff_profile_for_admin_user(user):
+    # Prefer explicit AdminUser -> StaffProfile link to avoid mismatches.
+    sp = (
+        StaffProfile.objects.select_related("branch")
+        .filter(admin_user=user, is_deleted=False)
+        .first()
+    )
+    if sp:
+        return sp
     e164_mobile = (getattr(user, "mobile", "") or "").strip()
     mobile10 = e164_mobile[-10:] if e164_mobile.startswith("+91") else e164_mobile
-    return StaffProfile.objects.filter(mobile=mobile10, is_deleted=False).first()
+    return (
+        StaffProfile.objects.select_related("branch")
+        .filter(mobile=mobile10, is_deleted=False)
+        .first()
+    )
 
 
 def _apply_filters(qs, request, enforce_branch_scope=False, enforce_staff_scope=False):
@@ -166,10 +178,6 @@ class AdminSubscriptionsListAPIView(_BaseSubscriptionListView):
 
 class BranchSubscriptionsListAPIView(_BaseSubscriptionListView):
     enforce_branch_scope = True
-
-
-class StaffSubscriptionsListAPIView(_BaseSubscriptionListView):
-    enforce_staff_scope = True
 
 
 class SubscriptionDetailAPIView(APIView):

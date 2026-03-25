@@ -30,9 +30,6 @@ class CasteReligionTabsAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        if not self._is_admin(request):
-            return _error("Insufficient permissions", 403)
-
         qs = Religion.objects.filter(is_active=True).order_by("name")
         qs = CasteReligionTabSerializer.setup_eager_loading(qs)
         serializer = CasteReligionTabSerializer(qs, many=True)
@@ -48,9 +45,6 @@ class CasteListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        if not self._is_admin(request):
-            return _error("Insufficient permissions", 403)
-
         religion_id = (request.query_params.get("religion_id") or "").strip()
         if not religion_id:
             return _error("religion_id is required to list castes.", 400)

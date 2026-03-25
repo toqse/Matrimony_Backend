@@ -4,8 +4,10 @@ MATRIMONY BACKEND - API DOCUMENTATION (Aiswarya Matrimony)
 Base URL: /api/v1
 Auth Base: /api/v1/auth/
 Admin Auth Base: /api/v1/admin/auth/
-Admin Profiles (profile admin): /api/v1/admin/profiles/  (staff assigned list: /api/v1/staff/profiles/)
-Admin Subscriptions: /api/v1/admin/subscriptions/ | Admin Commissions: /api/v1/admin/commissions/ | Branch Manager Commissions (approval): /api/v1/branch/commissions/ | Branch Manager My Commissions: /api/v1/branch/my-commissions/ | Branch Manager My Profiles: /api/v1/branch/my-profiles/ | Admin Payroll: /api/v1/admin/payroll/ | Branch Manager Payroll: /api/v1/branch/payroll/ | Admin Enquiries: /api/v1/admin/enquiries/ | Branch Manager Enquiries: /api/v1/branch/enquiries/
+Admin Profiles: /api/v1/admin/profiles/ | Staff My Profiles UI: /api/v1/staff/profiles/ (admin_panel.staff_profiles)
+Staff Panel Dashboard: /api/v1/staff/dashboard/
+Staff My Commissions: /api/v1/staff/commissions/ | Staff My Salary: /api/v1/staff/salary/ | Staff Cash & Digital Payments: /api/v1/staff/payments/ (admin_panel.staff_payments)
+Admin Subscriptions: /api/v1/admin/subscriptions/ | Staff Subscriptions: /api/v1/staff/subscriptions/ (admin_panel.staff_subscriptions) | Admin Commissions: /api/v1/admin/commissions/ | Branch Manager Commissions (approval): /api/v1/branch/commissions/ | Branch Manager My Commissions: /api/v1/branch/my-commissions/ | Branch Manager My Profiles: /api/v1/branch/my-profiles/ | Admin Payroll: /api/v1/admin/payroll/ | Branch Manager Payroll: /api/v1/branch/payroll/ | Legacy staff payroll list: /api/v1/staff/payroll/ | Admin Enquiries: /api/v1/admin/enquiries/ | Staff Enquiries: /api/v1/staff/enquiries/ | Branch Manager Enquiries: /api/v1/branch/enquiries/
 Profile Base: /api/v1/profile/
 Master Base: /api/v1/master/
 Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt)
@@ -396,10 +398,12 @@ Pagination defaults:
 GET /api/v1/admin/dashboard/summary/
   Auth: Required (Admin JWT)
   Description:
-    - Staff role: returns staff-scoped dashboard KPI stats.
+    - Staff role: legacy flat KPI payload (still returned for backward compatibility). Prefer the Staff Panel
+      dashboard endpoints in section 1b-a: GET /api/v1/staff/dashboard/summary/ (nested KPIs, staff_name, branch;
+      no revenue field on that route).
     - Admin/Branch Manager: returns existing global dashboard KPI stats.
 
-  Staff Response 200:
+  Staff Response 200 (legacy — same URL /api/v1/admin/dashboard/summary/):
     {
       "success": true,
       "data": {
@@ -415,6 +419,7 @@ GET /api/v1/admin/dashboard/summary/
         }
       }
     }
+  Staff errors (legacy URL): 400 if OneToOne staff_profile missing on AdminUser — "Staff profile not found."
 
   Admin/Branch Manager Response 200:
     {
@@ -528,6 +533,98 @@ GET /api/v1/admin/dashboard/branch-performance/
         ]
       }
     }
+
+================================================================================
+1b-a. STAFF DASHBOARD APIs (/api/v1/staff/dashboard/)
+================================================================================
+Role: staff only. Uses Admin panel JWT (same as /api/v1/admin/auth/verify-otp/).
+Header: Authorization: Bearer <access_token>
+
+All endpoints: GET only. No query parameters. No request body.
+
+Purpose: Staff Panel home ("Staff Dashboard") — KPI cards and recent activity scoped exclusively to the
+logged-in staff member (no other staff data).
+
+Error 401: Missing or invalid JWT — same as other Admin JWT endpoints (see top of file).
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/dashboard/summary/
+  Auth: Required (Admin JWT; role must be staff)
+  Body: none
+
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "staff_name": "Anitha Lakshmi",
+        "branch": "Chennai Central",
+        "my_profiles": {
+          "count": 184,
+          "growth": 6,
+          "growth_pct": "+6"
+        },
+        "subscriptions_this_month": {
+          "count": 12,
+          "growth": 3,
+          "growth_pct": "+3"
+        },
+        "commission_earned": {
+          "amount": 14400,
+          "growth_pct": "+18%"
+        }
+      }
+    }
+
+  data.staff_name — StaffProfile.name (page subtitle: "Welcome back, {staff_name}").
+  data.branch — StaffProfile.branch.name (admin_panel Branch).
+  data.my_profiles.count — total profiles assigned to this staff (CustomerStaffAssignment).
+  data.my_profiles.growth — delta: (assignments created this calendar month) minus (assignments created previous calendar month).
+  data.my_profiles.growth_pct — string label for that delta (e.g. "+6", "-2" if negative).
+  data.subscriptions_this_month.count — successful plan_purchase transactions this month for users assigned to this staff.
+  data.subscriptions_this_month.growth / growth_pct — month-over-month change in that count (same string convention as profiles).
+  data.commission_earned.amount — integer (rupees): sum of commission_amt for status approved|paid with created_at in current month.
+  data.commission_earned.growth_pct — vs previous month same sum, rounded percent with sign (e.g. "+18%"; if prior month 0 and current > 0, +100%; both 0 → "+0%").
+
+  Error 403 — not staff role:
+    { "success": false, "error": { "code": 403, "message": "Access denied. Staff token required." } }
+
+  Error 403 — AdminUser.is_active is false, or StaffProfile exists but is_active is false:
+    { "success": false, "error": { "code": 403, "message": "Your account has been deactivated. Contact admin." } }
+
+  Error 400 — no StaffProfile for this user (admin_user link and legacy mobile match both fail):
+    { "success": false, "error": { "code": 400, "message": "Staff profile not configured. Contact admin." } }
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/dashboard/recent-activity/
+  Auth: Required (Admin JWT; role must be staff)
+  Body: none
+
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "items": [
+          {
+            "id": 42,
+            "timestamp": "25-03-2026 14:30",
+            "actor_name": "Anitha Lakshmi",
+            "actor_role": "staff",
+            "action": "profile_verify",
+            "action_display": "Profile Verified",
+            "resource": "profile:AM100001",
+            "details": "Profile verification set to True.",
+            "ip_address": "192.168.1.1"
+          }
+        ]
+      }
+    }
+
+  data.items — at most 5 AuditLog rows, newest first; actor = logged-in AdminUser only.
+  timestamp — DD-MM-YYYY HH:MM (from serializer).
+  action — machine code (e.g. profile_verify, commission_create); action_display — human-readable label.
+  ip_address — may be null.
+
+  Same error envelope and codes as GET /api/v1/staff/dashboard/summary/ (403 / 400 as above).
 
 ---
 
@@ -1134,6 +1231,8 @@ Role access:
     within branch; cannot create in another branch.
   - Staff: only enquiries assigned to them; create (defaults branch from staff profile if set, assigned_to=self);
     move/add note on own assignments only. Cannot assign staff.
+  - Staff panel (recommended): scoped list/summary/detail/move/notes under GET/POST/PATCH /api/v1/staff/enquiries/
+    (see section 1d-c-staff); behaviour matches staff rules above with staff-specific validation messages and 404 text.
 
 Model: Enquiry
   - name (CharField), phone (CharField, 10 digits stored), email (optional)
@@ -1268,6 +1367,124 @@ POST /api/v1/admin/enquiries/{id}/notes/
       "message": "Note added successfully.",
       "data": { "id": 10, "text": "...", "created_at": "..." }
     }
+
+---
+
+1d-c-staff. STAFF ENQUIRIES (/api/v1/staff/enquiries/)
+================================================================================
+Header: Authorization: Bearer <access_token> (Admin JWT, staff role only)
+
+Access control (admin_panel.staff_enquiries):
+  - Same Enquiry / EnquiryNote models as /api/v1/admin/enquiries/.
+  - Staff see only enquiries where assigned_to = the authenticated AdminUser.
+  - Staff may: list (filtered), summary, detail with notes, create (always assigned to self), move status, add notes.
+  - Staff may not: delete enquiries; reassign to another staff (no assign endpoint; see 403 below).
+
+Prerequisites (same checks as /api/v1/staff/dashboard/):
+  - Role must be staff; otherwise 403 "Access denied. Staff token required."
+  - Active AdminUser; staff profile must exist and be active, or 400/403 as documented on dashboard.
+
+Validation / error messages (400 unless noted):
+  - Name is required.
+  - Phone number is required. / Enter a valid 10-digit phone number.
+  - source is required. (missing source field on create)
+  - Invalid source. Must be: website, walk-in, phone, whatsapp, email.
+  - Invalid status. Must be: contacted, interested, converted, or lost. (PATCH move)
+  - Cannot revert a converted or lost enquiry.
+  - Note text is required.
+  - Reassigning enquiries requires Branch Manager or Admin role. (403 — e.g. assigned_to in POST body, or assigned_to key on PATCH move)
+  - Access denied. Cannot create enquiry in another branch. (403 — branch in body does not match staff’s StaffProfile.branch)
+  - Enquiry not found or not assigned to you. (404 — id not found or not assigned to caller)
+
+Query params (GET list):
+  - search — name, phone, email (icontains)
+  - status — new | contacted | interested | converted | lost
+  - source — website | walk-in | phone | whatsapp | email
+  - page, page_size — pagination (default page_size=20, max 100; StandardPagination)
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/enquiries/summary/
+  Auth: Required (Admin JWT), role: staff
+  Description: Pipeline counts for leads assigned to the caller only.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total": 5,
+        "pipeline": {
+          "new": 2,
+          "contacted": 1,
+          "interested": 1,
+          "converted": 1,
+          "lost": 0
+        }
+      }
+    }
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/enquiries/
+  Auth: Required (Admin JWT), role: staff
+  Description: Paginated list of enquiries assigned to the caller.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "count": 10,
+        "next": "url|null",
+        "previous": "url|null",
+        "results": [ { ...EnquirySerializer fields (same shape as admin list rows)... } ]
+      }
+    }
+  Error 400: invalid status filter / invalid source filter (same pattern as branch list).
+
+----------------------------------------------------------------------------
+POST /api/v1/staff/enquiries/
+  Auth: Required (Admin JWT), role: staff
+  Description: Create enquiry; assigned_to is always set to the caller. Optional branch defaults from StaffProfile.branch when omitted; if branch is sent, it must match the staff member’s branch.
+  Body (JSON):
+    {
+      "name": "string (required)",
+      "phone": "string (required, 10 digits after cleaning)",
+      "email": "string (optional)",
+      "source": "website | walk-in | phone | whatsapp | email (required)",
+      "branch": 1
+    }
+  Do not send assigned_to to another user — 403 "Reassigning enquiries requires Branch Manager or Admin role."
+  Success 201: { "success": true, "data": { ...EnquirySerializer... } }
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/enquiries/{id}/
+  Auth: Required (Admin JWT), role: staff
+  Description: Detail including nested enquiry_notes (only if assigned to caller).
+  Response 200: { "success": true, "data": { ... } }
+  Error 404: { "success": false, "error": { "code": 404, "message": "Enquiry not found or not assigned to you." } }
+
+----------------------------------------------------------------------------
+PATCH /api/v1/staff/enquiries/{id}/move/
+  Auth: Required (Admin JWT), role: staff
+  Description: Change pipeline status (choices: contacted, interested, converted, lost — not "new" via this endpoint).
+  Body: { "status": "interested" }
+  If request body includes assigned_to (reassign attempt): 403 "Reassigning enquiries requires Branch Manager or Admin role."
+  Response 200:
+    {
+      "success": true,
+      "message": "Enquiry moved from 'new' to 'interested'.",
+      "data": { "id": 1, "status": "interested" }
+    }
+  Error 404: enquiry not found or not assigned to caller (message as above).
+
+----------------------------------------------------------------------------
+POST /api/v1/staff/enquiries/{id}/notes/
+  Auth: Required (Admin JWT), role: staff
+  Body: { "text": "..." }
+  Description: Add timeline note to an enquiry assigned to the caller.
+  Response 201:
+    {
+      "success": true,
+      "message": "Note added successfully.",
+      "data": { "id": 10, "text": "...", "created_at": "..." }
+    }
+  Error 404: same as GET detail for out-of-scope id.
 
 ---
 
@@ -1565,12 +1782,14 @@ PATCH /api/v1/admin/plans/{id}/toggle-status/
 
 ---
 
-1f. ADMIN ALL SUBSCRIPTIONS LEDGER APIs (/api/v1/admin/subscriptions/, /api/v1/branch/subscriptions/, /api/v1/staff/subscriptions/)
+1f. ADMIN & BRANCH SUBSCRIPTIONS LEDGER APIs (/api/v1/admin/subscriptions/, /api/v1/branch/subscriptions/)
 ================================================================================
 Roles:
   - Admin: all branches
   - Branch Manager: own branch only
-  - Staff: assigned customers only
+Staff-facing subscription management (summary, record sale, renew, staff export) lives under
+  /api/v1/staff/subscriptions/ — see section **1f-staff** below (admin_panel.staff_subscriptions).
+
 Header: Authorization: Bearer <access_token>
 
 Ledger source:
@@ -1579,7 +1798,7 @@ Ledger source:
   - CustomerStaffAssignment for staff ownership
   - Performance: composite index on (transaction_type, created_at desc) speeds list ordering
 
-Filters:
+Filters (admin & branch list):
   - search: customer name or matri_id
   - status: active | expired | cancelled
   - payment_mode: cash | upi | card | netbanking
@@ -1591,7 +1810,7 @@ Validation / Business Rules
   - Invalid status -> 400 "Invalid status filter"
   - Invalid payment_mode -> 400 "Invalid payment mode"
   - Branch Manager: cannot query another branch_id -> 403 "Access denied"
-  - Export CSV: Admin and Branch Manager only; Staff -> 403 "Access denied"
+  - Export CSV (admin path only): Admin and Branch Manager only; staff use GET /api/v1/staff/subscriptions/export/
   - Website payment methods are included and normalized in response:
       - upi -> "UPI"
       - razorpay/stripe card flows -> "Card"
@@ -1671,13 +1890,115 @@ GET /api/v1/branch/subscriptions/
     - branch_id cannot reference other branches.
   Response 200: same structure as admin list.
 
+---
+
+1f-staff. STAFF SUBSCRIPTION MANAGEMENT (/api/v1/staff/subscriptions/)
+================================================================================
+UI: "Subscription Management — Subscriptions sold by you" (assigned customers via CustomerStaffAssignment).
+Implementation: admin_panel.staff_subscriptions (not the shared admin/branch ledger module).
+
+Auth: Admin JWT, **staff role only** — same access gate as /api/v1/staff/dashboard/
+  (resolve_staff_dashboard_request: active AdminUser, StaffProfile via admin_user, staff active).
+
+Scope:
+  - Ledger rows = Transaction where transaction_type=plan_purchase and user’s CustomerStaffAssignment.staff
+    equals the authenticated staff profile.
+  - Staff can list, view detail, KPI summary, record a new sale (POST), renew (POST), export CSV.
+  - Staff **cannot** delete subscriptions: DELETE /api/v1/staff/subscriptions/{id}/ -> 403
+    "Subscription deletion requires Admin role."
+
+GET /api/v1/staff/subscriptions/summary/
+  Description: KPI cards for the staff member’s ledger (successful plan purchases only).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total_sold": 1,
+        "active": 1,
+        "expired": 0,
+        "revenue": 9000
+      }
+    }
+  Notes:
+    - total_sold / revenue count only payment_status=success plan_purchase rows in scope.
+    - active / expired / cancelled labelling matches SubscriptionLedgerSerializer rules (UserPlan + payment_status).
+
 ----------------------------------------------------------------------------
 GET /api/v1/staff/subscriptions/
-  Auth: Required (Admin JWT; Staff scope)
-  Description: Staff-scoped subscriptions (assigned customers only).
-  Query params:
-    ?search=&status=&payment_mode=&page=&page_size=
-  Response 200: same structure as admin list.
+  Description: Paginated ledger for assigned customers only.
+  Query: ?search=&status=&page=&page_size=
+  - search — customer name or matri_id (icontains)
+  - status — active | expired | cancelled
+  - Invalid status -> 400 "Invalid status. Must be: active, expired, cancelled."
+  (No payment_mode filter on this endpoint.)
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "count": 10,
+        "next": null,
+        "previous": null,
+        "results": [ { ...same ledger fields as admin list (id, customer, matri_id, plan, amount, payment_mode, staff, branch, start_date, expiry_date, status)... } ]
+      }
+    }
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/subscriptions/{id}/
+  Description: Single ledger row in staff scope.
+  Response 200: { "success": true, "data": { ... } }
+  Error 404: Subscription not found.
+
+----------------------------------------------------------------------------
+POST /api/v1/staff/subscriptions/
+  Description: Record a new plan sale (plan_only-style purchase: amount must equal plan.price; service charge tracked per gender like user-facing purchase).
+  Ensures CustomerStaffAssignment to this staff (403 if customer is assigned to another staff member).
+  Body (JSON):
+    {
+      "customer_matri_id": "AM100001",
+      "plan_id": 3,
+      "payment_mode": "upi",
+      "payment_reference": "TXN12345",
+      "amount": 9000
+    }
+    - customer_matri_id, plan_id, payment_mode, amount: required
+    - payment_reference: optional
+    - payment_mode: cash | upi | card | netbanking (stored on Transaction; CSV labels: Cash, UPI, Card, Netbanking)
+  Success 201:
+    { "success": true, "message": "Subscription recorded successfully.", "data": { ...ledger row... } }
+  Validation / errors (400 unless noted):
+    - customer_matri_id is required.
+    - plan_id is required.
+    - payment_mode is required.
+    - amount is required.
+    - Invalid payment mode. Must be: cash, upi, card, netbanking.
+    - Invalid or inactive plan. (plan missing or is_active=false)
+    - Amount must equal plan price (₹{plan.price}).
+    - Customer already has an active {plan.name} plan. Use renew instead.
+  Error 404: Customer not found. (unknown matri_id)
+  Error 403: This customer is assigned to another staff member.
+
+----------------------------------------------------------------------------
+POST /api/v1/staff/subscriptions/{id}/renew/
+  Description: Renew subscription linked to ledger transaction {id} (extends UserPlan.valid_until; creates new success Transaction).
+  Body (JSON): same payment fields as create (payment_mode, payment_reference optional, amount required; amount must equal plan.price).
+  Success 201:
+    { "success": true, "message": "Subscription renewed successfully.", "data": { ...new ledger row... } }
+  Error 400: validation messages as above; renew-specific e.g. "Renew is only available for the customer's current plan on file."
+  Error 404: Subscription not found (id out of scope).
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/subscriptions/export/
+  Description: Stream CSV for staff-scoped ledger (same columns as admin export).
+  Query: ?search=&status=&start=YYYY-MM-DD&end=YYYY-MM-DD
+  - date filters apply to Transaction.created_at (inclusive dates).
+  - Invalid start/end date format -> 400 with message "Invalid start date. Use YYYY-MM-DD." / end equivalent.
+  Response 200: Content-Type text/csv; Content-Disposition attachment; filename="staff_subscriptions_export.csv"
+
+----------------------------------------------------------------------------
+DELETE /api/v1/staff/subscriptions/{id}/
+  Description: Disallowed for staff.
+  Response 403:
+    { "success": false, "error": { "code": 403, "message": "Subscription deletion requires Admin role." } }
 
 ---
 
@@ -2025,7 +2346,8 @@ Roles:
   - Branch Manager: Commission Approval UI uses /api/v1/branch/commissions/ — KPI summary, list, detail, approve, cancel,
     bulk-approve, slip (own branch only); mark-paid is Admin-only (403 on branch mark-paid path)
   - Branch Manager: own branch read access on /api/v1/admin/commissions/ list/detail (POST manual create still allowed for own-branch staff)
-  - Staff: own commissions read-only on /api/v1/staff/commissions/
+  - Staff: My Commissions UI — dedicated read-only APIs under /api/v1/staff/commissions/ (admin_panel.staff_commissions):
+    summary/, list, detail, export (no approve/cancel/pay; mutations return 403).
 Header: Authorization: Bearer <access_token>
 
 Model: Commission
@@ -2176,12 +2498,109 @@ GET /api/v1/admin/commissions/{id}/slip/
     - Content-Disposition: attachment; filename="commission_<id>_slip.pdf"
 
 ----------------------------------------------------------------------------
+STAFF — My Commissions (/api/v1/staff/commissions/)  [admin_panel.staff_commissions]
+----------------------------------------------------------------------------
+Role: staff only (Admin JWT). All routes are GET-only for mutations semantics: POST / PATCH / PUT / DELETE on these
+  paths return 403:
+    { "success": false, "error": { "code": 403, "message": "Commission records are read-only." } }
+Staff profile resolution matches Staff Dashboard (admin_user → StaffProfile, then mobile fallback). Errors:
+  - 403 wrong role: "Access denied. Staff token required."
+  - 403 inactive: "Your account has been deactivated. Contact admin." (AdminUser inactive or StaffProfile.is_active false)
+  - 400 no profile: "Staff profile not configured. Contact admin."
+Data: only Commission rows for the logged-in staff (other staff never visible).
+
+GET /api/v1/staff/commissions/summary/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query: none
+  Response 200 — KPI amounts (floats, rupees) across all own commissions:
+    {
+      "success": true,
+      "data": {
+        "pending": 0,
+        "approved": 0,
+        "paid": 900,
+        "total": 900
+      }
+    }
+  Notes: pending / approved / paid = sum of commission_amt for that status; total = sum of commission_amt (all statuses).
+
 GET /api/v1/staff/commissions/
-  Auth: Required (Admin JWT; Staff scope)
-  Description: Staff sees only own commissions.
+  Auth: Required (Admin JWT; role staff)
+  Body: none
   Query params:
-    ?status=&search=&page=&page_size=
-  Response 200: same structure as admin list (with summary + paginated results).
+    ?status=pending|approved|paid|cancelled   (optional; invalid -> 400 below)
+    &plan_id=<plans.Plan pk>                 (optional; matches Commission.plan_id OR subscription.plan_id)
+    &search=                                 (optional; customer name or matri_id, icontains)
+    &page= &page_size=                       (optional; page_size max 100)
+  Response 200 (paginated; no embedded summary — use summary/ for KPIs):
+    {
+      "success": true,
+      "data": {
+        "count": 12,
+        "next": "http://host/api/v1/staff/commissions/?page=2",
+        "previous": null,
+        "results": [
+          {
+            "id": 1,
+            "date": "2026-02-28",
+            "customer": "Priya Sharma",
+            "plan": "Gold",
+            "sale_amount": "9000.00",
+            "rate": 10.0,
+            "commission": "900.00",
+            "status": "paid"
+          }
+        ]
+      }
+    }
+  Field notes:
+    - date: ISO date from Commission.created_at (YYYY-MM-DD).
+    - rate: float (commission_rate %).
+    - sale_amount, commission: Decimal serialized as string in JSON (typical DRF).
+  Error 400 — invalid status:
+    { "success": false, "error": { "code": 400, "message": "Invalid status. Must be: pending, approved, paid, cancelled." } }
+  Error 400 — invalid plan_id (non-integer):
+    { "success": false, "error": { "code": 400, "message": "Invalid plan_id" } }
+
+GET /api/v1/staff/commissions/{id}/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200 — same row shape as list plus matri_id:
+    {
+      "success": true,
+      "data": {
+        "id": 1,
+        "date": "2026-02-28",
+        "customer": "Priya Sharma",
+        "matri_id": "AM100001",
+        "plan": "Gold",
+        "sale_amount": "9000.00",
+        "rate": 10.0,
+        "commission": "900.00",
+        "status": "paid"
+      }
+    }
+  Error 404 — wrong id or another staff’s commission (auto-filtered as not found):
+    { "success": false, "error": { "code": 404, "message": "Commission record not found." } }
+
+GET /api/v1/staff/commissions/export/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query: required format + same filters as list (status, plan_id, search):
+    ?format=pdf  OR  ?format=csv
+  Response 200 — CSV:
+    - Content-Type: text/csv; charset=utf-8
+    - Content-Disposition: attachment; filename="my_commissions.csv"
+    - Header row: Date, Customer, Matri ID, Plan, Sale Amount, Rate %, Commission, Status
+    - One row per matching commission (full export; not paginated).
+  Response 200 — PDF:
+    - Content-Type: application/pdf
+    - Content-Disposition: attachment; filename="my_commissions.pdf"
+    - Simple text PDF; first 80 data rows then a truncation line (use CSV for full export).
+  Error 400 — missing or invalid format:
+    { "success": false, "error": { "code": 400, "message": "Invalid format. Use ?format=pdf or ?format=csv." } }
+  Same 400 errors as list for status / plan_id filters.
 
 ----------------------------------------------------------------------------
 BRANCH MANAGER — Commission Approval (/api/v1/branch/commissions/)
@@ -2615,14 +3034,16 @@ POST /api/v1/branch/my-profiles/{matri_id}/send-email/
 
 ---
 
-1h. SALARY & PAYROLL APIs (/api/v1/admin/payroll/, /api/v1/branch/payroll/, /api/v1/staff/payroll/)
+1h. SALARY & PAYROLL APIs (/api/v1/admin/payroll/, /api/v1/branch/payroll/, /api/v1/staff/payroll/, /api/v1/staff/salary/)
 ================================================================================
 Roles:
   - Admin: generate monthly salary, list all, summary KPIs, approve, mark paid, download slip (/api/v1/admin/payroll/)
   - Branch Manager: Branch Salary Management UI uses /api/v1/branch/payroll/ — KPI summary, list, detail, approve drafts,
     download slip (own branch); month query uses MM-YYYY; generate and mark-paid return 403 with explicit messages
   - Branch Manager (legacy): may still use admin payroll GET list/detail/download/approve with own-branch scope (YYYY-MM month)
-  - Staff: GET own salary records only (staff role required on /api/v1/staff/payroll/)
+  - Staff: My Salary UI — use /api/v1/staff/salary/ (admin_panel.staff_salary): YTD summary, current month preview,
+    paginated history, PDF download (read-only). Legacy list: GET /api/v1/staff/payroll/ (also allows branch_manager;
+    month-scoped admin-style list).
 Header: Authorization: Bearer <access_token> (Admin JWT)
 
 Model: SalaryRecord
@@ -2783,9 +3204,271 @@ GET /api/v1/admin/payroll/{id}/download/
 
 ----------------------------------------------------------------------------
 GET /api/v1/staff/payroll/
-  Auth: Required (Admin JWT; role must be staff)
-  Query params: same as admin list (?month= & status= & branch_id= ignored for scope)
-  Description: Paginated list of the logged-in staff member’s salary rows only.
+  Auth: Required (Admin JWT; role staff or branch_manager)
+  Query params: same as admin list (?month=YYYY-MM & status= & branch_id=; staff sees own rows only)
+  Description: Legacy payroll list (month defaults to latest non-draft then latest month). Prefer /api/v1/staff/salary/
+    for the Staff Panel “My Salary” page (YTD KPIs, current month panel, year filter, slip rules).
+
+================================================================================
+1h-a. STAFF MY SALARY APIs (/api/v1/staff/salary/)  [admin_panel.staff_salary]
+================================================================================
+Role: staff only (Admin JWT). GET-only for business writes: POST / PATCH / PUT / DELETE return 403:
+  { "success": false, "error": { "code": 403, "message": "Salary records are read-only." } }
+Staff gate matches Staff Dashboard / My Commissions (wrong role, inactive, missing profile — same messages).
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/salary/summary/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query: none
+  Description: Calendar year-to-date (current year) totals for the logged-in staff’s SalaryRecord rows only.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "ytd_gross_pay": 43600,
+        "ytd_commission": 3600,
+        "ytd_net_pay": 39400,
+        "records_count": 1
+      }
+    }
+  Notes: Integer rupees (truncating decimals). records_count = number of salary rows in that year for this staff.
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/salary/current/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query: none
+  Description: Current calendar month preview (SalaryRecord for month = first day of today’s month).
+  Response 200 — when a row exists:
+    {
+      "success": true,
+      "data": {
+        "month": "February 2026",
+        "basic": 35000,
+        "commission_approved": 900,
+        "allowances": 5000,
+        "deductions": 4200,
+        "gross": 43600,
+        "net_pay": 39400,
+        "status": "paid"
+      }
+    }
+  Response 200 — when no row for current month (zeros and null status):
+    {
+      "success": true,
+      "data": {
+        "month": "March 2026",
+        "basic": 0,
+        "commission_approved": 0,
+        "allowances": 0,
+        "deductions": 0,
+        "gross": 0,
+        "net_pay": 0,
+        "status": null
+      }
+    }
+  status: draft | approved | paid when present. UI may show deductions in red / negative; API returns deductions as a positive amount.
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/salary/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query params:
+    ?year=2026        (optional; 4-digit, 1900–2100; filters SalaryRecord.month by year)
+    &page= &page_size= (optional; page_size max 100)
+  Response 200 (paginated, newest payroll month first):
+    {
+      "success": true,
+      "data": {
+        "count": 1,
+        "next": null,
+        "previous": null,
+        "results": [
+          {
+            "id": 10,
+            "month": "February",
+            "year": 2026,
+            "basic": "35000.00",
+            "commission": "3600.00",
+            "allowances": "5000.00",
+            "deductions": "4200.00",
+            "gross": "43600.00",
+            "net": "39400.00",
+            "status": "paid",
+            "download_url": "https://host/api/v1/staff/salary/10/download/"
+          }
+        ]
+      }
+    }
+  Error 400 — invalid year (not 4 digits or out of range):
+    { "success": false, "error": { "code": 400, "message": "Invalid year. Use a 4-digit year e.g. 2026." } }
+  Note: Omitting year returns all years (paginated).
+
+----------------------------------------------------------------------------
+GET /api/v1/staff/salary/{id}/download/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Description: PDF salary slip for own record only; allowed only when status is approved or paid.
+  Response 200:
+    - Content-Type: application/pdf
+    - Content-Disposition: attachment; filename="salary_<id>_slip.pdf"
+  Error 404 — unknown id or not this staff’s row:
+    { "success": false, "error": { "code": 404, "message": "Salary record not found." } }
+  Error 400 — status is draft:
+    { "success": false, "error": { "code": 400, "message": "Salary slip available only for approved or paid records." } }
+
+----------------------------------------------------------------------------
+1h-a2. STAFF — Cash & Digital Payment Entry (/api/v1/staff/payments/)  [admin_panel.staff_payments]
+================================================================================
+UI title: "Cash & Digital Payment Entry — Record cash and GPay/UPI payments from customers."
+Role: staff only (Admin JWT). Same staff gate as Staff Dashboard (403 "Access denied. Staff token required." etc.).
+
+Scope: each staff user sees only PaymentEntry rows where staff = logged-in AdminUser.
+
+Receipt IDs: auto-generated RCP-{YYYY}-{NNN} (3-digit sequence per calendar year; sequence resets each Jan 1).
+Status flow: pending → verified (branch manager) → completed. New entries are created as pending.
+Important: Staff payment entry is a staging record only. The actual subscription purchase is recorded as a successful
+Transaction (plans_transaction) only when the Branch Manager verifies the entry; commission is created by the
+Transaction post_save signal at that time.
+
+GET /api/v1/staff/payments/summary/
+  Auth: Required (Admin JWT; role staff)
+  Query: none
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "title": "Cash & Digital Payment Entry",
+        "subtitle": "Record cash and GPay/UPI payments from customers.",
+        "today_cash": 9000.0,
+        "today_upi_gpay": 14500.0,
+        "total_today": 23500.0,
+        "pending_count": 1
+      }
+    }
+  Notes: KPIs use server local date for "today". today_cash / today_upi_gpay sum amounts for that day by mode.
+
+GET /api/v1/staff/payments/
+  Auth: Required (Admin JWT; role staff)
+  Query:
+    ?mode=cash|gpay_upi
+    &status=pending|verified|completed
+    &search=   (receipt_id, customer name, customer matri_id — icontains)
+    &date=YYYY-MM-DD  (filter created_at date)
+    &page=&page_size=  (page_size 1–100, default 20)
+  Error 400 — invalid status:
+    { "success": false, "error": { "code": 400, "message": "Invalid status filter. Must be: pending, verified, completed." } }
+  Error 400 — invalid mode:
+    { "success": false, "error": { "code": 400, "message": "Invalid mode filter. Must be: cash, gpay_upi." } }
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "count": 50,
+        "next": null,
+        "previous": null,
+        "results": [
+          {
+            "receipt_id": "RCP-2026-001",
+            "customer": { "matri_id": "AM100001", "name": "Priya Sharma" },
+            "plan": { "id": 3, "name": "Gold" },
+            "amount": "9000.00",
+            "mode": "cash",
+            "mode_label": "Cash",
+            "reference_no": "",
+            "status": "pending",
+            "notes": "",
+            "created_at": "2026-03-04T10:30:00+05:30",
+            "verified_at": null,
+            "detail_url": "https://host/api/v1/staff/payments/RCP-2026-001/",
+            "receipt_pdf_url": "https://host/api/v1/staff/payments/RCP-2026-001/receipt/"
+          }
+        ]
+      }
+    }
+
+POST /api/v1/staff/payments/
+  Auth: Required (Admin JWT; role staff)
+  Content-Type: application/json
+  Body (JSON):
+    {
+      "mode": "cash",
+      "customer_matri_id": "AM100001",
+      "plan_id": 3,
+      "amount": 9000,
+      "reference_no": "TXN123",
+      "notes": "Collected at office"
+    }
+  Rules:
+    - mode: required — cash | gpay_upi
+    - customer_matri_id: required; user must exist with role=user and be assigned to this staff (CustomerStaffAssignment);
+      else 404 "Customer not found."
+    - plan_id: required; Plan must exist and is_active=true; else 400 "Invalid or inactive plan."
+    - amount: required, must be > 0 and exactly equal to plan.price; else
+      "Amount must equal plan price (₹{plan.price})." (rupee symbol as returned)
+    - reference_no: optional for cash; required for gpay_upi — else
+      "reference_no is required for GPay/UPI payments."
+    - branch on row = staff’s StaffProfile.branch
+  Validation messages (exact):
+    - "mode is required."
+    - "Invalid payment mode. Must be: cash or gpay_upi."
+    - "customer_matri_id is required."
+    - "Customer not found." → 404
+    - "plan_id is required."
+    - "Invalid or inactive plan."
+    - "amount is required."
+    - "Amount must be greater than zero."
+  Response 201:
+    {
+      "success": true,
+      "message": "Payment entry recorded. Receipt: RCP-2026-001.",
+      "data": { ...same fields as list row plus branch, verified_by ... }
+    }
+  Note: This endpoint does NOT create a subscription Transaction. Verification is done by Branch Manager via
+    PATCH /api/v1/branch/payments/{receipt_id}/verify/
+
+GET /api/v1/staff/payments/{receipt_id}/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200: { "success": true, "data": { ...detail... } }
+  Error 404:
+    { "success": false, "error": { "code": 404, "message": "Payment record not found." } }
+
+GET /api/v1/staff/payments/{receipt_id}/receipt/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200: application/pdf; Content-Disposition: attachment; filename="RCP-2026-001.pdf"
+  Error 404: "Payment record not found."
+
+----------------------------------------------------------------------------
+BRANCH — Payment Verification (/api/v1/branch/payments/)  [admin_panel.staff_payments]
+----------------------------------------------------------------------------
+Role: Branch Manager only (Admin JWT). Scope: only PaymentEntry rows within the branch manager’s branch.
+
+PATCH /api/v1/branch/payments/{receipt_id}/verify/
+  Auth: Required (Admin JWT; role branch_manager)
+  Body: none
+  Description: Verify a pending staff payment entry. On success:
+    - Creates the successful plan purchase Transaction + UserPlan updates (same as staff subscription sale flow)
+    - Links PaymentEntry.transaction to the created Transaction
+    - Sets PaymentEntry.status=verified, verified_by, verified_at
+    - Commission is created automatically by the Transaction post_save signal
+  Response 200:
+    { "success": true, "message": "Payment verified successfully.", "data": { ...detail... } }
+  Error 400 — non-pending:
+    { "success": false, "error": { "code": 400, "message": "Only pending payments can be verified." } }
+  Error 404:
+    { "success": false, "error": { "code": 404, "message": "Payment record not found." } }
+
+PATCH /api/v1/branch/payments/{receipt_id}/complete/
+  Auth: Required (Admin JWT; role branch_manager)
+  Body: none
+  Description: Mark a verified payment entry as completed (no additional ledger writes).
+  Response 200:
+    { "success": true, "message": "Payment marked as completed.", "data": { ...detail... } }
+  Error 400 — not verified:
+    { "success": false, "error": { "code": 400, "message": "Only verified payments can be completed." } }
 
 ---
 
@@ -3020,7 +3703,13 @@ GET /api/v1/admin/district-analysis/geojson/
 ================================================================================
 Roles:
   - Admin: full list, detail, PATCH, verify, assign staff, block, delete, merge
-  - Branch Manager & Staff: list + detail + PATCH + verify + assign + block for users they may access (own branch / assigned profiles); cannot DELETE or merge
+  - Branch Manager: list + detail + PATCH + verify + assign + block for users in branch scope; cannot DELETE or merge
+  - Staff: use GET /api/v1/staff/profiles/… for “My Profiles” (summary, table, create, detail, refresh, wishlist, email,
+    documents) — assigned profiles only. Staff may still use GET /api/v1/admin/profiles/ (assigned-only list) and
+    GET/PATCH /api/v1/admin/profiles/{matri_id}/ for edits, but must NOT verify or delete:
+    - PATCH with `admin_verified` -> 403 "Profile verification requires Branch Manager or Admin role."
+    - PATCH /api/v1/admin/profiles/{matri_id}/verify/ -> 403 (same message)
+    - DELETE /api/v1/admin/profiles/{matri_id}/ -> 403 "Profile deletion requires Admin role."
 Header: Authorization: Bearer <access_token> (Admin JWT)
 
 User model additions:
@@ -3059,9 +3748,262 @@ GET /api/v1/admin/profiles/
     - Listing does not create or mutate UserProfile rows; it only reads existing data.
 
 ----------------------------------------------------------------------------
+STAFF — My Profiles (/api/v1/staff/profiles/)  [admin_panel.staff_profiles]
+----------------------------------------------------------------------------
+Role: staff only (Admin JWT). Staff gate: active staff + StaffProfile (admin_user link or mobile fallback) — same as
+  Staff Dashboard / My Commissions / My Salary. Wrong role -> 403 "Access denied. Staff token required."; missing
+  profile -> 400 "Staff profile not configured. Contact admin."; inactive -> 403 deactivate message.
+
+Scope: only users with CustomerStaffAssignment to the logged-in staff. Inaccessible matri_id -> 404
+  "Profile not found or not assigned to you."
+
+Completeness (summary, list, refresh): 6 steps — location, religion, personal, education, about_me, profile_photo
+  (same as Branch Manager My Profiles list KPIs).
+
+Staff cannot set admin_verified via PATCH here or on admin profile routes (see section header).
+
+  Member-style registration (create + PATCH): Staff can send the same nested section payloads as
+  PATCH /api/v1/admin/profiles/{matri_id}/ (basic_details, location_details, religion_details,
+  personal_details, family_details, education_details, about_me) plus optional image uploads.
+  No OTP: new users are created with mobile_verified=true. Commission is not created at signup;
+  when the customer completes a successful plan purchase while assigned to this staff
+  (CustomerStaffAssignment), commission is recorded per backend transaction signals.
+
+GET /api/v1/staff/profiles/summary/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query: none
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total_profiles": 6,
+        "verified": 3,
+        "unverified": 3,
+        "subscribed": 5,
+        "incomplete_count": 2,
+        "incomplete_message": "2 profile(s) with incomplete data need attention"
+      }
+    }
+  Notes: incomplete_message is null when incomplete_count is 0. subscribed = active UserPlan (valid).
+
 GET /api/v1/staff/profiles/
-  Auth: Required (Admin JWT; role must be staff)
-  Description: Same filters as admin list, scoped to assigned profiles only.
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Query params:
+    ?filter=all|incomplete|complete|subscribed|unsubscribed|verified|unverified   (default: all)
+    &search=   (name or matri_id)
+    &page=&page_size=   (page_size 1–100, default 20)
+  Error 400 — invalid filter:
+    { "success": false, "error": { "code": 400, "message": "Invalid filter. Must be: all, incomplete, complete, subscribed, unsubscribed, verified, unverified." } }
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "count": 6,
+        "page": 1,
+        "page_size": 20,
+        "next": null,
+        "previous": null,
+        "results": [
+          {
+            "matri_id": "AM100001",
+            "name": "Priya Sharma",
+            "gender": "Female",
+            "age": 28,
+            "religion": "Hindu",
+            "caste": "Brahmin",
+            "subscription_plan": "Gold",
+            "is_verified": true,
+            "completeness": 95,
+            "profile_status": "incomplete",
+            "is_wishlisted": false,
+            "profile_photo": "https://host/media/...",
+            "quick_actions": {
+              "edit": "https://host/api/v1/staff/profiles/AM100001/",
+              "view": "https://host/api/v1/staff/profiles/AM100001/",
+              "refresh": "https://host/api/v1/staff/profiles/AM100001/refresh/",
+              "wishlist": "https://host/api/v1/staff/profiles/AM100001/wishlist/",
+              "send_email": "https://host/api/v1/staff/profiles/AM100001/send-email/",
+              "documents": "https://host/api/v1/staff/profiles/AM100001/documents/"
+            }
+          }
+        ]
+      }
+    }
+  Note: No verify URL in quick_actions (staff cannot verify).
+
+GET /api/v1/staff/profiles/{matri_id}/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200: Same shape as GET /api/v1/admin/profiles/{matri_id}/ (full profile + admin block).
+    profile_completion_percentage uses the 6-step My Profiles formula for this module.
+  Error 404: "Profile not found or not assigned to you."
+
+PATCH /api/v1/staff/profiles/{matri_id}/
+  Auth: Required (Admin JWT; role staff)
+  Content-Type: application/json  OR  multipart/form-data
+  Description: Partial update — same optional keys as PATCH /api/v1/admin/profiles/{matri_id}/ (see that block for
+    field names: basic_details, location_details, religion_details, personal_details, family_details,
+    education_details, about_me, has_horoscope). Do not send `admin_verified` — 403
+    "Profile verification requires Branch Manager or Admin role."
+  JSON body: identical optional structure to admin PATCH (about_me: string or { "about_me": "..." }; max 500 chars).
+  Multipart: put the same JSON object in form field `registration`, `data`, `payload`, or `profile` (one of these);
+    other form keys merge into the payload; file fields are listed under POST …/create/ (full_photo, passport_photo,
+    profile_photo, selfie / selfie_photo, family_photo, aadhaar_front, aadhaar_back).
+  Response 200:
+    { "success": true, "message": "Profile updated successfully.", "data": { "...": "refreshed profile + admin" } }
+  Error 400: "Cannot edit a blocked profile. Contact admin." | about_me too long:
+    "About me must be 500 characters or fewer."
+  Error 403: admin_verified in body — verify message above.
+  Error 404: "Profile not found or not assigned to you."
+
+DELETE /api/v1/staff/profiles/{matri_id}/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 403:
+    { "success": false, "error": { "code": 403, "message": "Profile deletion requires Admin role." } }
+
+PATCH /api/v1/staff/profiles/{matri_id}/refresh/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "matri_id": "AM100001",
+        "completeness": 83,
+        "profile_status": "incomplete",
+        "steps_remaining": ["photos"]
+      }
+    }
+  Error 404: "Profile not found or not assigned to you."
+
+POST /api/v1/staff/profiles/{matri_id}/wishlist/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200 (toggled on): { "success": true, "data": { "is_wishlisted": true }, "message": "Added to wishlist." }
+  Response 200 (toggled off): { "success": true, "data": { "is_wishlisted": false }, "message": "Removed from wishlist." }
+  Error 400: "No linked user account found to manage wishlist."
+  Error 404: "Profile not found or not assigned to you."
+
+POST /api/v1/staff/profiles/create/
+  Auth: Required (Admin JWT; role staff)
+  Description: Creates User + UserProfile in the staff’s branch (master.Branch from StaffProfile.branch.code),
+    applies optional registration sections (same shapes as member / admin profile PATCH), optional photo uploads,
+    sets CustomerStaffAssignment to the logged-in staff, and sets mobile_verified=true (no OTP).
+  Content-Type: application/json  OR  multipart/form-data
+
+  Required core fields (JSON root or merged from multipart):
+    - name (string)
+    - phone_number — also accepted: phone, mobile (10-digit Indian mobile after normalize)
+    - gender: M | F | O
+    - dob: DD-MM-YYYY
+    - terms_accepted: true (or "true" / "1" / "yes" as string) — mirrors user registration consent
+  Optional core:
+    - email
+    - profile_for: myself | son | daughter | brother | sister | friend | relative
+      (may also appear inside basic_details.profile_for; root value is applied if basic_details omits it)
+  Optional section objects (same field names as PATCH /api/v1/admin/profiles/{matri_id}/):
+    basic_details, location_details, religion_details, personal_details, family_details, education_details, about_me
+    (string or { "about_me": "..." }, max 500 characters).
+  Multipart: send one JSON object in form field `registration`, `data`, `payload`, or `profile`; other non-file
+    form fields are merged into the same dict. File parts use these names:
+    - full_photo, passport_photo, profile_photo, selfie or selfie_photo, family_photo, aadhaar_front, aadhaar_back
+    (backend maps passport_photo → UserPhotos.profile_photo; full_photo → UserPhotos.full_photo).
+    Multipart keys are normalized (spaces/slashes → underscores), so e.g. "selfie / selfie_photo" is accepted
+    as selfie_photo. Files are read from both request.FILES and file parts exposed on request.data.
+
+  Example — full JSON (minimal + sections):
+    {
+      "name": "Priya Sharma",
+      "phone_number": "9876543210",
+      "gender": "F",
+      "dob": "24-03-2000",
+      "email": "priya@example.com",
+      "terms_accepted": true,
+      "profile_for": "daughter",
+      "location_details": {
+        "country_id": 1,
+        "state_id": 2,
+        "district_id": 3,
+        "city_id": 4,
+        "address": "Street, area"
+      },
+      "personal_details": {
+        "marital_status": "Never Married",
+        "height_cm": 165,
+        "weight_kg": "55.00",
+        "complexion": "Wheatish"
+      },
+      "education_details": {
+        "highest_education_id": 1,
+        "education_subject_id": 1,
+        "employment_status": "Government Employee",
+        "occupation_id": 1,
+        "annual_income_id": 1
+      },
+      "about_me": "Short bio text."
+    }
+
+  Field / validation messages (first error in error.message; create may include error.details map):
+    - name required -> "Name is required."
+    - phone required -> "Phone number is required."
+    - phone invalid -> "Enter a valid 10-digit phone number."
+    - duplicate phone -> "Phone number already registered."
+    - gender required / invalid -> "Gender is required." / "Gender must be M, F, or O."
+    - dob required / format -> "Date of birth is required." / "Invalid date format. Use DD-MM-YYYY."
+    - optional email invalid -> "Invalid email address."
+    - terms not accepted -> "You must accept the Terms & Conditions and Privacy Policy."
+    - invalid profile_for -> "Invalid profile_for. Use: myself, son, daughter, brother, sister, friend, relative."
+    - section validation -> message from failing section (key may appear in details).
+
+  Response 201:
+    {
+      "success": true,
+      "message": "Profile created successfully. Matri ID: AM100123.",
+      "data": {
+        "matri_id": "AM100123",
+        "name": "Priya Sharma",
+        "phone": "9876543210",
+        "profile_completion_percentage": 71
+      }
+    }
+  Error 400: branch cannot be resolved -> "Staff branch could not be resolved. Contact admin."
+  Error 400: invalid JSON in multipart blob -> message starts with "Invalid JSON in …"
+
+POST /api/v1/staff/profiles/{matri_id}/send-email/
+  Auth: Required (Admin JWT; role staff)
+  Content-Type: application/json
+  Body (JSON): { "template_id": 1 }
+  Uses EmailTemplate (same as branch My Profiles).
+  Response 200: { "success": true, "message": "Email sent successfully to user@example.com." }
+  Error 400: "This profile has no registered email address." | "template_id is required." |
+             "Email template is inactive. Activate it first."
+  Error 404: "Email template not found."
+  Error 404 (profile): "Profile not found or not assigned to you."
+
+GET /api/v1/staff/profiles/{matri_id}/documents/
+  Auth: Required (Admin JWT; role staff)
+  Body: none
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "matri_id": "AM100001",
+        "documents": {
+          "profile_photo": "https://...",
+          "full_photo": null,
+          "selfie_photo": null,
+          "family_photo": null,
+          "aadhaar_front": null,
+          "aadhaar_back": null
+        },
+        "uploaded_count": 1,
+        "missing": ["full_photo", "selfie_photo", "family_photo", "aadhaar_front", "aadhaar_back"]
+      }
+    }
+  Error 404: "Profile not found or not assigned to you."
 
 ----------------------------------------------------------------------------
 GET /api/v1/admin/profiles/{matri_id}/
@@ -3134,6 +4076,8 @@ PATCH /api/v1/admin/profiles/{matri_id}/
     }
   Note: For about_me you may send a string (as above) or { "about_me": "..." } — both are accepted.
   Response 200: { "success": true, "data": { ...same shape as GET /api/v1/admin/profiles/{matri_id}/... } }
+  Staff role: if request body includes `admin_verified` -> 403
+    "Profile verification requires Branch Manager or Admin role." (use Branch Manager or Admin to verify.)
 
 ----------------------------------------------------------------------------
 PATCH /api/v1/admin/profiles/{matri_id}/verify/
@@ -3147,6 +4091,7 @@ PATCH /api/v1/admin/profiles/{matri_id}/verify/
   Setting verified to true requires profile_status=completed (all 7 steps) — else 400 "Cannot verify an incomplete profile".
   Response 200:
     { "success": true, "data": { "matri_id": "AM100001", "verified": true } }
+  Staff role: 403 "Profile verification requires Branch Manager or Admin role." (staff must not call this endpoint.)
 
 ----------------------------------------------------------------------------
 PATCH /api/v1/admin/profiles/{matri_id}/assign-staff/
@@ -3172,6 +4117,7 @@ DELETE /api/v1/admin/profiles/{matri_id}/
   Auth: Required (Admin JWT; Admin role only)
   Description: Soft delete — sets is_active=false and replaces mobile with a short unique anonymized value (preserves unique constraint).
   Response 200: { "success": true, "data": { "matri_id": "AM100001", "soft_deleted": true } }
+  Staff role: 403 "Profile deletion requires Admin role."
 
 ----------------------------------------------------------------------------
 POST /api/v1/admin/profiles/merge/
