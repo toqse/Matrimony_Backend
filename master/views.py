@@ -3,6 +3,7 @@ Master dropdown APIs with live search (optional ?search=).
 CRUD ViewSets for Religion, Caste, MotherTongue (admin write, all read).
 """
 from rest_framework import generics, viewsets
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
@@ -24,10 +25,17 @@ from .serializers import (
 )
 
 
+class MasterListPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'limit'
+    max_page_size = 200
+
+
 class CountryList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = CountrySerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = Country.objects.filter(is_active=True).order_by('name')
@@ -41,6 +49,7 @@ class StateList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = StateSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = State.objects.filter(is_active=True).select_related('country').order_by('name')
@@ -57,6 +66,7 @@ class DistrictList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = DistrictSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = District.objects.filter(is_active=True).select_related('state').order_by('name')
@@ -73,6 +83,7 @@ class CityList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = CitySerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = City.objects.filter(is_active=True).select_related('district').order_by('name')
@@ -89,6 +100,7 @@ class ReligionList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = ReligionSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = Religion.objects.filter(is_active=True).order_by('name')
@@ -102,6 +114,7 @@ class MotherTongueList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = MotherTongueSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = MotherTongue.objects.filter(is_active=True).order_by('name')
@@ -115,6 +128,7 @@ class HeightList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = HeightSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         return Height.objects.filter(is_active=True).order_by('value_cm')
@@ -124,6 +138,7 @@ class MaritalStatusList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = MaritalStatusSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         return MaritalStatus.objects.filter(is_active=True).order_by('name')
@@ -133,6 +148,7 @@ class IncomeRangeList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = IncomeRangeSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         return IncomeRange.objects.filter(is_active=True).order_by('min_value')
@@ -142,6 +158,7 @@ class EducationList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = EducationSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = Education.objects.filter(is_active=True).order_by('name')
@@ -155,6 +172,7 @@ class EducationSubjectList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = EducationSubjectSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = EducationSubject.objects.filter(is_active=True).order_by('name')
@@ -171,6 +189,7 @@ class OccupationList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = OccupationSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = Occupation.objects.filter(is_active=True).order_by('name')
@@ -184,6 +203,7 @@ class EmploymentStatusList(generics.ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = EmploymentStatusSerializer
+    pagination_class = MasterListPagination
 
     def get_queryset(self):
         qs = EmploymentStatus.objects.filter(is_active=True).order_by('name')
@@ -199,6 +219,7 @@ class ReligionViewSet(viewsets.ModelViewSet):
     serializer_class = ReligionSerializer
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
+    pagination_class = MasterListPagination
     filter_backends = [SearchFilter]
     search_fields = ['name']
 
@@ -214,6 +235,7 @@ class CasteViewSet(viewsets.ModelViewSet):
     serializer_class = CasteSerializer
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
+    pagination_class = MasterListPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = CasteFilter
     search_fields = ['name']
@@ -230,6 +252,7 @@ class MotherTongueViewSet(viewsets.ModelViewSet):
     serializer_class = MotherTongueSerializer
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
+    pagination_class = MasterListPagination
     filter_backends = [SearchFilter]
     search_fields = ['name']
 

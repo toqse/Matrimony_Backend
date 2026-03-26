@@ -18,7 +18,7 @@ from admin_panel.bulk_upload.services import mobile_exists_in_db, normalize_mobi
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from profiles.models import UserPhotos, UserProfile
-from profiles.utils import get_profile_completion_data, mark_profile_step_completed
+from profiles.utils import get_profile_completion_data, sync_profile_completion_flags
 
 SECTION_ORDER = (
     "basic_details",
@@ -172,8 +172,8 @@ def validate_core_create_fields(data: dict) -> tuple[dict[str, str] | None, dict
         errors["phone_number"] = "Phone number is required."
     else:
         mobile = normalize_mobile(phone)
-        if not mobile or len(mobile) != 10:
-            errors["phone_number"] = "Enter a valid 10-digit phone number."
+        if not mobile:
+            errors["phone_number"] = "Enter a valid phone number in +91XXXXXXXXXX format."
         elif mobile_exists_in_db(mobile):
             errors["phone_number"] = "Phone number already registered."
 
@@ -239,7 +239,7 @@ def save_profile_uploads(user: User, files: dict) -> bool:
             updated = True
     if updated:
         photos.save()
-        mark_profile_step_completed(user, "photos")
+        sync_profile_completion_flags(user)
     return updated
 
 

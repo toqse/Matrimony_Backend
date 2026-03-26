@@ -1,8 +1,7 @@
 """
 Match list API and Filter options API.
 """
-from django.db.models import Q, IntegerField, Value
-from django.db.models.functions import Cast, Coalesce
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -10,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
+from profiles.utils import filter_visible_profiles_queryset
 from plans.models import Interest, ProfileView as ProfileViewModel
 from plans.services import (
     bulk_interest_ui_states_for_viewer,
@@ -56,17 +56,7 @@ def _match_queryset(request):
     elif gender == 'F':
         qs = qs.filter(gender='M')
     # 'O' -> both, no filter
-    completion_score = (
-        Coalesce(Cast('user_profile__location_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__religion_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__personal_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__family_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__education_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__about_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__photos_completed', IntegerField()), Value(0))
-    )
-    # 6 of 7 completed steps => int((6/7) * 100) == 85
-    return qs.annotate(profile_completion_steps=completion_score).filter(profile_completion_steps__gte=6)
+    return filter_visible_profiles_queryset(qs)
 
 
 class MatchListView(APIView):

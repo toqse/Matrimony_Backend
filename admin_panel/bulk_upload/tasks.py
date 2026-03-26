@@ -13,6 +13,7 @@ from profiles.models import (
     UserProfile,
     UserReligion,
 )
+from profiles.utils import get_profile_completion_data
 
 from .models import BulkUploadJob
 from .validators import delete_cached_payload, get_cached_payload
@@ -31,7 +32,7 @@ def _import_single_row(payload: dict, branch_id: int | None):
         is_active=True,
         mobile_verified=True,
         email_verified=bool(payload.get("email")),
-        is_registration_profile_completed=True,
+        is_registration_profile_completed=False,
     )
     user.set_password(User.objects.make_random_password())
     user.save()
@@ -108,6 +109,9 @@ def _import_single_row(payload: dict, branch_id: int | None):
             "about_family": payload.get("about_family") or "",
         },
     )
+    completion = get_profile_completion_data(user)
+    user.is_registration_profile_completed = completion["profile_status"] == "completed"
+    user.save(update_fields=["is_registration_profile_completed", "updated_at"])
 
 
 def run_import_job(job_id: int, token: str, admin_user_id: int, branch_id: int | None):

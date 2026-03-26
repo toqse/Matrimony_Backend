@@ -55,11 +55,14 @@ class PaymentEntry(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     mode = models.CharField(max_length=20, choices=MODE_CHOICES)
     reference_no = models.CharField(max_length=120, blank=True)
+    physical_receipt_no = models.CharField(max_length=120, blank=True)
+    cashier_receipt_no = models.CharField(max_length=120, blank=True)
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
         default=STATUS_PENDING,
     )
+    is_verified = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     verified_at = models.DateTimeField(null=True, blank=True)

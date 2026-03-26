@@ -10,6 +10,7 @@ from admin_panel.auth.models import AdminUser
 from admin_panel.pagination import StandardPagination
 from admin_panel.permissions import IsAdminOrBranchManager, IsStaffOrAbove
 from admin_panel.staff_mgmt.models import StaffProfile
+from admin_panel.audit_log.utils import create_audit_log
 
 from .models import Enquiry, EnquiryNote
 from .scoping import admin_branch_for_manager, manager_branch_code, staff_profile_for
@@ -181,6 +182,12 @@ class EnquiryListCreateView(_AdminUserMixin, APIView):
             .prefetch_related("enquiry_notes__created_by")
             .get(pk=enquiry.pk)
         )
+        create_audit_log(
+            request,
+            action="create",
+            resource=f"enquiry:{enquiry.id}",
+            details=f"Enquiry created for {enquiry.name}.",
+        )
         return Response(
             {"success": True, "data": EnquirySerializer(enquiry).data},
             status=status.HTTP_201_CREATED,
@@ -285,6 +292,12 @@ class EnquiryMoveView(_AdminUserMixin, APIView):
         old_status = enquiry.status
         enquiry.status = new_status
         enquiry.save(update_fields=["status", "updated_at"])
+        create_audit_log(
+            request,
+            action="update",
+            resource=f"enquiry:{enquiry.id}",
+            details=f"Enquiry status moved from {old_status} to {new_status}.",
+        )
 
         return Response(
             {
@@ -368,6 +381,12 @@ class EnquiryAssignView(_AdminUserMixin, APIView):
 
         enquiry.assigned_to = staff
         enquiry.save(update_fields=["assigned_to", "updated_at"])
+        create_audit_log(
+            request,
+            action="update",
+            resource=f"enquiry:{enquiry.id}",
+            details=f"Enquiry assigned to {staff.name}.",
+        )
         return Response(
             {
                 "success": True,
@@ -437,6 +456,12 @@ class EnquiryAddNoteView(_AdminUserMixin, APIView):
             enquiry=enquiry,
             text=serializer.validated_data["text"],
             created_by=user,
+        )
+        create_audit_log(
+            request,
+            action="update",
+            resource=f"enquiry:{enquiry.id}",
+            details="Enquiry note added.",
         )
         return Response(
             {

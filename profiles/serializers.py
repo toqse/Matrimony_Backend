@@ -151,7 +151,7 @@ class UserPersonalSerializer(serializers.Serializer):
     height = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     weight = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     complexion = serializers.ChoiceField(
-        choices=['Fair', 'Wheatish', 'Dark', 'Very Fair'],
+        choices=['Very Fair','Fair','Wheatish','Wheatish Brown','Dark','Other'],
         required=False,
         allow_null=True,
     )
@@ -673,7 +673,7 @@ class PersonalDetailsUpdateSerializer(serializers.Serializer):
     weight_kg = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     weight = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     complexion = serializers.ChoiceField(
-        choices=['Fair', 'Wheatish', 'Dark', 'Very Fair'],
+        choices=['Very Fair','Fair','Wheatish','Wheatish Brown','Dark','Other'],
         required=False,
         allow_null=True,
     )

@@ -13,6 +13,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from admin_panel.audit_log.mixins import AuditLogMixin
 from admin_panel.audit_log.models import AuditLog
+from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.staff_mgmt.models import StaffProfile
 
 from .authentication import AdminJWTAuthentication
@@ -245,6 +246,12 @@ class VerifyOTPView(APIView):
         cache.delete(_lock_key(mobile))
 
         tokens = _tokens_for_admin_user(user)
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_OTP_VERIFY,
+            resource=f"admin_user:{user.id}",
+            details="Admin panel OTP verified successfully.",
+        )
         return Response(
             {
                 "success": True,

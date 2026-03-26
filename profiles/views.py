@@ -20,6 +20,7 @@ from .utils import (
     generate_about_me,
     generate_about_me_suggestions,
     get_profile_completion_data,
+    is_profile_registration_complete,
     is_profile_visible_to_others,
 )
 from .serializers import (
@@ -47,6 +48,7 @@ from .serializers import (
     AboutDetailsUpdateSerializer,
     BirthDetailsUpdateSerializer,
 )
+from admin_panel.audit_log.utils import create_audit_log
 
 
 class ProfileDetailView(APIView):
@@ -55,6 +57,7 @@ class ProfileDetailView(APIView):
 
     def get(self, request):
         user = request.user
+        completion = get_profile_completion_data(user)
         loc = UserLocation.objects.filter(user=user).select_related('country', 'state', 'district', 'city').first()
         rel = UserReligion.objects.filter(user=user).select_related('religion', 'caste_fk', 'mother_tongue').first()
         pers = UserPersonal.objects.filter(user=user).select_related('marital_status', 'height').first()
@@ -83,6 +86,7 @@ class ProfileDetailView(APIView):
             'family_details': FamilyDetailsReadSerializer(fam).data if fam else {},
             'education_details': EducationDetailsReadSerializer(edu).data if edu else {},
             'about_me': profile.about_me if profile else '',
+            'profile_completion_percentage': completion['profile_completion_percentage'],
         }
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
@@ -373,6 +377,22 @@ class ProfileCompletionView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class ProfileRegistrationCompletedView(APIView):
+    """
+    GET /api/v1/profile/registration-completed/
+    Returns whether all registration steps (profile sections + partner preference) are done.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({
+            'success': True,
+            'data': {
+                'is_profile_completed': is_profile_registration_complete(request.user),
+            },
+        }, status=status.HTTP_200_OK)
+
+
 class ProfileViewsView(APIView):
     """
     GET /api/v1/profile/views/
@@ -421,6 +441,7 @@ class BasicDetailsView(APIView):
             ser.save()
         except IntegrityError:
             raise ValidationError({'email': ['Email already exists. Please use a different email.']})
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Basic details updated.')
         return Response({'success': True, 'data': BasicDetailsReadSerializer(ser.instance).data}, status=status.HTTP_200_OK)
 
 
@@ -449,6 +470,7 @@ class ProfileLocationView(APIView):
                 'country', 'state', 'district', 'city'
             ).first()
         )
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Location details updated.')
         return Response({'success': True, 'data': out_ser.data}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -456,6 +478,7 @@ class ProfileLocationView(APIView):
         ser.is_valid(raise_exception=True)
         ser.create(ser.validated_data)
         mark_profile_step_completed(request.user, 'location')
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Location details created.')
         return Response({'success': True, 'message': 'Location saved.'}, status=status.HTTP_200_OK)
 
 
@@ -491,6 +514,7 @@ class ProfileReligionView(APIView):
         rel = UserReligion.objects.filter(user=request.user).select_related(
             'religion', 'caste_fk', 'mother_tongue'
         ).first()
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Religion details updated.')
         return Response({
             'success': True,
             'data': ReligionDetailsReadSerializer(rel).data if rel else {},
@@ -582,6 +606,7 @@ class ProfilePersonalView(APIView):
         pers.save()
         mark_profile_step_completed(request.user, 'personal')
         pers = UserPersonal.objects.filter(user=request.user).select_related('marital_status', 'height').first()
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Personal details updated.')
         return Response({'success': True, 'data': PersonalDetailsReadSerializer(pers).data}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -610,6 +635,7 @@ class ProfileFamilyView(APIView):
             setattr(fam, k, ser.validated_data[k])
         fam.save()
         mark_profile_step_completed(request.user, 'family')
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Family details updated.')
         return Response({'success': True, 'data': FamilyDetailsReadSerializer(fam).data}, status=status.HTTP_200_OK)
 
 
@@ -645,6 +671,7 @@ class ProfileEducationView(APIView):
         edu = UserEducation.objects.filter(user=request.user).select_related(
             'highest_education', 'education_subject', 'occupation', 'annual_income'
         ).first()
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Education details updated.')
         return Response({'success': True, 'data': EducationDetailsReadSerializer(edu).data}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -687,6 +714,7 @@ class ProfileAboutView(APIView):
             profile.about_me = ser.validated_data['about_me']
         profile.save()
         mark_profile_step_completed(request.user, 'about')
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='About me updated.')
         return Response({'success': True, 'data': {'about_me': profile.about_me}}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -724,6 +752,7 @@ class ProfilePhotosView(APIView):
         ser.is_valid(raise_exception=True)
         ser.save()
         mark_profile_step_completed(request.user, 'photos')
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Photos updated.')
         return Response({
             'success': True,
             'data': PhotosDetailsReadSerializer(ser.instance, context={'request': request}).data,
@@ -767,6 +796,7 @@ class ProfilePhotosView(APIView):
         image_field.delete(save=False)
         setattr(photos, field_name, None)
         photos.save()
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details=f'Photo deleted: {field_name}.')
 
         return Response(
             {
@@ -785,6 +815,7 @@ class ProfileCompleteView(APIView):
         user = request.user
         user.is_registration_profile_completed = True
         user.save(update_fields=['is_registration_profile_completed', 'updated_at'])
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Profile marked complete.')
         return Response({
             'success': True,
             'message': 'Profile marked as complete.',
@@ -812,6 +843,7 @@ class ProfileBirthDetailsView(APIView):
         profile.time_of_birth = serializer.validated_data['time_of_birth']
         profile.place_of_birth = serializer.validated_data['place_of_birth']
         profile.save(update_fields=['time_of_birth', 'place_of_birth', 'updated_at'])
+        create_audit_log(request, action='profile_update', resource=f'user:{request.user.id}', details='Birth details updated.')
         return Response({
             'success': True,
             'message': 'Birth details updated successfully.',
