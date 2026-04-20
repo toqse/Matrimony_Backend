@@ -52,9 +52,9 @@ class AuditLogListAPIView(APIView):
                     {"success": False, "error": {"code": 400, "message": "Invalid role."}},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            qs = qs.filter(actor_role=role)
+            qs = qs.filter(Q(role=role) | Q(actor_role=role))
 
-        start_date = (request.query_params.get("start_date") or "").strip()
+        start_date = (request.query_params.get("start_date") or request.query_params.get("from_date") or "").strip()
         if start_date:
             try:
                 start_dt = datetime.strptime(start_date, "%d-%m-%Y").date()
@@ -65,7 +65,7 @@ class AuditLogListAPIView(APIView):
                 )
             qs = qs.filter(created_at__date__gte=start_dt)
 
-        end_date = (request.query_params.get("end_date") or "").strip()
+        end_date = (request.query_params.get("end_date") or request.query_params.get("to_date") or "").strip()
         if end_date:
             try:
                 end_dt = datetime.strptime(end_date, "%d-%m-%Y").date()
@@ -92,4 +92,50 @@ class AuditLogActionOptionsAPIView(APIView):
             {"value": value, "label": label}
             for value, label in AuditLog.ACTION_CHOICES
         ]
-        return Response({"success": True, "data": actions}, status=status.HTTP_200_OK)
+        roles = [
+            {"value": value, "label": label}
+            for value, label in AdminUser.ROLE_CHOICES
+        ]
+        role_values = {r["value"] for r in roles}
+
+        # Prefer names captured in audit trail; fallback to AdminUser names.
+        actor_names = list(
+            AuditLog.objects.exclude(actor_name__exact="")
+            .order_by("actor_name")
+            .values_list("actor_name", flat=True)
+            .distinct()
+        )
+        if not actor_names:
+            actor_names = list(
+                AdminUser.objects.exclude(name__exact="")
+                .order_by("name")
+                .values_list("name", flat=True)
+                .distinct()
+            )
+        usernames = [{"value": n, "label": n} for n in actor_names]
+
+        # Include any role values seen in historical logs (for old/legacy rows).
+        legacy_roles = set(
+            AuditLog.objects.exclude(role__exact="")
+            .values_list("role", flat=True)
+            .distinct()
+        ) | set(
+            AuditLog.objects.exclude(actor_role__exact="")
+            .values_list("actor_role", flat=True)
+            .distinct()
+        )
+        for value in sorted(legacy_roles):
+            if value not in role_values:
+                roles.append({"value": value, "label": value.replace("_", " ").title()})
+
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "actions": actions,
+                    "roles": roles,
+                    "usernames": usernames,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )

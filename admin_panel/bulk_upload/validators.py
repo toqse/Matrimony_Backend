@@ -28,7 +28,7 @@ from master.models import (
 CACHE_PREFIX = "bulk_upload:v2:"
 CACHE_TTL = 60 * 60
 ASYNC_ROW_THRESHOLD = 50
-VALID_COMPLEXIONS = {"Fair", "Wheatish", "Dark", "Very Fair"}
+VALID_COMPLEXIONS = {"Very Fair","Fair","Wheatish","Wheatish Brown","Dark","Other"}
 SPECIAL_MARITALS = {"divorced", "widowed", "separated"}
 MAX_AVAILABLE_VALUES_IN_ERROR = 20
 

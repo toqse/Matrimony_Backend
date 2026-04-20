@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
+from accounts.serializers import get_user_by_mobile_variants, validate_phone_number
 from plans.services import _get_user_plan
 from profiles.models import UserLocation, UserPhotos
 from core.media import absolute_media_url
@@ -169,7 +170,16 @@ class AccountUpdateView(APIView):
             user.email = email
         if 'phone_number' in ser.validated_data:
             phone = (ser.validated_data['phone_number'] or '').strip()
-            if phone and User.objects.filter(mobile=phone).exclude(pk=user.pk).exists():
+            if phone:
+                try:
+                    phone = validate_phone_number(phone)
+                except Exception:
+                    return Response({
+                        'success': False,
+                        'error': {'code': 400, 'message': 'Invalid phone number format. Use +91XXXXXXXXXX.'},
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            existing_user = get_user_by_mobile_variants(phone) if phone else None
+            if existing_user and existing_user.pk != user.pk:
                 return Response({
                     'success': False,
                     'error': {'code': 400, 'message': 'Phone number already in use by another account.'},

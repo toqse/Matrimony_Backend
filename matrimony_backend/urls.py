@@ -6,7 +6,11 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from profiles.views import PublicProfileByMatriIdView, ProfilePreviewByMatriIdView
+from profiles.views import (
+    PublicProfileByMatriIdView,
+    ProfilePreviewByMatriIdView,
+    ProfileRegistrationCompletedView,
+)
 from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
 
 urlpatterns = [
@@ -51,6 +55,11 @@ urlpatterns = [
     path('api/v1/admin/audit-log/', include('admin_panel.audit_log.urls')),
     path('api/v1/admin/master/', include('admin_panel.master.urls')),
 
+    # Must be before include('profiles.urls') so this path is always registered (avoids 404 if nested urls are stale).
+    path(
+        'api/v1/profile/registration-completed/',
+        ProfileRegistrationCompletedView.as_view(),
+    ),
     path('api/v1/profile/', include('profiles.urls')),
     path('api/v1/astrology/', include('astrology.urls')),
     path('api/v1/dashboard/', include('dashboard.urls')),

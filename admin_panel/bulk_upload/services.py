@@ -42,6 +42,7 @@ from profiles.models import (
     UserProfile,
     UserReligion,
 )
+from profiles.utils import get_profile_completion_data
 
 CACHE_PREFIX = "bulk_upload:"
 CACHE_TTL = 60 * 60  # 1 hour
@@ -235,11 +236,18 @@ def normalize_mobile(raw: str) -> str | None:
     if len(digits) == 11 and digits.startswith("0"):
         digits = digits[-10:]
     if len(digits) == 10:
-        return digits
+        return f"+91{digits}"
     return None
 
 
-def mobile_exists_in_db(mobile_10: str) -> bool:
+def mobile_exists_in_db(mobile_e164: str) -> bool:
+    digits = "".join(c for c in str(mobile_e164) if c.isdigit())
+    if len(digits) == 12 and digits.startswith("91"):
+        mobile_10 = digits[-10:]
+    elif len(digits) == 10:
+        mobile_10 = digits
+    else:
+        return False
     return User.objects.filter(
         Q(mobile=mobile_10)
         | Q(mobile="+91" + mobile_10)
@@ -606,14 +614,12 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
     )
     user.is_active = True
     user.mobile_verified = True
-    user.is_registration_profile_completed = True
     if email:
         user.email_verified = True
     user.save(
         update_fields=[
             "is_active",
             "mobile_verified",
-            "is_registration_profile_completed",
             "email_verified",
             "updated_at",
         ]
@@ -624,13 +630,6 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
         user=user,
         defaults={
             "about_me": payload.get("about_me") or "",
-            "location_completed": True,
-            "religion_completed": True,
-            "personal_completed": True,
-            "family_completed": True,
-            "education_completed": True,
-            "about_completed": True,
-            "photos_completed": bool(payload.get("photo_url")),
             "horoscope_data": payload.get("horoscope_data") or {},
             "has_horoscope": has_horo,
         },
@@ -719,6 +718,10 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
     if payload.get("photo_url"):
         photos_defaults["profile_photo_url"] = payload["photo_url"]
     UserPhotos.objects.update_or_create(user=user, defaults=photos_defaults)
+
+    completion = get_profile_completion_data(user)
+    user.is_registration_profile_completed = completion["profile_status"] == "completed"
+    user.save(update_fields=["is_registration_profile_completed", "updated_at"])
 
 
 def run_bulk_import(

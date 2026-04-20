@@ -16,7 +16,7 @@ from profiles.serializers import (
     PersonalDetailsUpdateSerializer,
     ReligionDetailsUpdateSerializer,
 )
-from profiles.utils import mark_profile_step_completed
+from profiles.utils import sync_profile_completion_flags
 
 
 def apply_basic_details(user, payload: dict):
@@ -34,7 +34,7 @@ def apply_location(user, payload: dict):
         if vd.get(k) is not None:
             defaults[k] = vd[k]
     UserLocation.objects.update_or_create(user=user, defaults=defaults)
-    mark_profile_step_completed(user, "location")
+    sync_profile_completion_flags(user)
 
 
 def apply_religion(user, payload: dict):
@@ -55,7 +55,7 @@ def apply_religion(user, payload: dict):
     if "partner_caste_preference" in vd:
         defaults["partner_caste_preference"] = vd["partner_caste_preference"]
     UserReligion.objects.update_or_create(user=user, defaults=defaults)
-    mark_profile_step_completed(user, "religion")
+    sync_profile_completion_flags(user)
 
 
 def apply_personal(user, payload: dict):
@@ -88,7 +88,7 @@ def apply_personal(user, payload: dict):
     if "blood_group" in vd:
         pers.blood_group = vd["blood_group"]
     pers.save()
-    mark_profile_step_completed(user, "personal")
+    sync_profile_completion_flags(user)
 
 
 def apply_family(user, payload: dict):
@@ -98,7 +98,7 @@ def apply_family(user, payload: dict):
     for k in ser.validated_data:
         setattr(fam, k, ser.validated_data[k])
     fam.save()
-    mark_profile_step_completed(user, "family")
+    sync_profile_completion_flags(user)
 
 
 def apply_education(user, payload: dict):
@@ -117,7 +117,7 @@ def apply_education(user, payload: dict):
     if vd.get("annual_income_id") is not None:
         edu.annual_income_id = vd["annual_income_id"]
     edu.save()
-    mark_profile_step_completed(user, "education")
+    sync_profile_completion_flags(user)
 
 
 def apply_about(user, payload: dict):
@@ -129,7 +129,7 @@ def apply_about(user, payload: dict):
     if "about_me" in ser.validated_data:
         profile.about_me = ser.validated_data["about_me"]
     profile.save(update_fields=["about_me", "updated_at"])
-    mark_profile_step_completed(user, "about")
+    sync_profile_completion_flags(user)
 
 
 SECTION_HANDLERS = {

@@ -143,8 +143,9 @@ def _wishlist_actor_for_panel_user(panel_user: AdminUser):
     normalized = normalize_mobile(mobile)
     if not normalized:
         return None
+    digits = normalized[-10:]
     return User.objects.filter(
-        Q(mobile=normalized) | Q(mobile=f"+91{normalized}") | Q(mobile=f"91{normalized}")
+        Q(mobile=normalized) | Q(mobile=f"91{digits}") | Q(mobile=digits)
     ).first()
 
 
@@ -586,8 +587,8 @@ class MyProfilesCreateView(APIView):
             mobile = None
         else:
             mobile = normalize_mobile(phone)
-            if not mobile or len(mobile) != 10:
-                errors["phone_number"] = "Enter a valid 10-digit phone number."
+            if not mobile:
+                errors["phone_number"] = "Enter a valid phone number in +91XXXXXXXXXX format."
             elif mobile_exists_in_db(mobile):
                 errors["phone_number"] = "Phone number already registered."
 
@@ -644,8 +645,9 @@ class MyProfilesCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        digits = mobile[-10:]
         user = User.objects.filter(
-            Q(mobile=mobile) | Q(mobile=f"+91{mobile}") | Q(mobile=f"91{mobile}")
+            Q(mobile=mobile) | Q(mobile=f"91{digits}") | Q(mobile=digits)
         ).order_by("-created_at").first()
         if not user:
             return Response(

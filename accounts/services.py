@@ -48,6 +48,14 @@ def _hash_otp(otp: str) -> str:
     return hashlib.sha256(otp.encode()).hexdigest()
 
 
+def check_resend_otp_rate_limit(phone_e164: str) -> tuple[bool, str]:
+    """
+    Rate limit for POST /api/v1/auth/resend-otp/ only.
+    Same limits as check_otp_rate_limit (settings OTP_RATE_LIMIT_*), separate bucket per phone.
+    """
+    return check_otp_rate_limit(f"resend_otp:{phone_e164}")
+
+
 def check_otp_rate_limit(identifier: str) -> tuple[bool, str]:
     """
     Rate limit: max OTP_REQUESTS per WINDOW minutes per identifier.

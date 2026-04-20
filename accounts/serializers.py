@@ -2,9 +2,12 @@
 Auth serializers: register, verify, login, password reset.
 """
 import phonenumbers
+import re
 from datetime import datetime, date
 
 from rest_framework import serializers
+
+from core.dob_utils import parse_registration_dob_string, validate_matrimony_registration_dob
 from django.contrib.auth import get_user_model
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -26,36 +29,44 @@ PROFILE_FOR_CHOICES = [
 
 def validate_phone_number(phone):
     """
-    Validate phone number with country code. Returns E164 format string.
+    Enforce +91 followed by 10 digits.
     """
     phone = (phone or '').strip()
     if not phone:
         raise serializers.ValidationError('Phone number is required.')
-    try:
-        parsed = phonenumbers.parse(phone, None)
-        if not phonenumbers.is_valid_number(parsed):
-            raise serializers.ValidationError('Invalid phone number.')
-        return phonenumbers.format_number(
-            parsed,
-            phonenumbers.PhoneNumberFormat.E164,
-        )
-    except (phonenumbers.NumberParseException, Exception):
-        raise serializers.ValidationError('Invalid phone number format. Include country code (e.g. +919496954772).')
+    if not re.fullmatch(r"\+91\d{10}", phone):
+        raise serializers.ValidationError('Invalid phone number format. Use +91XXXXXXXXXX.')
+    return phone
+
+
+def mobile_variants(phone: str) -> tuple[str, str, str]:
+    """Return equivalent variants for compatibility lookups."""
+    canonical = validate_phone_number(phone)
+    digits = canonical[-10:]
+    return canonical, f"91{digits}", digits
+
+
+def get_user_by_mobile_variants(phone: str):
+    canonical, prefixed, digits = mobile_variants(phone)
+    return User.objects.filter(mobile__in=[canonical, prefixed, digits]).order_by("-created_at").first()
+
+
+def mobile_exists_any_variant(phone: str, *, verified_only: bool = False) -> bool:
+    canonical, prefixed, digits = mobile_variants(phone)
+    qs = User.objects.filter(mobile__in=[canonical, prefixed, digits])
+    if verified_only:
+        qs = qs.filter(mobile_verified=True)
+    return qs.exists()
 
 
 def parse_dob(dob_str):
     """
-    Parse date of birth from DD-MM-YYYY format. Returns date object.
+    Parse registration-style DOB (DD-MM-YYYY or DD/MM/YYYY). Returns date object.
     """
-    if dob_str is None:
-        raise serializers.ValidationError('Date of birth is required.')
-    dob_str = str(dob_str).strip()
-    if not dob_str:
-        raise serializers.ValidationError('Date of birth is required.')
     try:
-        return datetime.strptime(dob_str, '%d-%m-%Y').date()
-    except ValueError:
-        raise serializers.ValidationError('Date of birth must be in DD-MM-YYYY format (e.g. 16-12-1990).')
+        return parse_registration_dob_string(dob_str)
+    except ValueError as e:
+        raise serializers.ValidationError(str(e)) from e
 
 
 def parse_optional_dob(dob_str):
@@ -79,12 +90,11 @@ def parse_optional_dob(dob_str):
 
 class DOBField(serializers.Field):
     """
-    Accepts DOB as string in DD-MM-YYYY only. Never use DateField (which expects YYYY-MM-DD).
+    Accepts DOB as string in DD-MM-YYYY or DD/MM/YYYY. Never use DateField (which expects YYYY-MM-DD).
     """
     def to_internal_value(self, data):
         if data is None or (isinstance(data, str) and not data.strip()):
             raise serializers.ValidationError('Date of birth is required.')
-        # Keep as string here; parse_dob() in validate() converts to date
         return str(data).strip()
 
 
@@ -126,15 +136,15 @@ class RegisterSerializer(serializers.Serializer):
         except serializers.ValidationError as e:
             raise serializers.ValidationError({'phone_number': e.detail})
         try:
-            attrs['dob'] = parse_dob(attrs['dob'])
-        except serializers.ValidationError as e:
-            raise serializers.ValidationError({'dob': e.detail})
-        if attrs['dob'] > date.today():
-            raise serializers.ValidationError({'dob': 'Date of birth cannot be in the future.'})
+            dob_parsed = parse_registration_dob_string(attrs['dob'])
+            validate_matrimony_registration_dob(dob_parsed, attrs['gender'])
+        except ValueError as e:
+            raise serializers.ValidationError({'dob': str(e)})
+        attrs['dob'] = dob_parsed
         phone = attrs['phone_number']
         email = (attrs.get('email') or '').strip().lower()
         # is_registered = mobile_verified (user has completed OTP verification)
-        if User.objects.filter(mobile=phone, mobile_verified=True).exists():
+        if mobile_exists_any_variant(phone, verified_only=True):
             raise serializers.ValidationError({
                 'non_field_errors': ['Phone number already registered'],
             })
@@ -149,6 +159,15 @@ class RegisterSerializer(serializers.Serializer):
                     'non_field_errors': ['Email already registered'],
                 })
         return attrs
+
+
+class ResendOTPSerializer(serializers.Serializer):
+    """Resend login OTP for an existing verified account (E164 phone_number)."""
+
+    phone_number = serializers.CharField(required=True)
+
+    def validate_phone_number(self, value):
+        return validate_phone_number(value)
 
 
 class VerifyOTPSerializer(serializers.Serializer):
@@ -200,7 +219,7 @@ class VerifyOTPSerializer(serializers.Serializer):
                 is_active=True,
             )
         else:
-            user = User.objects.filter(mobile=data['phone_number']).first()
+            user = get_user_by_mobile_variants(data['phone_number'])
             if not user:
                 raise serializers.ValidationError(
                     'Registration session expired or invalid. Please register again and verify the OTP.',
@@ -242,7 +261,7 @@ class RegisterMobileSerializer(serializers.Serializer):
     mobile = serializers.CharField(max_length=20)
 
     def validate_mobile(self, value):
-        return value.strip()
+        return validate_phone_number(value)
 
 
 class VerifyMobileSerializer(serializers.Serializer):
@@ -280,7 +299,7 @@ class LoginSerializer(serializers.Serializer):
     otp = serializers.CharField(max_length=6, min_length=6)
 
     def validate_mobile(self, value):
-        return (value or '').strip()
+        return validate_phone_number(value)
 
     def validate_otp(self, value):
         if not value.isdigit():
@@ -296,7 +315,7 @@ class LoginSerializer(serializers.Serializer):
         ok, msg = verify_otp(identifier, data['otp'])
         if not ok:
             raise serializers.ValidationError(msg)
-        user = User.objects.filter(mobile=mobile).first()
+        user = get_user_by_mobile_variants(mobile)
         if not user:
             raise serializers.ValidationError('User not found.')
         # Activate account on successful OTP (so no "Account is not active" anywhere)
@@ -321,7 +340,7 @@ class PasswordResetSerializer(serializers.Serializer):
         if email:
             user = User.objects.filter(email=email).first()
         else:
-            user = User.objects.filter(mobile=mobile).first()
+            user = get_user_by_mobile_variants(mobile)
         data['user'] = user
         return data
 

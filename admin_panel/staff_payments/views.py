@@ -10,6 +10,7 @@ from django.db.models.functions import Coalesce
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,14 +19,17 @@ from accounts.models import User
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.auth.serializers import normalize_admin_role
+from admin_panel.audit_log.models import AuditLog
+from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.staff_payments.models import PaymentEntry
 from admin_panel.staff_payments.pagination import StaffPaymentPagination
-from admin_panel.staff_payments.services import allocate_next_receipt_id
+from admin_panel.staff_payments.services import generate_receipt_no, validate_otp
+from admin_panel.staff_payments.serializers import StaffPaymentCreateSerializer
 from admin_panel.staff_subscriptions.services import record_staff_plan_purchase
 from admin_panel.subscriptions.models import CustomerStaffAssignment
-from plans.models import Plan
+from plans.models import Plan, Transaction
 
 # --- Exact validation / error messages (product spec) ---
 MSG_MODE_REQUIRED = "mode is required."
@@ -63,6 +67,20 @@ def _err_response(message: str, code: int = 400, extra: dict | None = None):
     if extra:
         body["error"]["details"] = extra
     return Response(body, status=code)
+
+
+def _err_response_code(code: str, message: str, status_code: int = 400):
+    return Response(
+        {
+            "success": False,
+            "error": {
+                "code": code,
+                "status": status_code,
+                "message": message,
+            },
+        },
+        status=status_code,
+    )
 
 
 def _resolve_staff(request):
@@ -158,13 +176,17 @@ def _mode_badge(mode: str) -> str:
 def _serialize_row(entry: PaymentEntry, request) -> dict:
     return {
         "receipt_id": entry.receipt_id,
+        "created_by": entry.staff_id,
         "customer": {"matri_id": entry.customer_matri, "name": entry.customer_name},
         "plan": {"id": entry.plan_id, "name": entry.plan.name} if entry.plan_id else None,
         "amount": str(entry.amount),
         "mode": entry.mode,
         "mode_label": _mode_badge(entry.mode),
         "reference_no": entry.reference_no or "",
+        "physical_receipt_no": entry.physical_receipt_no or "",
+        "cashier_receipt_no": entry.cashier_receipt_no or "",
         "status": entry.status,
+        "is_verified": bool(entry.is_verified),
         "notes": entry.notes or "",
         "created_at": entry.created_at.isoformat(),
         "verified_at": entry.verified_at.isoformat() if entry.verified_at else None,
@@ -285,69 +307,101 @@ class StaffPaymentListCreateView(APIView):
         if err:
             return err
         staff_profile: StaffProfile = staff_profile_for_dashboard(staff_admin)
-        data = request.data or {}
-
-        mode = (data.get("mode") or "").strip().lower()
-        if not mode:
-            return _err_response(MSG_MODE_REQUIRED)
-        if mode not in VALID_MODES:
-            return _err_response(MSG_MODE_INVALID)
-
-        matri = (data.get("customer_matri_id") or "").strip()
-        if not matri:
-            return _err_response(MSG_CUSTOMER_MATRI_REQUIRED)
-
-        customer = User.objects.filter(matri_id__iexact=matri, role="user").first()
-        if not customer:
-            return _err_response(MSG_CUSTOMER_NOT_FOUND, 404)
-        if not CustomerStaffAssignment.objects.filter(user=customer, staff=staff_profile).exists():
-            return _err_response(MSG_CUSTOMER_NOT_FOUND, 404)
-
-        pid = data.get("plan_id")
-        if pid is None or pid == "":
-            return _err_response(MSG_PLAN_ID_REQUIRED)
+        serializer = StaffPaymentCreateSerializer(data=request.data or {})
         try:
-            pid_int = int(pid)
-        except (TypeError, ValueError):
-            return _err_response(MSG_PLAN_INVALID)
-        plan = Plan.objects.filter(pk=pid_int, is_active=True).first()
-        if not plan:
-            return _err_response(MSG_PLAN_INVALID)
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError as e:
+            payload = e.detail if isinstance(e.detail, dict) else {}
+            if isinstance(payload.get("code"), list):
+                code = str(payload.get("code")[0])
+            else:
+                code = str(payload.get("code", "VALIDATION_ERROR"))
+            if isinstance(payload.get("message"), list):
+                message = str(payload.get("message")[0])
+            else:
+                message = str(payload.get("message", "Invalid request data."))
+            return _err_response_code(code, message, 400)
 
-        amt, amsg = _parse_decimal_amount(data.get("amount"))
-        if amsg:
-            return _err_response(amsg)
-        if amt is None:
-            return _err_response(MSG_AMOUNT_REQUIRED)
-        if amt != plan.price:
-            return _err_response(_msg_amount_mismatch(plan.price))
+        data = serializer.validated_data
+        mode = data["mode"]
+        customer: User = data["customer"]
+        plan = data["plan"]
+        amt: Decimal = data["amount"]
+        reference_no = data.get("reference_no", "")
+        physical_receipt_no = data.get("physical_receipt_no", "")
+        cashier_receipt_no = data.get("cashier_receipt_no", "")
+        otp = data.get("otp", "")
+        notes = data.get("notes", "")
+        matri = data["customer_matri_id"]
 
-        reference_no = (data.get("reference_no") or "").strip()
-        if mode == PaymentEntry.MODE_GPAY_UPI and not reference_no:
-            return _err_response(MSG_REF_REQUIRED_GPay)
+        if not CustomerStaffAssignment.objects.filter(user=customer, staff=staff_profile).exists():
+            return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
 
-        notes = (data.get("notes") or "").strip()
+        if mode == PaymentEntry.MODE_CASH:
+            ok, otp_message = validate_otp(phone_number=(customer.mobile or "").strip(), otp=otp)
+            if not ok:
+                err_code = "INVALID_OTP"
+                msg_lower = (otp_message or "").lower()
+                if "expired" in msg_lower:
+                    err_code = "OTP_EXPIRED"
+                elif "attempt" in msg_lower:
+                    err_code = "OTP_ATTEMPTS_EXCEEDED"
+                return _err_response_code(err_code, otp_message, 400)
 
-        receipt_id = allocate_next_receipt_id()
-        entry = PaymentEntry.objects.create(
-            receipt_id=receipt_id,
-            staff=staff_admin,
-            branch=staff_profile.branch,
-            customer_matri=customer.matri_id or matri,
-            customer_name=(customer.name or "").strip() or matri,
-            plan=plan,
-            amount=amt,
-            mode=mode,
-            reference_no=reference_no,
-            notes=notes,
-            status=PaymentEntry.STATUS_PENDING,
+        receipt_id = generate_receipt_no()
+        now = timezone.now()
+        sub_payment_mode = "cash" if mode == PaymentEntry.MODE_CASH else "upi"
+        payment_reference = reference_no or cashier_receipt_no or physical_receipt_no
+        try:
+            with db_transaction.atomic():
+                txn = record_staff_plan_purchase(
+                    customer=customer,
+                    plan=plan,
+                    payment_mode=sub_payment_mode,
+                    payment_reference=payment_reference,
+                    amount=amt,
+                )
+                entry = PaymentEntry.objects.create(
+                    receipt_id=receipt_id,
+                    staff=staff_admin,
+                    branch=staff_profile.branch,
+                    customer_matri=customer.matri_id or matri,
+                    customer_name=(customer.name or "").strip() or matri,
+                    plan=plan,
+                    amount=amt,
+                    mode=mode,
+                    reference_no=reference_no,
+                    physical_receipt_no=physical_receipt_no,
+                    cashier_receipt_no=cashier_receipt_no,
+                    notes=notes,
+                    status=PaymentEntry.STATUS_VERIFIED,
+                    is_verified=True,
+                    verified_at=now,
+                    verified_by=staff_admin,
+                    transaction=txn,
+                )
+        except ValueError as e:
+            return _err_response_code("INVALID_AMOUNT", str(e), 400)
+        # UPI and cash (with OTP) are verified at creation in staff flow.
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_PAYMENT_CREATE,
+            resource=f"payment:{entry.id}",
+            details=f"Payment created ₹{entry.amount} via {entry.mode}.",
         )
 
         return Response(
             {
                 "success": True,
-                "message": f"Payment entry recorded. Receipt: {receipt_id}.",
-                "data": _serialize_detail(entry, request),
+                "message": "Payment completed successfully",
+                "data": {
+                    "payment_id": entry.id,
+                    "receipt_no": entry.receipt_id,
+                    "status": entry.status,
+                    "mode": entry.mode,
+                    "amount": float(entry.amount),
+                    "is_verified": bool(entry.is_verified),
+                },
             },
             status=status.HTTP_201_CREATED,
         )
@@ -431,10 +485,19 @@ class BranchPaymentVerifyAPIView(APIView):
                     amount=entry.amount,
                 )
                 entry.status = PaymentEntry.STATUS_VERIFIED
+                entry.is_verified = True
                 entry.verified_by = branch_manager
                 entry.verified_at = timezone.now()
                 entry.transaction = txn
-                entry.save(update_fields=["status", "verified_by", "verified_at", "transaction", "updated_at"])
+                entry.save(
+                    update_fields=[
+                        "status",
+                        "is_verified",
+                        "verified_by",
+                        "verified_at",
+                        "transaction",
+                    ]
+                )
         except ValueError as e:
             return _err_response(str(e), 400)
 
@@ -462,7 +525,7 @@ class BranchPaymentCompleteAPIView(APIView):
         if entry.status != PaymentEntry.STATUS_VERIFIED:
             return _err_response(MSG_ONLY_VERIFIED_COMPLETE, 400)
         entry.status = PaymentEntry.STATUS_COMPLETED
-        entry.save(update_fields=["status", "updated_at"])
+        entry.save(update_fields=["status"])
         return Response(
             {
                 "success": True,

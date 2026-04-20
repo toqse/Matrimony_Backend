@@ -4,12 +4,13 @@ Match list: age from dob, height value, match percentage.
 from datetime import date
 from django.db.models import Q
 
+from core.dob_utils import calculate_age
+
 
 def age_from_dob(dob):
     if not dob:
         return None
-    today = date.today()
-    return (today - dob).days // 365
+    return calculate_age(dob)
 
 
 def dob_range_for_age(age_min, age_max):

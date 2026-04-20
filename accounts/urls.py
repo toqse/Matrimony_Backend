@@ -5,6 +5,7 @@ from django.urls import path
 
 from .views import (
     RegisterView,
+    ResendOTPView,
     VerifyOTPView,
     RegisterMobileView,
     VerifyMobileView,
@@ -19,6 +20,7 @@ from .views import (
 
 urlpatterns = [
     path('register/', RegisterView.as_view()),
+    path('resend-otp/', ResendOTPView.as_view()),
     path('verify-otp/', VerifyOTPView.as_view()),
     path('register/mobile/', RegisterMobileView.as_view()),
     path('verify/mobile/', VerifyMobileView.as_view()),

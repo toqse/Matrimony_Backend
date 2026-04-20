@@ -3,8 +3,7 @@ Dashboard APIs: summary, new-matches, suggestions, today-picks.
 All require JWT authentication.
 """
 from datetime import timedelta
-from django.db.models import Q, IntegerField, Value
-from django.db.models.functions import Cast, Coalesce
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
@@ -13,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
-from profiles.utils import get_profile_completion_data
+from profiles.utils import get_profile_completion_data, filter_visible_profiles_queryset
 from plans.models import ProfileView, Interest, UserPlan
 from plans.services import _get_user_plan
 from user_settings.models import UserSettings
@@ -29,17 +28,7 @@ def _match_queryset(user):
         qs = qs.filter(gender='F')
     elif gender == 'F':
         qs = qs.filter(gender='M')
-    completion_score = (
-        Coalesce(Cast('user_profile__location_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__religion_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__personal_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__family_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__education_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__about_completed', IntegerField()), Value(0)) +
-        Coalesce(Cast('user_profile__photos_completed', IntegerField()), Value(0))
-    )
-    # 6 of 7 completed steps => int((6/7) * 100) == 85
-    return qs.annotate(profile_completion_steps=completion_score).filter(profile_completion_steps__gte=6)
+    return filter_visible_profiles_queryset(qs)
 
 
 def _apply_partner_preference(qs, user):

@@ -2,7 +2,7 @@
 MATRIMONY BACKEND - API DOCUMENTATION (Aiswarya Matrimony)
 ================================================================================
 Base URL: /api/v1
-Auth Base: /api/v1/auth/
+Auth Base: /api/v1/auth/  (endpoints: register, resend-otp, verify-otp, register|verify mobile, register|verify email, login, token/refresh, logout, password reset|confirm)
 Admin Auth Base: /api/v1/admin/auth/
 Admin Profiles: /api/v1/admin/profiles/ | Staff My Profiles UI: /api/v1/staff/profiles/ (admin_panel.staff_profiles)
 Staff Panel Dashboard: /api/v1/staff/dashboard/
@@ -30,13 +30,18 @@ JWT: Access token 15 min (RS256 when keys set), Refresh token 30 days (optional 
 ----------------------------------------
 1. AUTHENTICATION (/api/v1/auth/)
 ----------------------------------------
+  Order of typical flows:
+    - New signup: POST register/ → POST verify-otp/
+    - Existing user login (mobile): POST register/mobile/ OR POST resend-otp/ (E164) → POST verify/mobile/ OR POST login/
+  Error shape: Most views use { "success": false, "error": { "code": <http status>, "message": "..." } }.
+  Validation errors (400) may use the global exception handler: error.message (summary) + error.details (field errors).
 
 --- New registration flow (recommended) ---
 
 POST /api/v1/auth/register/
   Auth: None
-  Description: Register new user with name, phone, email, dob, gender. Email and phone must be unique (among verified users). If user exists with same phone but not yet verified, resend OTP and update details (no duplicate user). Generates matri_id and sends OTP.
-  Rate limit: OTP rate limit applies (max 5 OTP requests per 10 minutes per phone/email).
+  Description: Start registration with name, phone, email, dob, gender. Stores pending data in cache until OTP is verified; no User row is created until POST verify-otp/ succeeds. matri_id is returned only after verify-otp/. Email and phone must be unique among verified users. If the same phone was used for an incomplete signup, pending data is replaced and a new OTP is sent.
+  Rate limit: OTP rate limit applies (max 5 OTP requests per 10 minutes per identifier phone:{E164}; settings OTP_RATE_LIMIT_*).
   Body (JSON):
     {
       "name": "string (required)",
@@ -54,24 +59,31 @@ POST /api/v1/auth/register/
       - Must be unique: if a user already exists with this phone and is_registered (mobile_verified=True), returns 400 "Phone number already registered".
       - If user exists with this phone but not verified, OTP is resent and profile updated (no duplicate).
     email:
-      - Required. Validated with Django's validate_email.
-      - Must be unique: if a user already exists with this email and is_registered (mobile_verified=True), returns 400 "Email already registered".
-      - Invalid format returns 400 "Invalid email address".
+      - Optional. If provided, validated with Django's validate_email; invalid format → "Invalid email address".
+      - Must be unique among verified users: if another user has this email and mobile_verified=True, returns 400 "Email already registered".
+      - If another unverified/pending registration holds this email on a different phone, returns 400 "Email already registered".
     dob:
-      - Required. Format DD-MM-YYYY or DD/MM/YYYY (e.g. 16-12-1990). Stored as date.
-      - Must not be in the future. Invalid format returns 400.
+      - Required. Allowed formats only: DD-MM-YYYY or DD/MM/YYYY (e.g. 16-12-1990 or 16/12/1990). Stored as date.
+      - Calendar validation: invalid days (e.g. 31-02-2020) and non-leap 29 Feb rejected.
+      - Must not be in the future ("DOB cannot be in the future").
+      - Minimum realistic DOB: 1920-01-01 ("Date of birth is not realistic." for earlier dates).
+      - Age: male (M) minimum 21 years; female (F) and other (O) minimum 18 years; maximum 80 years for all.
+      - Example messages: "Invalid date format. Use DD-MM-YYYY or DD/MM/YYYY", "Minimum age for male is 21 years",
+        "Minimum age for female is 18 years", "Minimum age is 18 years", "Maximum age allowed is 80 years",
+        "Invalid date. Check day, month, and year (including leap years)."
 
   Success response 200:
     {
       "success": true,
-      "message": "Registration successful. OTP has been sent to your phone number. Please verify to continue.",
+      "message": "OTP has been sent to your phone number. Verify to create your account.",
       "data": {
-        "matri_id": "AM100002",
         "phone_number": "+919496954772",
         "otp_sent": true,
-        "otp": "123456 (dev-only; returned only when DEBUG=true)"
+        "registration_pending": true,
+        "otp": "(only when DEBUG=true; omitted in production)"
       }
     }
+    Note: matri_id is not returned here; it appears in POST verify-otp/ after successful verification.
 
   Error response 400:
     {
@@ -87,14 +99,40 @@ POST /api/v1/auth/register/
 
 ---
 
+POST /api/v1/auth/resend-otp/
+  Auth: None
+  Description: Send a new 6-digit OTP for an E164 mobile (rate-limited). No 404: always sends OTP for valid
+    phone when under rate limit. OTP key routing:
+      - mobile_verified user -> mobile:{E164} (verify with POST verify/mobile/ or POST login/)
+      - else -> phone:{E164} (verify with POST verify-otp/ after POST register/ has stored pending data)
+    If there is no Redis pending registration yet, OTP still sends; user must call POST register/ to
+    store profile data before verify-otp/ can create the account.
+  Body (JSON):
+    { "phone_number": "string (required; validated to E164, e.g. +919876543210)" }
+  Rate limit: max 5 requests per 10 minutes per phone (separate Redis bucket resend_otp:{E164}; settings OTP_RATE_LIMIT_*).
+  OTP: New 6-digit code; expiry from settings (default OTP_EXPIRY_MINUTES, e.g. 5 minutes).
+  Response 200:
+    {
+      "success": true,
+      "message": "OTP has been sent to your phone number.",
+      "data": { "phone_number": "+91...", "otp_sent": true, "otp": "(only when DEBUG=true)" }
+    }
+  Error 429: { "success": false, "error": { "code": 429, "message": "Too many OTP requests. Try again after <n> minutes." } }
+  Validation 400: Invalid/missing phone (phonenumbers validation) via exception handler.
+
+---
+
 POST /api/v1/auth/verify-otp/
   Auth: None
-  Description: Verify OTP sent to phone. Returns tokens, multi-step profile completion status, and all previously saved profile data in detail.
+  Description: Verify OTP from POST register/ (identifier phone:{normalized_mobile}). Creates the User on first success
+    when pending registration exists; otherwise activates existing user. Returns tokens and full profile payload.
   Body (JSON):
     {
-      "phone_number": "string (required)",
+      "phone_number": "string (required unless mobile is sent)",
+      "mobile": "string (optional alias for phone_number)",
       "otp": "string (required, 6 digits)"
     }
+  Note: Phone is normalized to E164 when possible (same as register). OTP must match the latest code for phone:{E164}.
   Response 200:
     {
       "success": true,
@@ -142,8 +180,8 @@ POST /api/v1/auth/verify-otp/
     next_step          — First incomplete step name, or null if all complete
     profile            — Full saved profile (same structure as GET /api/v1/profile/): basic_details, photos, religion_details, personal_details, location_details, family_details, education_details, about_me
   (Refresh token may also be set in HTTP-only cookie when JWT_REFRESH_COOKIE_NAME is set.)
-  Error 400: Invalid OTP, user not found, or account not active.
-  Error 403: Account blocked by admin — { "success": false, "error": { "code": 403, "message": "Your account has been blocked." } } (User.is_blocked=true).
+  Error 400: Invalid/expired OTP, missing phone, or "Registration session expired or invalid..." (no pending registration and no user).
+  Error 403: Account blocked — { "success": false, "error": { "code": 403, "message": "Your account has been blocked." } } (User.is_blocked=true).
 
 ---
 
@@ -151,14 +189,19 @@ POST /api/v1/auth/verify-otp/
 
 POST /api/v1/auth/register/mobile/
   Auth: None
-  Use: Send OTP to mobile (register or login).
+  Use: Request login OTP for an existing mobile_verified user (raw mobile string as stored/submitted, max 20 chars; should match User.mobile).
   Body (JSON): { "mobile": "string (required, max 20 chars)" }
-  Response 200: { "success": true, "message": "OTP sent to mobile", "data": { "mobile": "<mobile>" } }
+  Error 404: No verified account for that mobile — { "success": false, "error": { "code": 404, "message": "No registered account found with this mobile number. Please register first." } }
+  Response 200:
+    { "success": true, "message": "OTP sent to mobile", "data": { "mobile": "<mobile>", "otp": "(DEBUG=true only)" } }
+  Note: No separate rate limit in code for this path; use resend-otp/ for E164 + dedicated resend rate limit.
 
 POST /api/v1/auth/verify/mobile/
   Auth: None
+  Description: Verify OTP sent via register/mobile/, resend-otp/, or register/ (tries identifiers mobile:{mobile} then phone:{mobile}).
   Body (JSON): { "mobile": "string", "otp": "string (6 digits)", "referral_code": "string (optional)" }
-  Response 200: { "success": true, "data": { "user": {...}, "tokens": { "access", "refresh" } } }
+  Response 200: Same shape as POST verify-otp/ — { "success": true, "data": { access_token, refresh_token, matri_id, profile_*, profile, ... } }
+    (via get_verify_otp_response_data). Refresh cookie set when JWT_REFRESH_COOKIE_NAME is configured.
 
 POST /api/v1/auth/register/email/
   Auth: None
@@ -172,8 +215,9 @@ POST /api/v1/auth/verify/email/
 
 POST /api/v1/auth/login/
   Auth: None
+  Description: Mobile + OTP login using identifier mobile:{mobile} (request OTP first via register/mobile/ or resend-otp/).
   Body (JSON): { "mobile": "string", "otp": "string (6 digits)" }
-  Response 200: { "success": true, "data": { "user": {...}, "tokens": { "access", "refresh" } } }
+  Response 200: { "success": true, "data": { "user": { "id", "email", "mobile", "role" }, "tokens": { "access", "refresh" } } }
 
 POST /api/v1/auth/token/refresh/
   Auth: None (refresh token in body or in HTTP-only cookie)
@@ -182,13 +226,15 @@ POST /api/v1/auth/token/refresh/
 
 POST /api/v1/auth/logout/
   Auth: Required (JWT)
-  Body (JSON): { "refresh_token": "string (optional, to blacklist)" }
+  Body (JSON): { "refresh": "string (optional; if provided and blacklist enabled, refresh token is blacklisted)" }
+  Side effects: Sets user.tokens_invalid_before (invalidates existing access tokens); optionally blacklists submitted refresh; marks user offline (last_seen).
   Response 200: { "success": true, "message": "Logged out successfully." }
 
 POST /api/v1/auth/password/reset/
   Auth: None
-  Body (JSON): { "email": "optional", "mobile": "optional" }
-  Response 200: { "success": true, "message": "OTP sent for password reset." }
+  Body (JSON): { "email": "optional", "mobile": "optional" } (at least one required)
+  Response 200: If user found: { "success": true, "message": "OTP sent for password reset.", "data": { "email" or "mobile": "<sent-to>" } }
+    If no user: { "success": true, "message": "If an account exists, you will receive OTP." } (same status 200; no enumeration).
 
 POST /api/v1/auth/password/confirm/
   Auth: None

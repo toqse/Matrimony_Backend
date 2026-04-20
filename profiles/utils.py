@@ -2,6 +2,9 @@
 Profile completion helpers: step tracking, percentage, next step, status.
 About Me generator: professional matrimony-style paragraph from profile data.
 """
+import math
+from django.db.models import IntegerField, Value
+from django.db.models.functions import Cast, Coalesce
 from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
     UserFamily, UserEducation, UserPhotos,
@@ -20,6 +23,147 @@ PROFILE_STEP_ORDER = (
 
 # Visibility threshold: 6/7 completed steps -> int(85.71) == 85
 PROFILE_VISIBILITY_MIN_PERCENTAGE = 85
+
+
+def _family_completion_ratio(user):
+    """
+    Return family step completion as a value between 0.0 and 1.0.
+    Uses field-level completion so percentage grows/drops proportionally.
+    """
+    fam = UserFamily.objects.filter(user=user).first()
+    if not fam:
+        return 0.0
+
+    # Keep this aligned with editable family text fields to avoid counting
+    # model defaults (e.g. numeric 0) as completed input.
+    tracked_fields = (
+        'father_name',
+        'father_occupation',
+        'mother_name',
+        'mother_occupation',
+        'about_family',
+        'family_type',
+        'family_status',
+    )
+    filled = 0
+    for field in tracked_fields:
+        value = getattr(fam, field, '')
+        if isinstance(value, str) and value.strip():
+            filled += 1
+
+    return filled / len(tracked_fields)
+
+
+def _compute_step_completion(user):
+    """Compute step completion from actual section data."""
+    loc = UserLocation.objects.filter(user=user).first()
+    rel = UserReligion.objects.filter(user=user).first()
+    pers = UserPersonal.objects.filter(user=user).first()
+    fam = UserFamily.objects.filter(user=user).first()
+    edu = UserEducation.objects.filter(user=user).first()
+    photos = UserPhotos.objects.filter(user=user).first()
+    profile = UserProfile.objects.filter(user=user).first()
+
+    family_ratio = _family_completion_ratio(user)
+    location_completed = bool(
+        loc and (
+            loc.country_id
+            or loc.state_id
+            or loc.district_id
+            or loc.city_id
+            or (loc.address or '').strip()
+        )
+    )
+    religion_completed = bool(
+        rel and (
+            rel.religion_id
+            or rel.caste_fk_id
+            or (rel.caste or '').strip()
+            or rel.mother_tongue_id
+            or (rel.gothram or '').strip()
+        )
+    )
+    personal_completed = bool(
+        pers and (
+            pers.marital_status_id
+            or pers.height_id
+            or (pers.height_text or '').strip()
+            or pers.weight is not None
+            or (pers.colour or '').strip()
+            or (pers.blood_group or '').strip()
+            or pers.has_children
+            or (pers.number_of_children or 0) > 0
+            or (pers.children_living_with or '').strip()
+        )
+    )
+    family_completed = family_ratio >= 1.0
+    education_completed = bool(
+        edu and (
+            edu.highest_education_id
+            or edu.education_subject_id
+            or edu.occupation_id
+            or edu.annual_income_id
+            or (edu.employment_status or '').strip()
+            or (edu.company or '').strip()
+            or (edu.working_location or '').strip()
+        )
+    )
+    about_completed = bool(profile and (profile.about_me or '').strip())
+    photos_completed = bool(
+        photos and (
+            photos.profile_photo
+            or photos.full_photo
+            or photos.selfie_photo
+            or photos.family_photo
+            or photos.aadhaar_front
+            or photos.aadhaar_back
+            or (photos.profile_photo_url or '').strip()
+        )
+    )
+
+    return {
+        'location': location_completed,
+        'religion': religion_completed,
+        'personal': personal_completed,
+        'family': family_completed,
+        'education': education_completed,
+        'about': about_completed,
+        'photos': photos_completed,
+        'family_ratio': family_ratio,
+    }
+
+
+def sync_profile_completion_flags(user):
+    """Persist step flags on UserProfile based on actual profile data."""
+    defaults = {
+        'location_completed': False,
+        'religion_completed': False,
+        'personal_completed': False,
+        'family_completed': False,
+        'education_completed': False,
+        'about_completed': False,
+        'photos_completed': False,
+    }
+    profile, _ = UserProfile.objects.get_or_create(user=user, defaults=defaults)
+    steps = _compute_step_completion(user)
+    updates = {}
+    mapping = {
+        'location': 'location_completed',
+        'religion': 'religion_completed',
+        'personal': 'personal_completed',
+        'family': 'family_completed',
+        'education': 'education_completed',
+        'about': 'about_completed',
+        'photos': 'photos_completed',
+    }
+    for step_key, field in mapping.items():
+        value = bool(steps[step_key])
+        if getattr(profile, field) != value:
+            setattr(profile, field, value)
+            updates[field] = value
+    if updates:
+        profile.save(update_fields=[*updates.keys(), 'updated_at'])
+    return steps
 
 
 def get_profile_completion_data(user):
@@ -44,18 +188,24 @@ def get_profile_completion_data(user):
             'photos_completed': False,
         },
     )
+    steps = sync_profile_completion_flags(user)
+    family_ratio = steps['family_ratio']
     profile_steps = {
-        'location': profile.location_completed,
-        'religion': profile.religion_completed,
-        'personal': profile.personal_completed,
-        'family': getattr(profile, 'family_completed', False),
-        'education': profile.education_completed,
-        'about': profile.about_completed,
-        'photos': profile.photos_completed,
+        'location': bool(steps['location']),
+        'religion': bool(steps['religion']),
+        'personal': bool(steps['personal']),
+        'family': bool(steps['family']),
+        'education': bool(steps['education']),
+        'about': bool(steps['about']),
+        'photos': bool(steps['photos']),
     }
-    completed_steps = sum(profile_steps.values())
+    completed_non_family_steps = sum(
+        value for key, value in profile_steps.items() if key != 'family'
+    )
     total_steps = len(profile_steps)
-    profile_completion_percentage = int((completed_steps / total_steps) * 100) if total_steps else 0
+    profile_completion_percentage = int(
+        ((completed_non_family_steps + family_ratio) / total_steps) * 100
+    ) if total_steps else 0
 
     next_step = None
     for step in PROFILE_STEP_ORDER:
@@ -73,12 +223,53 @@ def get_profile_completion_data(user):
     }
 
 
+def is_profile_registration_complete(user):
+    """
+    True when registration is effectively complete for onboarding:
+    - all profile steps are complete, OR
+    - completion is >= 85 and the only pending profile step is "family".
+    In both cases, partner_preference_type must be set on UserReligion.
+    """
+    completion = get_profile_completion_data(user)
+    profile_steps = completion['profile_steps']
+    pending_steps = [step for step in PROFILE_STEP_ORDER if not profile_steps.get(step, False)]
+    is_full_complete = len(pending_steps) == 0
+    is_family_only_pending = (
+        completion['profile_completion_percentage'] >= PROFILE_VISIBILITY_MIN_PERCENTAGE
+        and pending_steps == ['family']
+    )
+    if not (is_full_complete or is_family_only_pending):
+        return False
+    rel = UserReligion.objects.filter(user=user).first()
+    if not rel or (getattr(rel, 'partner_preference_type', None) or '') == '':
+        return False
+    return True
+
+
 def is_profile_visible_to_others(user):
     """
     Profile should be discoverable only after reaching minimum completion threshold.
     """
     completion = get_profile_completion_data(user)
     return completion['profile_completion_percentage'] >= PROFILE_VISIBILITY_MIN_PERCENTAGE
+
+
+def filter_visible_profiles_queryset(queryset):
+    """
+    Query-safe visibility filter using normalized profile completion flags.
+    Keeps match/dashboard visibility criteria aligned in one place.
+    """
+    completion_score = (
+        Coalesce(Cast('user_profile__location_completed', IntegerField()), Value(0))
+        + Coalesce(Cast('user_profile__religion_completed', IntegerField()), Value(0))
+        + Coalesce(Cast('user_profile__personal_completed', IntegerField()), Value(0))
+        + Coalesce(Cast('user_profile__family_completed', IntegerField()), Value(0))
+        + Coalesce(Cast('user_profile__education_completed', IntegerField()), Value(0))
+        + Coalesce(Cast('user_profile__about_completed', IntegerField()), Value(0))
+        + Coalesce(Cast('user_profile__photos_completed', IntegerField()), Value(0))
+    )
+    min_steps = math.ceil((PROFILE_VISIBILITY_MIN_PERCENTAGE / 100) * len(PROFILE_STEP_ORDER))
+    return queryset.annotate(profile_completion_steps=completion_score).filter(profile_completion_steps__gte=min_steps)
 
 
 def get_full_profile_data(user, request=None):

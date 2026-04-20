@@ -14,6 +14,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .serializers import (
     RegisterSerializer,
+    ResendOTPSerializer,
     VerifyOTPSerializer,
     get_verify_otp_response_data,
     RegisterMobileSerializer,
@@ -23,14 +24,17 @@ from .serializers import (
     LoginSerializer,
     PasswordResetSerializer,
     PasswordConfirmSerializer,
+    get_user_by_mobile_variants,
 )
 from .services import (
     generate_otp,
     verify_otp,
     check_otp_rate_limit,
+    check_resend_otp_rate_limit,
     set_pending_registration,
 )
 from .models import User
+from admin_panel.audit_log.utils import create_audit_log
 
 
 def _send_otp_mobile(mobile: str, otp: str):
@@ -100,13 +104,15 @@ class RegisterView(APIView):
                 'success': False,
                 'error': {'code': 429, 'message': msg},
             }, status=status.HTTP_429_TOO_MANY_REQUESTS)
-        if User.objects.filter(mobile=phone, mobile_verified=True).exists():
+        existing_verified = get_user_by_mobile_variants(phone)
+        if existing_verified and existing_verified.mobile_verified:
             return Response({
                 'success': False,
                 'error': {'code': 400, 'message': 'Phone number already registered'},
             }, status=status.HTTP_400_BAD_REQUEST)
         # Remove incomplete registrations so the DB has no account until OTP verification.
-        User.objects.filter(mobile=phone, mobile_verified=False).delete()
+        for mobile_val in {phone, f"91{phone[-10:]}", phone[-10:]}:
+            User.objects.filter(mobile=mobile_val, mobile_verified=False).delete()
         profile_for = data.get('profile_for') or None
         email = data.get('email') or None
         set_pending_registration(
@@ -133,6 +139,55 @@ class RegisterView(APIView):
         # Expose OTP only in development/testing to simplify QA.
         if getattr(settings, 'DEBUG', False):
             payload['data']['otp'] = otp
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class ResendOTPView(APIView):
+    """
+    POST /api/v1/auth/resend-otp/
+    Body: phone_number (E164). Sends a new OTP (rate-limited). Identifier:
+      - mobile_verified user -> mobile:{phone} (login / verify-mobile / login)
+      - otherwise -> phone:{phone} (signup / verify-otp), including cold resend when Redis
+        pending data was lost or user has not called register/ yet.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        ser = ResendOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        phone = ser.validated_data["phone_number"]
+
+        user = get_user_by_mobile_variants(phone)
+        if user and not user.mobile_verified:
+            user = None
+
+        allowed, msg = check_resend_otp_rate_limit(phone)
+        if not allowed:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": 429, "message": msg},
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        # Verified member: same key as register/mobile/ + login.
+        # Not verified (pending or no row / lost cache): same key as register/ + verify-otp.
+        identifier = f"mobile:{phone}" if user else f"phone:{phone}"
+        otp = generate_otp(identifier)
+        _send_otp_mobile(phone, otp)
+
+        payload = {
+            "success": True,
+            "message": "OTP has been sent to your phone number.",
+            "data": {
+                "phone_number": phone,
+                "otp_sent": True,
+            },
+        }
+        if getattr(settings, "DEBUG", False):
+            payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
 
@@ -166,6 +221,12 @@ class VerifyOTPView(APIView):
         }, status=status.HTTP_200_OK)
         if getattr(settings, 'JWT_REFRESH_COOKIE_NAME', None):
             _set_refresh_cookie(response, tokens['refresh'])
+        create_audit_log(
+            request,
+            action='otp_verify',
+            resource=f'user:{user.id}',
+            details='User OTP verified successfully.',
+        )
         return response
 
 
@@ -176,7 +237,9 @@ class RegisterMobileView(APIView):
         ser = RegisterMobileSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         mobile = ser.validated_data['mobile']
-        user = User.objects.filter(mobile=mobile, mobile_verified=True).first()
+        user = get_user_by_mobile_variants(mobile)
+        if user and not user.mobile_verified:
+            user = None
         if not user:
             return Response({
                 'success': False,
@@ -304,18 +367,13 @@ class LoginView(APIView):
             user.is_active = True
             user.save(update_fields=['mobile_verified', 'is_active', 'updated_at'])
         tokens = _tokens_for_user(user)
-        return Response({
+        response = Response({
             'success': True,
-            'data': {
-                'user': {
-                    'id': str(user.id),
-                    'email': user.email,
-                    'mobile': user.mobile,
-                    'role': user.role,
-                },
-                'tokens': tokens,
-            },
+            'data': get_verify_otp_response_data(user, tokens, request=request),
         }, status=status.HTTP_200_OK)
+        if getattr(settings, 'JWT_REFRESH_COOKIE_NAME', None):
+            _set_refresh_cookie(response, tokens['refresh'])
+        return response
 
 
 class TokenRefreshViewCustom(TokenRefreshView):
@@ -429,7 +487,7 @@ class PasswordConfirmView(APIView):
         if email:
             user = User.objects.filter(email=email).first()
         else:
-            user = User.objects.filter(mobile=mobile).first()
+            user = get_user_by_mobile_variants(mobile)
         if not user:
             return Response({
                 'success': False,

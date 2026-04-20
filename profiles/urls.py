@@ -13,6 +13,7 @@ from .views import (
     ProfilePhotosView,
     ProfileCompleteView,
     ProfileCompletionView,
+    ProfileRegistrationCompletedView,
     ProfileViewsView,
     ProfileBirthDetailsView,
 )
@@ -21,6 +22,7 @@ urlpatterns = [
     path('', ProfileDetailView.as_view()),
     path('basic/', BasicDetailsView.as_view()),
     path('completion/', ProfileCompletionView.as_view()),
+    path('registration-completed/', ProfileRegistrationCompletedView.as_view()),
     path('views/', ProfileViewsView.as_view()),
     path('location/', ProfileLocationView.as_view()),
     path('religion/', ProfileReligionView.as_view()),
