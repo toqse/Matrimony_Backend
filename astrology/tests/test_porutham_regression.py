@@ -17,8 +17,12 @@ from astrology.services.nakshatra_data import NAKSHATRA_MAP
 from astrology.services.porutham_service import calculate_porutham
 from astrology.services.prokerala_dashakoot_tables import (
     NAKSHATRA_ORDER,
+    NAKSHATRA_YONI,
     PAIR_POINT_OVERRIDES,
+    _VEDHA_PAIRS,
+    _YONI_ENEMIES,
     dina_points,
+    distance,
     gana_points,
     mahendra_points,
     rajju_points,
@@ -59,34 +63,158 @@ def _diff(expected: dict[str, float], actual: dict[str, float]) -> str:
 
 VERIFIED_PAIRS = [
     {
-        "name": "Sisira(Dhanishta/Makara)_vs_Unnikrishnan(Chitra/Tula)",
+        "label": "Sisira(Dhanishta/Makara) vs Unnikrishnan(Chitra/Tula) — 2026-04-20",
         "bride": {"nakshatra": "Dhanishta", "rasi": "Makara"},
         "groom": {"nakshatra": "Chitra", "rasi": "Tula"},
-        "expected_points": {
+        "expected": {
             "dina": 1.0,
             "gana": 1.0,
             "mahendra": 1.0,
             "sthree_deergha": 1.0,
             "yoni": 0.5,
             "vedha": 0.0,
-            "rajju": 0.0,
+            "rajju": 1.0,
             "vasya": 1.0,
             "rasi": 1.0,
             "rasi_adhipathi": 1.0,
+            "total": 8.5,
         },
-        "expected_total": 7.5,
+    },
+    {
+        "label": "Pooyam(Pushya/Karka) vs Chithira(Chitra/Tula) — 2026-04-21",
+        "bride": {"nakshatra": "Pushya", "rasi": "Karka"},
+        "groom": {"nakshatra": "Chitra", "rasi": "Tula"},
+        "expected": {
+            "dina": 0.0,
+            "gana": 0.0,
+            "mahendra": 1.0,
+            "sthree_deergha": 0.0,
+            "yoni": 0.0,
+            "vedha": 1.0,
+            "rajju": 0.0,
+            "vasya": 0.0,
+            "rasi": 0.0,
+            "rasi_adhipathi": 0.0,
+            "total": 2.0,
+        },
+    },
+    {
+        "label": "Rajalekshmi(Bharani/Mesha) vs Kasyap(Shatabhisha/Kumbha) — 2026-04-21",
+        "bride": {"nakshatra": "Bharani", "rasi": "Mesha"},
+        "groom": {"nakshatra": "Shatabhisha", "rasi": "Kumbha"},
+        "expected": {
+            "dina": 0.0,
+            "gana": 0.5,
+            "mahendra": 0.0,
+            "sthree_deergha": 1.0,
+            "yoni": 0.0,
+            "vedha": 1.0,
+            "rajju": 1.0,
+            "vasya": 1.0,
+            "rasi": 1.0,
+            "rasi_adhipathi": 0.0,
+            "total": 5.5,
+        },
+    },
+    {
+        "label": "Rajalekshmi(Bharani/Mesha) vs Amalnath(Ardra/Mithuna) — 2026-04-21",
+        "bride": {"nakshatra": "Bharani", "rasi": "Mesha"},
+        "groom": {"nakshatra": "Ardra", "rasi": "Mithuna"},
+        "expected": {
+            "dina": 0.0,
+            "gana": 1.0,
+            "mahendra": 0.0,
+            "sthree_deergha": 0.0,
+            "yoni": 0.0,
+            "vedha": 1.0,
+            "rajju": 1.0,
+            "vasya": 0.0,
+            "rasi": 0.0,
+            "rasi_adhipathi": 1.0,
+            "total": 4.0,
+        },
+    },
+    {
+        "label": "Anupriya(Vishakha/Tula) vs Amalnath(Ardra/Mithuna) — 2026-04-21",
+        "bride": {"nakshatra": "Vishakha", "rasi": "Tula"},
+        "groom": {"nakshatra": "Ardra", "rasi": "Mithuna"},
+        "expected": {
+            "dina": 1.0,
+            "gana": 0.0,
+            "mahendra": 0.0,
+            "sthree_deergha": 1.0,
+            "yoni": 0.0,
+            "vedha": 1.0,
+            "rajju": 1.0,
+            "vasya": 0.0,
+            "rasi": 1.0,
+            "rasi_adhipathi": 1.0,
+            "total": 6.0,
+        },
+    },
+    {
+        "label": "Sisira(Dhanishta/Makara) vs Amalnath(Ardra/Mithuna) — 2026-04-21",
+        "bride": {"nakshatra": "Dhanishta", "rasi": "Makara"},
+        "groom": {"nakshatra": "Ardra", "rasi": "Mithuna"},
+        "expected": {
+            "dina": 1.0,
+            "gana": 1.0,
+            "mahendra": 0.0,
+            "sthree_deergha": 1.0,
+            "yoni": 0.5,
+            "vedha": 0.0,
+            "rajju": 1.0,
+            "rasi": 0.0,
+            "rasi_adhipathi": 1.0,
+            "vasya": 0.0,
+            "total": 5.5,
+        },
+    },
+    {
+        "label": "Vaishnava(Chitra/Kanya) vs Abhinav(Krittika/Mesha) — 2026-04-21",
+        "bride": {"nakshatra": "Chitra", "rasi": "Kanya"},
+        "groom": {"nakshatra": "Krittika", "rasi": "Mesha"},
+        "expected": {
+            "dina": 1.0,
+            "gana": 0.5,
+            "mahendra": 0.0,
+            "sthree_deergha": 1.0,
+            "yoni": 0.5,
+            "vedha": 1.0,
+            "rajju": 1.0,
+            "vasya": 0.0,
+            "rasi": 0.5,
+            "rasi_adhipathi": 1.0,
+            "total": 6.5,
+        },
+    },
+    {
+        "label": "Rajalekshmi(Bharani/Mesha) vs Abhinav(Krittika/Mesha) — 2026-04-21",
+        "bride": {"nakshatra": "Bharani", "rasi": "Mesha"},
+        "groom": {"nakshatra": "Krittika", "rasi": "Mesha"},
+        "expected": {
+            "dina": 1.0,
+            "gana": 0.5,
+            "mahendra": 0.0,
+            "sthree_deergha": 0.0,
+            "yoni": 0.0,
+            "vedha": 1.0,
+            "rajju": 1.0,
+            "vasya": 0.0,
+            "rasi": 1.0,
+            "rasi_adhipathi": 1.0,
+            "total": 5.5,
+        },
     },
 ]
-
 
 class PoruthamRegressionTests(unittest.TestCase):
     def test_verified_pairs_exact(self):
         for row in VERIFIED_PAIRS:
-            with self.subTest(pair=row["name"]):
+            with self.subTest(pair=row["label"]):
                 bride = _h(row["bride"]["nakshatra"], row["bride"]["rasi"])
                 groom = _h(row["groom"]["nakshatra"], row["groom"]["rasi"])
 
-                # Call scoring functions directly (not through API).
                 bride_gana = NAKSHATRA_MAP[bride.nakshatra]["gana"]
                 groom_gana = NAKSHATRA_MAP[groom.nakshatra]["gana"]
                 actual = {
@@ -101,12 +229,103 @@ class PoruthamRegressionTests(unittest.TestCase):
                     "rasi": rasi_points(bride.rasi, groom.rasi),
                     "rasi_adhipathi": rasyadhipathi_points(bride.rasi, groom.rasi),
                 }
-                expected = row["expected_points"]
+                expected = {k: v for k, v in row["expected"].items() if k != "total"}
                 if actual != expected:
                     self.fail("Koota diff:\n" + _diff(expected, actual))
 
                 total = round(sum(actual.values()), 2)
-                self.assertEqual(total, row["expected_total"])
+                self.assertEqual(total, row["expected"]["total"])
+
+    def test_dhanishta_ardra_koota_spotcheck(self):
+        self.assertEqual(dina_points("Dhanishta", "Ardra"), 1.0)
+        self.assertEqual(gana_points("Rakshasa", "Manushya"), 0.0)
+        self.assertEqual(sthree_deergha_points("Dhanishta", "Ardra"), 1.0)
+        self.assertEqual(yoni_points("Dhanishta", "Ardra"), 0.5)
+        self.assertEqual(rajju_points("Dhanishta", "Ardra"), 1.0)
+
+    def test_dina_verify_block(self):
+        self.assertEqual(dina_points("Pushya", "Chitra"), 0.0)
+        self.assertEqual(dina_points("Dhanishta", "Chitra"), 1.0)
+        self.assertEqual(dina_points("Revati", "Ashwini"), 1.0)
+        self.assertEqual(dina_points("Rohini", "Shatabhisha"), 0.0)
+        self.assertEqual(dina_points("Ashwini", "Ashwini"), 1.0)
+        self.assertEqual(dina_points("Rohini", "Ashwini"), 0.0)
+
+    def test_gana_verify_block(self):
+        self.assertEqual(gana_points("Rakshasa", "Manushya"), 0.0)
+        self.assertEqual(gana_points("Manushya", "Rakshasa"), 0.5)
+        self.assertEqual(gana_points("Deva", "Manushya"), 0.0)
+        self.assertEqual(gana_points("Manushya", "Deva"), 1.0)
+        self.assertEqual(gana_points("Deva", "Deva"), 1.0)
+        self.assertEqual(gana_points("Rakshasa", "Rakshasa"), 1.0)
+
+    def test_sthree_deergha_verify_block(self):
+        self.assertEqual(sthree_deergha_points("Vishakha", "Ardra"), 1.0)
+        self.assertEqual(sthree_deergha_points("Dhanishta", "Chitra"), 1.0)
+        self.assertEqual(sthree_deergha_points("Pushya", "Chitra"), 0.0)
+        self.assertEqual(sthree_deergha_points("Bharani", "Shatabhisha"), 1.0)
+        self.assertEqual(sthree_deergha_points("Bharani", "Ardra"), 0.0)
+
+    def test_dina_count_17_good(self):
+        self.assertEqual(dina_points("Chitra", "Krittika"), 1.0)
+
+    def test_yoni_verify_block(self):
+        self.assertEqual(yoni_points("Pushya", "Chitra"), 0.0)
+        self.assertEqual(yoni_points("Vishakha", "Chitra"), 0.0)
+        self.assertEqual(yoni_points("Dhanishta", "Chitra"), 0.5)
+        self.assertEqual(yoni_points("Chitra", "Vishakha"), 1.0)
+        self.assertEqual(yoni_points("Shatabhisha", "Ashwini"), 1.0)
+        self.assertEqual(yoni_points("Ashwini", "Hasta"), 0.0)
+        self.assertEqual(yoni_points("Magha", "Ashlesha"), 0.0)
+        self.assertEqual(yoni_points("Rohini", "Uttara Ashadha"), 0.0)
+
+    def test_rajju_verify_block(self):
+        self.assertEqual(rajju_points("Dhanishta", "Chitra"), 1.0)
+        self.assertEqual(rajju_points("Pushya", "Chitra"), 0.0)
+        self.assertEqual(rajju_points("Chitra", "Dhanishta"), 1.0)
+        self.assertEqual(rajju_points("Bharani", "Chitra"), 0.0)
+        self.assertEqual(rajju_points("Bharani", "Dhanishta"), 1.0)
+        self.assertEqual(rajju_points("Pushya", "Dhanishta"), 1.0)
+        self.assertEqual(rajju_points("Mrigashirsha", "Chitra"), 1.0)
+        self.assertEqual(rajju_points("Mrigashirsha", "Dhanishta"), 0.0)
+        self.assertEqual(rajju_points("Mrigashirsha", "Pushya"), 1.0)
+        self.assertEqual(rajju_points("Ashwini", "Magha"), 1.0)
+        self.assertEqual(rajju_points("Ashwini", "Chitra"), 1.0)
+        self.assertEqual(rajju_points("Revati", "Dhanishta"), 1.0)
+        self.assertEqual(rajju_points("Krittika", "Vishakha"), 1.0)
+        self.assertEqual(rajju_points("Krittika", "Chitra"), 1.0)
+        self.assertEqual(rajju_points("Rohini", "Shravana"), 1.0)
+        self.assertEqual(rajju_points("Rohini", "Chitra"), 1.0)
+        self.assertEqual(rajju_points("Vishakha", "Krittika"), 1.0)
+
+    def test_rasi_verify_block(self):
+        self.assertEqual(rasi_points("Makara", "Tula"), 1.0)
+        self.assertEqual(rasi_points("Karka", "Tula"), 0.0)
+        self.assertEqual(rasi_points("Mesha", "Kumbha"), 1.0)
+        self.assertEqual(rasi_points("Mesha", "Mithuna"), 0.0)
+        self.assertEqual(rasi_points("Tula", "Mithuna"), 1.0)
+        self.assertEqual(rasi_points("Makara", "Mithuna"), 0.0)
+        self.assertEqual(rasi_points("Kanya", "Mesha"), 0.5)
+        self.assertEqual(rasi_points("Mesha", "Mesha"), 1.0)
+        self.assertEqual(rasi_points("Tula", "Mesha"), 1.0)
+
+    def test_vasya_verify_block(self):
+        self.assertEqual(vasya_points("Mesha", "Kumbha"), 1.0)
+        self.assertEqual(vasya_points("Kumbha", "Mesha"), 1.0)
+        self.assertEqual(vasya_points("Tula", "Mesha"), 0.0)
+        self.assertEqual(vasya_points("Tula", "Makara"), 1.0)
+        self.assertEqual(vasya_points("Makara", "Kumbha"), 1.0)
+        self.assertEqual(vasya_points("Makara", "Mesha"), 1.0)
+        self.assertEqual(vasya_points("Simha", "Kumbha"), 0.0)
+        self.assertEqual(vasya_points("Dhanus", "Meena"), 0.0)
+
+    def test_rasyadhipathi_verify_block(self):
+        self.assertEqual(rasyadhipathi_points("Makara", "Tula"), 1.0)
+        self.assertEqual(rasyadhipathi_points("Karka", "Tula"), 0.0)
+        self.assertEqual(rasyadhipathi_points("Mesha", "Kumbha"), 0.0)
+        self.assertEqual(rasyadhipathi_points("Mesha", "Mithuna"), 1.0)
+        self.assertEqual(rasyadhipathi_points("Mesha", "Mesha"), 1.0)
+        self.assertEqual(rasyadhipathi_points("Kanya", "Mithuna"), 1.0)
 
     def test_computed_729_spotcheck_and_consistency(self):
         p = Path(__file__).resolve().parent / "computed_729.json"
@@ -114,7 +333,6 @@ class PoruthamRegressionTests(unittest.TestCase):
         data = json.loads(p.read_text(encoding="utf-8"))
         self.assertEqual(len(data), 729)
 
-        # Spot-check 10 deterministic random pairs for internal consistency.
         rng = random.Random(1337)
         keys = list(data.keys())
         for _ in range(10):
@@ -125,95 +343,83 @@ class PoruthamRegressionTests(unittest.TestCase):
             out = calculate_porutham(bride, groom)
             kp = out["koota_points"]
             self.assertAlmostEqual(row["total"], out["score"], places=2)
-            # Rajju consistency
             if row["rajju"] == 0.0:
                 self.assertEqual(kp["rajju"], 0.0)
 
     def test_symmetry_kootas(self):
-        # swap bride/groom: these must match.
-        # IMPORTANT: Use raw scoring functions (not calculate_porutham), so pair overrides
-        # cannot break the symmetry checks.
-        #
-        # Note: rasi_points() is directional by definition (diff = (bride-groom)%12),
-        # so it is intentionally excluded from symmetry checks.
+        # Dina / gana / mahendra / sthree_deergha / vedha / rasyadhipathi are directional.
         for b in NAKSHATRA_ORDER:
             for g in NAKSHATRA_ORDER:
                 bride = _h(b)
                 groom = _h(g)
-                bg = NAKSHATRA_MAP[bride.nakshatra]["gana"]
-                gg = NAKSHATRA_MAP[groom.nakshatra]["gana"]
 
                 v1 = {
-                    "gana": gana_points(bg, gg),
-                    "mahendra": mahendra_points(bride.nakshatra, groom.nakshatra),
-                    "vedha": vedha_points(bride.nakshatra, groom.nakshatra),
                     "rajju": rajju_points(bride.nakshatra, groom.nakshatra),
-                    "rasi_adhipathi": rasyadhipathi_points(bride.rasi, groom.rasi),
                     "vasya": vasya_points(bride.rasi, groom.rasi),
                 }
                 v2 = {
-                    "gana": gana_points(gg, bg),
-                    "mahendra": mahendra_points(groom.nakshatra, bride.nakshatra),
-                    "vedha": vedha_points(groom.nakshatra, bride.nakshatra),
                     "rajju": rajju_points(groom.nakshatra, bride.nakshatra),
-                    "rasi_adhipathi": rasyadhipathi_points(groom.rasi, bride.rasi),
                     "vasya": vasya_points(groom.rasi, bride.rasi),
                 }
                 if v1 != v2:
                     self.fail(f"symmetry failed {b} vs {g}:\n" + _diff(v2, v1))
 
-    def test_rajju_dosha_group_sira(self):
-        # Sira group: Mrigashirsha, Chitra, Dhanishta -> any pair within group is 0.0
-        sira = ["Mrigashirsha", "Chitra", "Dhanishta"]
-        for i in range(len(sira)):
-            for j in range(i + 1, len(sira)):
-                self.assertEqual(rajju_points(sira[i], sira[j]), 0.0)
+    def test_rajju_kati_and_sira_dosha_pairs(self):
+        self.assertEqual(rajju_points("Bharani", "Pushya"), 0.0)
+        self.assertEqual(rajju_points("Bharani", "Chitra"), 0.0)
+        self.assertEqual(rajju_points("Pushya", "Chitra"), 0.0)
+        self.assertEqual(rajju_points("Mrigashirsha", "Dhanishta"), 0.0)
+        self.assertEqual(rajju_points("Bharani", "Bharani"), 0.0)
 
     def test_yoni_enemy_pairs_always_zero(self):
-        # (Ashwini,Hasta) = Horse+Buffalo enemy -> 0.0
         self.assertEqual(yoni_points("Ashwini", "Hasta"), 0.0)
-        # (Magha,Ashlesha) = Rat+Cat enemy -> 0.0
         self.assertEqual(yoni_points("Magha", "Ashlesha"), 0.0)
-        # Bug 19 regression: different animals still trigger Vikara (Male bride + Female groom).
         self.assertEqual(yoni_points("Pushya", "Chitra"), 0.0)
 
-    def test_all_vedha_pairs_blocking(self):
-        # Ensure all _VEDHA_PAIRS return 0.0 via known pairs list in spec.
-        pairs = [
-            ("Ashwini", "Jyeshtha"),
-            ("Bharani", "Anuradha"),
-            ("Krittika", "Vishakha"),
-            ("Rohini", "Swati"),
-            ("Mrigashirsha", "Chitra"),
-            ("Ardra", "Hasta"),
-            ("Punarvasu", "Uttara Phalguni"),
-            ("Pushya", "Purva Phalguni"),
-            ("Ashlesha", "Magha"),
-            ("Mula", "Revati"),
-            ("Purva Ashadha", "Uttara Bhadrapada"),
-            ("Uttara Ashadha", "Purva Bhadrapada"),
-            ("Shravana", "Shatabhisha"),
-            ("Dhanishta", "Chitra"),
-        ]
-        for a, b in pairs:
-            self.assertEqual(vedha_points(a, b), 0.0)
+    def test_yoni_enemy_all_pairs_zero(self):
+        for e in _YONI_ENEMIES:
+            animals = tuple(e)
+            if len(animals) != 2:
+                continue
+            a1, a2 = animals
+            b_naks = [n for n, (an, _) in NAKSHATRA_YONI.items() if an == a1]
+            g_naks = [n for n, (an, _) in NAKSHATRA_YONI.items() if an == a2]
+            self.assertTrue(b_naks and g_naks, msg=f"missing nak for {a1}/{a2}")
+            self.assertEqual(yoni_points(b_naks[0], g_naks[0]), 0.0)
 
-    def test_dina_wraparound_examples(self):
-        # distance(Revati=26, Ashwini=0) -> count 2 -> good
+    def test_yoni_vikara_all_male_bride_female_groom_zero(self):
+        male_brides = [n for n in NAKSHATRA_ORDER if NAKSHATRA_YONI.get(n, ("", ""))[1] == "Male"]
+        female_grooms = [n for n in NAKSHATRA_ORDER if NAKSHATRA_YONI.get(n, ("", ""))[1] == "Female"]
+        for b in male_brides:
+            for g in female_grooms:
+                self.assertEqual(yoni_points(b, g), 0.0, msg=f"{b} vs {g}")
+
+    def test_vedha_verify_block(self):
+        self.assertEqual(vedha_points("Chitra", "Krittika"), 1.0)
+        self.assertEqual(vedha_points("Vishakha", "Krittika"), 0.0)
+        self.assertEqual(vedha_points("Krittika", "Vishakha"), 0.0)
+        self.assertEqual(vedha_points("Mrigashirsha", "Chitra"), 0.0)
+        self.assertEqual(vedha_points("Dhanishta", "Chitra"), 0.0)
+        self.assertEqual(vedha_points("Ashwini", "Jyeshtha"), 0.0)
+        self.assertEqual(vedha_points("Bharani", "Anuradha"), 0.0)
+        self.assertEqual(vedha_points("Rohini", "Swati"), 0.0)
+        self.assertEqual(vedha_points("Ashwini", "Bharani"), 1.0)
+        self.assertGreaterEqual(len(_VEDHA_PAIRS), 13)
+
+    def test_dina_wrap_revati_ashwini(self):
+        self.assertEqual(distance("Revati", "Ashwini"), 1)
         self.assertEqual(dina_points("Revati", "Ashwini"), 1.0)
-        # distance(Ashwini=0, Revati=26) -> count 27 -> not in good set (unless groom override applies, it doesn't)
-        self.assertEqual(dina_points("Ashwini", "Revati"), 0.0)
-        # Bug 18 regression: Pushya->Chitra count=7 not in set => 0.0
-        self.assertEqual(dina_points("Pushya", "Chitra"), 0.0)
 
     def test_pair_point_overrides_regression(self):
-        # Ensure calculate_porutham returns the override values exactly for all override pairs.
         for (b, g), expected in PAIR_POINT_OVERRIDES.items():
             with self.subTest(pair=f"{b} vs {g}"):
                 out = calculate_porutham(_h(b), _h(g))
-                self.assertEqual(out["koota_points"], expected, msg="override mismatch:\n" + _diff(expected, out["koota_points"]))
+                self.assertEqual(
+                    out["koota_points"],
+                    expected,
+                    msg="override mismatch:\n" + _diff(expected, out["koota_points"]),
+                )
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -4,6 +4,10 @@ from django.db import models
 from core.models import TimeStampedModel
 
 
+def _horoscope_json_default():
+    return {}
+
+
 class Horoscope(TimeStampedModel):
     profile = models.OneToOneField(
         'profiles.UserProfile',
@@ -27,6 +31,9 @@ class Horoscope(TimeStampedModel):
     rajju = models.CharField(max_length=50)
 
     grahanila = models.JSONField(default=dict, blank=True)
+    janana_shishtam = models.FloatField(blank=True, null=True)
+    navamsa_chart = models.JSONField(default=_horoscope_json_default, blank=True, null=True)
+    shishta_dasa = models.JSONField(default=_horoscope_json_default, blank=True, null=True)
     birth_input_hash = models.CharField(max_length=64, db_index=True)
 
     class Meta:

@@ -36,7 +36,7 @@ from .serializers import (
     PoruthamResultSerializer,
 )
 from .services.chart_service import generate_chart_image
-from .services.generate_ui_service import build_match_ui, build_person_card
+from .services.generate_ui_service import build_match_ui, build_person_card, resolve_bride_groom_horoscopes
 from .services.match_ui_copy import generate_ui_config
 from .services.horoscope_service import generate_horoscope_payload
 from .services.jathakam_pdf_service import build_jathakam_pdf
@@ -247,14 +247,11 @@ class GenerateHoroscopeView(APIView):
                             status=status.HTTP_403_FORBIDDEN,
                         )
                     data['partner_chart_url'] = _chart_absolute_url(request, partner_profile.pk)
-                    pg = getattr(profile.user, 'gender', '') or ''
-                    og = getattr(partner_profile.user, 'gender', '') or ''
-                    if pg == 'F' and og == 'M':
-                        bride_mid, groom_mid = matri_id, partner_mid
-                    elif pg == 'M' and og == 'F':
-                        bride_mid, groom_mid = partner_mid, matri_id
-                    else:
-                        bride_mid, groom_mid = matri_id, partner_mid
+                    bride_h, groom_h = resolve_bride_groom_horoscopes(
+                        profile, partner_profile, horoscope, partner_h
+                    )
+                    bride_mid = getattr(bride_h.profile.user, 'matri_id', '') or ''
+                    groom_mid = getattr(groom_h.profile.user, 'matri_id', '') or ''
                     data['match_report_pdf_url'] = _match_report_absolute_url(
                         request, bride_mid, groom_mid
                     )

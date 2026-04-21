@@ -43,7 +43,7 @@ PLANET_MLY = {
     'mercury': 'ബു',
     'jupiter': 'ഗു',
     'venus': 'ശു',
-    'saturn': 'ശനി',
+    'saturn': 'ശ',
     'rahu': 'റാ',
     'ketu': 'കേ',
 }

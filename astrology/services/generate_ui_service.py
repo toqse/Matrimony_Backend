@@ -70,6 +70,42 @@ def role_label(gender: str) -> str:
     return 'Profile'
 
 
+def _gender_key(user) -> str:
+    """Normalize User.gender (M/F/O or blank) for porutham bride/groom resolution."""
+    g = (getattr(user, 'gender', None) or '').strip().upper()
+    if not g:
+        return ''
+    return g[0]
+
+
+def resolve_bride_groom_horoscopes(primary_profile, partner_profile, primary_h, partner_h):
+    """
+    Return (bride_h, groom_h) for Kerala Dashakoot.
+
+    When both users have M/F, follow standard convention (female bride, male groom).
+    When one gender is missing (common on partial profiles), infer from the known side
+    so we do not treat the *page subject* as bride just because they appear first.
+    """
+    pg = _gender_key(primary_profile.user)
+    og = _gender_key(partner_profile.user)
+    if pg == 'F' and og == 'M':
+        return primary_h, partner_h
+    if pg == 'M' and og == 'F':
+        return partner_h, primary_h
+    # Exactly one female → she is bride
+    if pg == 'F' and og != 'M':
+        return primary_h, partner_h
+    if og == 'F' and pg != 'M':
+        return partner_h, primary_h
+    # Exactly one male → he is groom
+    if pg == 'M' and og != 'F':
+        return partner_h, primary_h
+    if og == 'M' and pg != 'F':
+        return primary_h, partner_h
+    # Both blank, both O, or same sex: keep legacy ordering (primary = bride)
+    return primary_h, partner_h
+
+
 def build_person_card(profile, horoscope, chart_url: str) -> dict:
     user = profile.user
     nk = horoscope.nakshatra
@@ -120,16 +156,6 @@ def build_person_card(profile, horoscope, chart_url: str) -> dict:
     }
 
 
-def _bride_groom_horoscopes(primary_profile, partner_profile, primary_h, partner_h):
-    pg = getattr(primary_profile.user, 'gender', '') or ''
-    og = getattr(partner_profile.user, 'gender', '') or ''
-    if pg == 'F' and og == 'M':
-        return primary_h, partner_h
-    if pg == 'M' and og == 'F':
-        return partner_h, primary_h
-    return primary_h, partner_h
-
-
 def _dasa_sandhi(primary_h, partner_h) -> bool:
     ref = dj_tz.now()
     s1 = seconds_until_mahadasha_end(primary_h, ref)
@@ -145,7 +171,7 @@ def build_match_ui(
     primary_h,
     partner_h,
 ) -> dict:
-    bride_h, groom_h = _bride_groom_horoscopes(
+    bride_h, groom_h = resolve_bride_groom_horoscopes(
         primary_profile, partner_profile, primary_h, partner_h
     )
     por = calculate_porutham(bride_h, groom_h)

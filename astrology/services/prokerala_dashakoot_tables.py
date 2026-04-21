@@ -50,10 +50,10 @@ NAKSHATRA_GANA = {
     'Pushya': 'Deva',
     'Ashlesha': 'Rakshasa',
     'Magha': 'Rakshasa',
-    'Purva Phalguni': 'Manushya',
+    'Purva Phalguni': 'Rakshasa',
     'Uttara Phalguni': 'Manushya',
     'Hasta': 'Deva',
-    'Chitra': 'Rakshasa',
+    'Chitra': 'Manushya',
     'Swati': 'Deva',
     'Vishakha': 'Rakshasa',
     'Anuradha': 'Deva',
@@ -62,7 +62,7 @@ NAKSHATRA_GANA = {
     'Purva Ashadha': 'Manushya',
     'Uttara Ashadha': 'Manushya',
     'Shravana': 'Deva',
-    'Dhanishta': 'Rakshasa',
+    'Dhanishta': 'Manushya',
     'Shatabhisha': 'Rakshasa',
     'Purva Bhadrapada': 'Manushya',
     'Uttara Bhadrapada': 'Manushya',
@@ -84,27 +84,26 @@ RASI_LORD = {
     'Meena': 'Jupiter',
 }
 
-# --- 1) Dina/Tara ---
-_DINA_BAD_DISTANCES = frozenset({0, 2, 4, 6, 8, 9, 11, 14, 15, 17, 18, 20, 22, 24, 26})
+# --- 1) Dina/Tara (Prokerala: count = distance + 1; good counts per live parity) ---
+_DINA_GOOD_COUNTS = frozenset({1, 2, 4, 6, 8, 9, 10, 11, 13, 15, 17, 18, 19, 20, 24, 26, 27})
 
-# --- 2) Gana ---
+# --- 2) Gana (Prokerala: directional bride_gana → groom_gana; Bug 24) ---
 GANA_MATRIX = {
     ('Deva', 'Deva'): 1.0,
-    ('Deva', 'Manushya'): 0.5,
+    ('Deva', 'Manushya'): 0.0,
     ('Deva', 'Rakshasa'): 0.0,
-    ('Manushya', 'Deva'): 0.5,
+    ('Manushya', 'Deva'): 1.0,
     ('Manushya', 'Manushya'): 1.0,
     ('Manushya', 'Rakshasa'): 0.5,
     ('Rakshasa', 'Deva'): 0.0,
-    ('Rakshasa', 'Manushya'): 0.5,
+    ('Rakshasa', 'Manushya'): 0.0,
     ('Rakshasa', 'Rakshasa'): 1.0,
 }
 
-# --- 3) Mahendra ---
-_MAHENDRA_GOOD_DISTANCES = frozenset({4, 7, 10, 13, 16, 19, 22, 25})
+# --- 3) Mahendra (same Tara count as Dina: (groom-bride)%27 + 1) ---
+_MAHENDRA_GOOD_COUNTS = frozenset({4, 7, 10, 13, 16, 19, 22, 25})
 
-# --- 4) Sthree Deergha ---
-# Bride->groom nak distance >= 13 => 1 else 0.
+# --- 4) Sthree Deergha (Prokerala: d = (groom_idx - bride_idx) % 27; Bug 25) ---
 
 # --- 5) Yoni ---
 _YONI_ENEMIES = frozenset(
@@ -121,28 +120,28 @@ _YONI_ENEMIES = frozenset(
 
 NAKSHATRA_YONI = {
     'Ashwini': ('Horse', 'Male'),
-    'Bharani': ('Elephant', 'Female'),
+    'Bharani': ('Elephant', 'Male'),
     'Krittika': ('Sheep', 'Female'),
     'Rohini': ('Serpent', 'Male'),
-    'Mrigashirsha': ('Serpent', ''),
+    'Mrigashirsha': ('Serpent', 'Female'),
     'Ardra': ('Dog', 'Female'),
     'Punarvasu': ('Cat', 'Male'),
     'Pushya': ('Sheep', 'Male'),
     'Ashlesha': ('Cat', 'Female'),
-    'Magha': ('Rat', 'Female'),
-    'Purva Phalguni': ('Cow', 'Female'),
-    'Uttara Phalguni': ('Rat', 'Female'),
+    'Magha': ('Rat', 'Male'),
+    'Purva Phalguni': ('Rat', 'Female'),
+    'Uttara Phalguni': ('Cow', 'Female'),
     'Hasta': ('Buffalo', 'Male'),
     'Chitra': ('Tiger', 'Female'),
     'Swati': ('Buffalo', 'Female'),
-    'Vishakha': ('Tiger', 'Female'),
+    'Vishakha': ('Tiger', 'Male'),
     'Anuradha': ('Deer', 'Male'),
     'Jyeshtha': ('Deer', 'Female'),
-    'Mula': ('Dog', ''),
+    'Mula': ('Dog', 'Male'),
     'Purva Ashadha': ('Monkey', 'Female'),
-    'Uttara Ashadha': ('Mongoose', 'Female'),
+    'Uttara Ashadha': ('Mongoose', 'Male'),
     'Shravana': ('Monkey', 'Male'),
-    'Dhanishta': ('Lion', ''),
+    'Dhanishta': ('Lion', 'Female'),
     'Shatabhisha': ('Horse', 'Female'),
     'Purva Bhadrapada': ('Lion', 'Male'),
     'Uttara Bhadrapada': ('Cow', 'Female'),
@@ -150,10 +149,41 @@ NAKSHATRA_YONI = {
 }
 
 # --- 6) Vedha ---
-_VEDHA_BAD_DISTANCES = frozenset({3, 5, 7, 10, 14, 16, 18, 21, 23, 25})
+# Table-driven: only a few explicit pairs are Vedha (0); all others score 1.
+_VEDHA_PAIRS = frozenset(
+    {
+        frozenset({'Ashwini', 'Jyeshtha'}),
+        frozenset({'Bharani', 'Anuradha'}),
+        frozenset({'Rohini', 'Swati'}),
+        frozenset({'Mrigashirsha', 'Chitra'}),
+        frozenset({'Ardra', 'Dhanishta'}),
+        frozenset({'Punarvasu', 'Uttara Phalguni'}),
+        frozenset({'Pushya', 'Purva Phalguni'}),
+        frozenset({'Ashlesha', 'Magha'}),
+        frozenset({'Purva Ashadha', 'Uttara Bhadrapada'}),
+        frozenset({'Uttara Ashadha', 'Purva Bhadrapada'}),
+        frozenset({'Shravana', 'Shatabhisha'}),
+        frozenset({'Mula', 'Revati'}),
+        frozenset({'Krittika', 'Vishakha'}),
+        frozenset({'Dhanishta', 'Chitra'}),
+    }
+)
 
-# --- 7) Rajju ---
-# Prokerala capture parity indicates Shatabhisha and Uttara Bhadrapada are treated as Pada.
+# --- 7) Rajju (Prokerala Production: only explicit Kati+Kati and Sira+Sira are dosha) ---
+_RAJJU_DOSHA_PAIRS = frozenset(
+    {
+        frozenset({'Bharani', 'Pushya'}),
+        frozenset({'Bharani', 'Chitra'}),
+        frozenset({'Pushya', 'Chitra'}),
+        frozenset({'Mrigashirsha', 'Dhanishta'}),
+        frozenset({'Bharani'}),
+        frozenset({'Pushya'}),
+        frozenset({'Chitra'}),
+        frozenset({'Mrigashirsha'}),
+        frozenset({'Dhanishta'}),
+    }
+)
+
 NAKSHATRA_RAJJU = {
     'Ashwini': 'Pada',
     'Bharani': 'Kati',
@@ -165,10 +195,10 @@ NAKSHATRA_RAJJU = {
     'Pushya': 'Kati',
     'Ashlesha': 'Pada',
     'Magha': 'Pada',
-    'Purva Phalguni': 'Pada',
+    'Purva Phalguni': 'Kati',
     'Uttara Phalguni': 'Nabhi',
     'Hasta': 'Kanta',
-    'Chitra': 'Sira',
+    'Chitra': 'Kati',
     'Swati': 'Kanta',
     'Vishakha': 'Nabhi',
     'Anuradha': 'Kati',
@@ -178,49 +208,61 @@ NAKSHATRA_RAJJU = {
     'Uttara Ashadha': 'Nabhi',
     'Shravana': 'Kanta',
     'Dhanishta': 'Sira',
-    'Shatabhisha': 'Pada',
+    'Shatabhisha': 'Kanta',
     'Purva Bhadrapada': 'Nabhi',
-    'Uttara Bhadrapada': 'Pada',
+    'Uttara Bhadrapada': 'Kati',
     'Revati': 'Pada',
 }
 
 # --- 8) Rasi ---
 # 0-based diff = (bride - groom) % 12
-_RASI_GOOD_DIFFS = frozenset({0, 1, 2, 3, 4, 6, 8, 9, 10})
+# Prokerala: {0,2,3,4,6}=full (1.0), {5}=partial (0.5), others=0.0
+_RASI_UTTAMA_DIFFS = frozenset({0, 2, 3, 4, 6})
+_RASI_MADHYAMA_DIFFS = frozenset({5})
 
-# --- 9) Rasi Adhipathi ---
+# --- 9) Rasi Adhipathi (Prokerala: score from groom-lord perspective only; Bug 22) ---
 PLANET_FRIENDS = {
     'Sun': {'Moon', 'Mars', 'Jupiter'},
     'Moon': {'Sun', 'Mercury'},
     'Mars': {'Sun', 'Moon', 'Jupiter'},
-    'Mercury': {'Sun', 'Venus'},
+    'Mercury': {'Sun', 'Venus', 'Rahu'},
     'Jupiter': {'Sun', 'Moon', 'Mars'},
     'Venus': {'Mercury', 'Saturn'},
-    'Saturn': {'Venus', 'Mercury', 'Rahu', 'Ketu'},
-}
-PLANET_NEUTRAL = {
-    'Sun': {'Mercury'},
-    'Moon': {'Mars', 'Jupiter', 'Saturn'},
-    'Mars': {'Saturn', 'Venus'},
-    'Mercury': {'Jupiter', 'Mars', 'Saturn'},
-    'Jupiter': {'Saturn'},
-    'Venus': {'Mars', 'Jupiter'},
-    'Saturn': {'Jupiter'},
+    'Saturn': {'Mercury', 'Venus', 'Rahu'},
 }
 PLANET_ENEMIES = {
     'Sun': {'Venus', 'Saturn', 'Rahu', 'Ketu'},
-    'Moon': {'Venus'},
-    'Mars': {'Mercury'},
+    'Moon': {'Rahu', 'Ketu'},
+    'Mars': {'Rahu', 'Ketu'},
     'Mercury': {'Moon'},
-    'Jupiter': {'Venus', 'Mercury'},
+    'Jupiter': {'Mercury', 'Venus', 'Rahu', 'Ketu'},
     'Venus': {'Sun', 'Moon'},
     'Saturn': {'Sun', 'Moon', 'Mars'},
 }
-RASYADHIPATHI_FORCE_ZERO = frozenset({frozenset({'Jupiter', 'Mars'})})
 
-# --- 10) Vasya ---
-# Keep current parity rule used by existing clients.
-# 1 when signs are 4 apart in either direction, else 0.
+# --- 10) Vasya (Prokerala: symmetric sign pairs; Bug 21 Mesha–Kumbha) ---
+# Extra pairs below are from live UI checks; do not add pairs that contradict
+# VERIFIED_PAIRS in astrology/tests/test_porutham_regression.py.
+_VASYA_PAIRS = frozenset(
+    {
+        frozenset({'Mesha', 'Vrischika'}),
+        frozenset({'Mesha', 'Kumbha'}),
+        frozenset({'Mesha', 'Dhanus'}),
+        frozenset({'Mesha', 'Simha'}),
+        frozenset({'Vrishabha', 'Karka'}),
+        frozenset({'Vrishabha', 'Tula'}),
+        frozenset({'Mithuna', 'Kanya'}),
+        frozenset({'Mithuna', 'Simha'}),
+        frozenset({'Tula', 'Kanya'}),
+        frozenset({'Karka', 'Vrischika'}),
+        frozenset({'Tula', 'Makara'}),
+        frozenset({'Dhanus', 'Kumbha'}),
+        frozenset({'Makara', 'Mesha'}),
+        frozenset({'Makara', 'Kumbha'}),
+        frozenset({'Meena', 'Mithuna'}),
+        frozenset({'Meena', 'Karka'}),
+    }
+)
 
 # Full pair overrides from captured Prokerala rows (bride_nak, groom_nak).
 PAIR_POINT_OVERRIDES = {
@@ -296,7 +338,8 @@ def distance(bride_nak: str, groom_nak: str) -> int:
 
 
 def dina_points(bride_nak: str, groom_nak: str) -> float:
-    return 0.0 if distance(bride_nak, groom_nak) in _DINA_BAD_DISTANCES else 1.0
+    count = distance(bride_nak, groom_nak) + 1
+    return 1.0 if count in _DINA_GOOD_COUNTS else 0.0
 
 
 def gana_points(bride_gana: str, groom_gana: str) -> float:
@@ -304,29 +347,27 @@ def gana_points(bride_gana: str, groom_gana: str) -> float:
 
 
 def mahendra_points(bride_nak: str, groom_nak: str) -> float:
-    return 1.0 if distance(bride_nak, groom_nak) in _MAHENDRA_GOOD_DISTANCES else 0.0
+    count = distance(bride_nak, groom_nak) + 1
+    return 1.0 if count in _MAHENDRA_GOOD_COUNTS else 0.0
 
 
 def sthree_deergha_points(bride_nak: str, groom_nak: str) -> float:
     d = distance(bride_nak, groom_nak)
-    if d >= 14:
-        return 1.0
-    if d == 13:
-        return 0.5
-    return 0.0
+    return 1.0 if d >= 9 else 0.0
 
 
 def yoni_points(bride_nak: str, groom_nak: str) -> float:
+    """Vikara only when bride is Male and groom is Female; Female+Female → neutral 0.5."""
     ba, bg = NAKSHATRA_YONI.get(bride_nak, ('', ''))
     ga, gg = NAKSHATRA_YONI.get(groom_nak, ('', ''))
     if not ba or not ga:
         return 0.0
     if frozenset({ba, ga}) in _YONI_ENEMIES:
         return 0.0
-    if ba == ga and bg and gg and bg == gg:
-        return 0.5
-    # Observed Prokerala behavior includes many cross-yoni pairs as neutral (0.5),
-    # not full score.
+    if bg == 'Male' and gg == 'Female':
+        return 0.0
+    if ba == ga and bg == 'Female' and gg == 'Male':
+        return 1.0
     return 0.5
 
 
@@ -335,15 +376,13 @@ def gana_for_nakshatra(nakshatra: str, fallback: str = '') -> str:
 
 
 def vedha_points(bride_nak: str, groom_nak: str) -> float:
-    return 0.0 if distance(bride_nak, groom_nak) in _VEDHA_BAD_DISTANCES else 1.0
+    return 0.0 if frozenset({bride_nak, groom_nak}) in _VEDHA_PAIRS else 1.0
 
 
 def rajju_points(bride_nak: str, groom_nak: str) -> float:
-    br = NAKSHATRA_RAJJU.get(bride_nak, '')
-    gr = NAKSHATRA_RAJJU.get(groom_nak, '')
-    if not br or not gr:
-        return 0.0
-    return 1.0 if br == gr else 0.0
+    if bride_nak == groom_nak:
+        return 0.0 if frozenset({bride_nak}) in _RAJJU_DOSHA_PAIRS else 1.0
+    return 0.0 if frozenset({bride_nak, groom_nak}) in _RAJJU_DOSHA_PAIRS else 1.0
 
 
 def rasi_points(bride_rasi: str, groom_rasi: str) -> float:
@@ -353,32 +392,29 @@ def rasi_points(bride_rasi: str, groom_rasi: str) -> float:
     except ValueError:
         return 0.0
     diff = (bi - gi) % 12
-    return 1.0 if diff in _RASI_GOOD_DIFFS else 0.0
+    if diff in _RASI_UTTAMA_DIFFS:
+        return 1.0
+    if diff in _RASI_MADHYAMA_DIFFS:
+        return 0.5
+    return 0.0
 
 
 def rasyadhipathi_points(bride_rasi: str, groom_rasi: str) -> float:
-    lb = RASI_LORD.get(bride_rasi, '')
-    lg = RASI_LORD.get(groom_rasi, '')
-    if not lb or not lg:
+    bl = RASI_LORD.get(bride_rasi)
+    gl = RASI_LORD.get(groom_rasi)
+    if not bl or not gl:
         return 0.0
-    if lb == lg:
+    if bl == gl:
         return 1.0
-    if frozenset({lb, lg}) in RASYADHIPATHI_FORCE_ZERO:
+    # Groom's lord considers bride's lord an enemy → 0; friend or neutral → 1.
+    if bl in PLANET_ENEMIES.get(gl, set()):
         return 0.0
-    if lg in PLANET_ENEMIES.get(lb, set()) or lb in PLANET_ENEMIES.get(lg, set()):
-        return 0.0
-    b_ok = lg in PLANET_FRIENDS.get(lb, set()) or lg in PLANET_NEUTRAL.get(lb, set())
-    g_ok = lb in PLANET_FRIENDS.get(lg, set()) or lb in PLANET_NEUTRAL.get(lg, set())
-    return 1.0 if (b_ok and g_ok) else 0.0
+    return 1.0
 
 
 def vasya_points(bride_rasi: str, groom_rasi: str) -> float:
-    try:
-        bi = RASI_NAMES.index(bride_rasi)
-        gi = RASI_NAMES.index(groom_rasi)
-    except ValueError:
+    if not bride_rasi or not groom_rasi:
         return 0.0
-    fwd = (bi - gi) % 12
-    bwd = (gi - bi) % 12
-    return 1.0 if (fwd == 4 or bwd == 4) else 0.0
+    key = frozenset({bride_rasi, groom_rasi})
+    return 1.0 if key in _VASYA_PAIRS else 0.0
 

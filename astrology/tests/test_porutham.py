@@ -55,12 +55,12 @@ class ProkeralaPoruthamRegressionTests(unittest.TestCase):
                     "sthree_deergha": 1.0,
                     "yoni": 0.5,
                     "vedha": 0.0,
-                    "rajju": 0.0,
+                    "rajju": 1.0,
                     "vasya": 1.0,
                     "rasi": 1.0,
                     "rasi_adhipathi": 1.0,
                 },
-                "expected_score": 7.5,
+                "expected_score": 8.5,
             },
         ]
 
