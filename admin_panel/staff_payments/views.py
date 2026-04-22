@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
+from django.core.cache import cache
 from django.db import transaction as db_transaction
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
+from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
@@ -25,8 +27,18 @@ from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.staff_payments.models import PaymentEntry
 from admin_panel.staff_payments.pagination import StaffPaymentPagination
-from admin_panel.staff_payments.services import generate_receipt_no, validate_otp
-from admin_panel.staff_payments.serializers import StaffPaymentCreateSerializer
+from accounts.services import check_otp_rate_limit, generate_otp, verify_otp as accounts_verify_otp
+from admin_panel.staff_payments.services import (
+    generate_receipt_no,
+    staff_payment_customer_otp_identifier,
+    validate_otp,
+)
+from admin_panel.staff_payments.serializers import (
+    StaffPaymentCreateSerializer,
+    StaffPaymentCustomerOtpSendSerializer,
+    StaffPaymentCustomerOtpVerifySerializer,
+    StaffPaymentPlanQuoteSerializer,
+)
 from admin_panel.staff_subscriptions.services import record_staff_plan_purchase
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from plans.models import Plan, Transaction
@@ -60,6 +72,71 @@ VALID_STATUSES = frozenset(
         PaymentEntry.STATUS_COMPLETED,
     }
 )
+
+
+class _DuplicateStaffPaymentError(Exception):
+    """Raised inside atomic() to abort with a JSON Response."""
+
+    __slots__ = ("response",)
+
+    def __init__(self, response: Response):
+        self.response = response
+        super().__init__()
+
+
+def _staff_payment_duplicate_check(
+    staff_admin: AdminUser,
+    customer_matri: str,
+    plan: Plan,
+    amt: Decimal,
+    mode: str,
+) -> None:
+    """
+    Block accidental double submissions and back-to-back entries for the same customer.
+
+    Settings (optional):
+    - STAFF_PAYMENT_IDENTICAL_DEDUP_SECONDS (default 120): same staff+customer+plan+amount+mode.
+    - STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS (default 900): same staff+customer any plan;
+      set to 0 to disable spacing.
+    """
+    matri = (customer_matri or "").strip()
+    if not matri:
+        return
+    now = timezone.now()
+    id_window = int(getattr(settings, "STAFF_PAYMENT_IDENTICAL_DEDUP_SECONDS", 120) or 0)
+    if id_window > 0:
+        if PaymentEntry.objects.filter(
+            staff=staff_admin,
+            customer_matri__iexact=matri,
+            plan_id=plan.pk,
+            amount=amt,
+            mode=mode,
+            created_at__gte=now - timedelta(seconds=id_window),
+        ).exists():
+            raise _DuplicateStaffPaymentError(
+                _err_response_code(
+                    "DUPLICATE_PAYMENT",
+                    "This payment was already recorded (same customer, plan, amount and mode). "
+                    "Check the payment list.",
+                    409,
+                )
+            )
+    cool = int(getattr(settings, "STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS", 900) or 0)
+    if cool > 0:
+        if PaymentEntry.objects.filter(
+            staff=staff_admin,
+            customer_matri__iexact=matri,
+            created_at__gte=now - timedelta(seconds=cool),
+        ).exists():
+            mins = max(1, (cool + 59) // 60)
+            raise _DuplicateStaffPaymentError(
+                _err_response_code(
+                    "PAYMENT_TOO_SOON",
+                    f"A payment for this customer was recorded recently. Wait about {mins} minute(s) "
+                    "before recording another, or ask an admin to adjust settings if both are valid.",
+                    409,
+                )
+            )
 
 
 def _err_response(message: str, code: int = 400, extra: dict | None = None):
@@ -102,6 +179,51 @@ def _staff_entries(staff_admin: AdminUser):
     return PaymentEntry.objects.filter(staff=staff_admin).select_related(
         "plan", "branch", "verified_by", "transaction"
     )
+
+
+def _staff_payment_customer_scope_q(staff_profile: StaffProfile | None) -> Q:
+    """
+    Customers a staff member may use in payment flows (lookup / OTP / create):
+    - assigned to any staff profile in the same branch (even if that profile is inactive),
+      so newly created profiles still match once assignment exists;
+    - or unassigned with profile branch matching this branch.
+    """
+    if not staff_profile:
+        return Q(pk__in=[])
+    bid = staff_profile.branch_id
+    if not bid:
+        return Q(staff_assignment__staff=staff_profile)
+    return Q(staff_assignment__staff__branch_id=bid) | Q(
+        staff_assignment__isnull=True, branch_id=bid
+    )
+
+
+def _customer_in_staff_payment_scope(staff_profile: StaffProfile | None, customer: User) -> bool:
+    if not staff_profile or not customer:
+        return False
+    return (
+        User.objects.filter(pk=customer.pk)
+        .filter(_staff_payment_customer_scope_q(staff_profile))
+        .exists()
+    )
+
+
+def _ensure_staff_assignment_for_walk_in_payment(
+    staff_profile: StaffProfile | None, customer: User
+) -> None:
+    """
+    If the customer has no assignment row yet but belongs to this branch, attach them
+    to the staff member processing payment (walk-in / add-customer then pay at desk).
+    """
+    if not staff_profile or not customer:
+        return
+    if CustomerStaffAssignment.objects.filter(user=customer).exists():
+        return
+    bid = staff_profile.branch_id
+    if bid and customer.branch_id == bid:
+        CustomerStaffAssignment.objects.update_or_create(
+            user=customer, defaults={"staff": staff_profile}
+        )
 
 
 def _resolve_branch_manager(request):
@@ -212,6 +334,222 @@ def _serialize_detail(entry: PaymentEntry, request) -> dict:
     )
     d["staff"] = {"id": entry.staff_id, "name": getattr(entry.staff, "name", None)} if entry.staff_id else None
     return d
+
+
+def _payment_customer_verified_cache_key(customer: User, staff_admin: AdminUser) -> str:
+    return f"staff_payment_customer_verified:{customer.pk}:{staff_admin.pk}"
+
+
+def _plan_duration_label(plan: Plan) -> str:
+    months = max(1, (plan.duration_days + 29) // 30)
+    mo = "Month" if months == 1 else "Months"
+    return f"{plan.name} — {months} {mo} — ₹{plan.price}"
+
+
+def _send_sms_otp(mobile: str, otp: str) -> None:
+    try:
+        from notifications.tasks import send_otp_sms
+
+        send_otp_sms.delay(mobile, otp)
+    except Exception:
+        print(f"[SMS] Staff payment OTP for {mobile}: {otp}")
+
+
+class StaffPaymentPlansListAPIView(APIView):
+    """GET /api/v1/staff/payments/plans/ — active plans for Step 2 dropdown."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        staff_admin, err = _resolve_staff(request)
+        if err:
+            return err
+        plans = Plan.objects.filter(is_active=True).order_by("price", "name")
+        results = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "price": str(p.price),
+                "duration_days": p.duration_days,
+                "label": _plan_duration_label(p),
+            }
+            for p in plans
+        ]
+        return Response({"success": True, "data": {"results": results}})
+
+
+def _staff_payment_quote_response(data: dict) -> Response:
+    ser = StaffPaymentPlanQuoteSerializer(data=data or {})
+    if not ser.is_valid():
+        return _err_response("plan_id and valid discount_amount required.", 400)
+    plan_id = ser.validated_data["plan_id"]
+    discount = ser.validated_data.get("discount_amount")
+    if discount is None:
+        discount = Decimal("0")
+    plan = Plan.objects.filter(pk=plan_id, is_active=True).first()
+    if not plan:
+        return _err_response_code("INVALID_PLAN", "Invalid or inactive plan.", 400)
+    if discount < Decimal("0"):
+        return _err_response_code("INVALID_DISCOUNT", "Discount cannot be negative.", 400)
+    if discount >= plan.price:
+        return _err_response_code(
+            "INVALID_DISCOUNT",
+            f"Discount must be less than plan price (₹{plan.price}).",
+            400,
+        )
+    total = (plan.price - discount).quantize(Decimal("0.01"))
+    if total <= Decimal("0"):
+        return _err_response_code("INVALID_AMOUNT", "Total payable must be greater than zero.", 400)
+    return Response(
+        {
+            "success": True,
+            "data": {
+                "plan_id": plan.id,
+                "plan_name": plan.name,
+                "plan_amount": str(plan.price),
+                "discount": str(discount),
+                "total_payable": str(total),
+            },
+        }
+    )
+
+
+class StaffPaymentQuoteAPIView(APIView):
+    """GET or POST /api/v1/staff/payments/quote/ — plan amount, discount, total (Step 2)."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        staff_admin, err = _resolve_staff(request)
+        if err:
+            return err
+        return _staff_payment_quote_response(request.data or {})
+
+    def get(self, request):
+        staff_admin, err = _resolve_staff(request)
+        if err:
+            return err
+        q = request.query_params
+        plan_id = q.get("plan_id")
+        if plan_id is None or str(plan_id).strip() == "":
+            return _err_response("plan_id query parameter is required.", 400)
+        discount = q.get("discount_amount", "0")
+        return _staff_payment_quote_response({"plan_id": plan_id, "discount_amount": discount})
+
+
+class StaffPaymentCustomerOtpSendAPIView(APIView):
+    """POST /api/v1/staff/payments/customer-otp/send/ — send OTP to customer (Step 4)."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        staff_admin, err = _resolve_staff(request)
+        if err:
+            return err
+        staff_profile = staff_profile_for_dashboard(staff_admin)
+        if not staff_profile:
+            return _err_response("Staff profile not configured. Contact admin.", 400)
+        ser = StaffPaymentCustomerOtpSendSerializer(data=request.data or {})
+        if not ser.is_valid():
+            return _err_response("customer_matri_id is required.", 400)
+        matri = (ser.validated_data.get("customer_matri_id") or "").strip()
+        customer = User.objects.filter(matri_id__iexact=matri, role="user", is_active=True).first()
+        if not customer:
+            return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
+        if not _customer_in_staff_payment_scope(staff_profile, customer):
+            return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
+        _ensure_staff_assignment_for_walk_in_payment(staff_profile, customer)
+        mobile = (customer.mobile or "").strip()
+        if not mobile:
+            return _err_response_code(
+                "CUSTOMER_MOBILE_MISSING",
+                "Customer has no mobile on file.",
+                400,
+            )
+        otp_key = staff_payment_customer_otp_identifier(
+            customer_id=str(customer.pk), staff_admin_id=str(staff_admin.pk)
+        )
+        rate_key = f"staff_payment_otp_send:{otp_key}"
+        allowed, rate_msg = check_otp_rate_limit(rate_key)
+        if not allowed:
+            return Response(
+                {"success": False, "error": {"code": 429, "message": rate_msg}},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        otp = generate_otp(otp_key)
+        _send_sms_otp(mobile, otp)
+        create_audit_log(
+            request,
+            action="other",
+            resource=f"payment_otp_send:{customer.matri_id}",
+            details="Customer payment authorization OTP sent.",
+        )
+        payload = {
+            "success": True,
+            "message": "OTP sent to customer's registered mobile.",
+            "data": {"customer_matri_id": customer.matri_id or matri},
+        }
+        if getattr(settings, "DEBUG", False):
+            payload["data"]["otp"] = otp
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class StaffPaymentCustomerOtpVerifyAPIView(APIView):
+    """POST /api/v1/staff/payments/customer-otp/verify/ — verify OTP (Step 4)."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        staff_admin, err = _resolve_staff(request)
+        if err:
+            return err
+        staff_profile = staff_profile_for_dashboard(staff_admin)
+        if not staff_profile:
+            return _err_response("Staff profile not configured. Contact admin.", 400)
+        ser = StaffPaymentCustomerOtpVerifySerializer(data=request.data or {})
+        if not ser.is_valid():
+            return _err_response("customer_matri_id and otp are required.", 400)
+        matri = (ser.validated_data.get("customer_matri_id") or "").strip()
+        otp = (ser.validated_data.get("otp") or "").strip()
+        customer = User.objects.filter(matri_id__iexact=matri, role="user", is_active=True).first()
+        if not customer:
+            return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
+        if not _customer_in_staff_payment_scope(staff_profile, customer):
+            return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
+        _ensure_staff_assignment_for_walk_in_payment(staff_profile, customer)
+        otp_key = staff_payment_customer_otp_identifier(
+            customer_id=str(customer.pk), staff_admin_id=str(staff_admin.pk)
+        )
+        ok, otp_message = accounts_verify_otp(otp_key, otp)
+        if not ok:
+            err_code = "INVALID_OTP"
+            msg_lower = (otp_message or "").lower()
+            if "expired" in msg_lower:
+                err_code = "OTP_EXPIRED"
+            elif "too many" in msg_lower or "attempt" in msg_lower:
+                err_code = "OTP_ATTEMPTS_EXCEEDED"
+            return _err_response_code(err_code, otp_message, 400)
+        cache.set(_payment_customer_verified_cache_key(customer, staff_admin), "1", timeout=600)
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_OTP_VERIFY,
+            resource=f"payment_otp_verify:{customer.matri_id}",
+            details="Customer payment authorization OTP verified.",
+        )
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "verified": True,
+                    "customer_matri_id": customer.matri_id or matri,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class StaffPaymentSummaryView(APIView):
@@ -334,26 +672,41 @@ class StaffPaymentListCreateView(APIView):
         notes = data.get("notes", "")
         matri = data["customer_matri_id"]
 
-        if not CustomerStaffAssignment.objects.filter(user=customer, staff=staff_profile).exists():
+        if not _customer_in_staff_payment_scope(staff_profile, customer):
             return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
+        _ensure_staff_assignment_for_walk_in_payment(staff_profile, customer)
 
         if mode == PaymentEntry.MODE_CASH:
-            ok, otp_message = validate_otp(phone_number=(customer.mobile or "").strip(), otp=otp)
-            if not ok:
-                err_code = "INVALID_OTP"
-                msg_lower = (otp_message or "").lower()
-                if "expired" in msg_lower:
-                    err_code = "OTP_EXPIRED"
-                elif "attempt" in msg_lower:
-                    err_code = "OTP_ATTEMPTS_EXCEEDED"
-                return _err_response_code(err_code, otp_message, 400)
+            verified_key = _payment_customer_verified_cache_key(customer, staff_admin)
+            if cache.get(verified_key):
+                cache.delete(verified_key)
+            else:
+                otp_key = staff_payment_customer_otp_identifier(
+                    customer_id=str(customer.pk), staff_admin_id=str(staff_admin.pk)
+                )
+                ok, otp_message = accounts_verify_otp(otp_key, (otp or "").strip())
+                if not ok:
+                    ok2, msg2 = validate_otp(
+                        phone_number=(customer.mobile or "").strip(), otp=(otp or "").strip()
+                    )
+                    if not ok2:
+                        err_code = "INVALID_OTP"
+                        msg_lower = ((otp_message or msg2) or "").lower()
+                        if "expired" in msg_lower:
+                            err_code = "OTP_EXPIRED"
+                        elif "attempt" in msg_lower:
+                            err_code = "OTP_ATTEMPTS_EXCEEDED"
+                        return _err_response_code(err_code, otp_message or msg2, 400)
 
         receipt_id = generate_receipt_no()
         now = timezone.now()
         sub_payment_mode = "cash" if mode == PaymentEntry.MODE_CASH else "upi"
         payment_reference = reference_no or cashier_receipt_no or physical_receipt_no
+        matri_key = (customer.matri_id or matri or "").strip()
         try:
             with db_transaction.atomic():
+                User.objects.select_for_update().filter(pk=customer.pk).first()
+                _staff_payment_duplicate_check(staff_admin, matri_key, plan, amt, mode)
                 txn = record_staff_plan_purchase(
                     customer=customer,
                     plan=plan,
@@ -380,6 +733,8 @@ class StaffPaymentListCreateView(APIView):
                     verified_by=staff_admin,
                     transaction=txn,
                 )
+        except _DuplicateStaffPaymentError as dup:
+            return dup.response
         except ValueError as e:
             return _err_response_code("INVALID_AMOUNT", str(e), 400)
         # UPI and cash (with OTP) are verified at creation in staff flow.
@@ -451,6 +806,83 @@ class StaffPaymentReceiptPdfView(APIView):
         response = HttpResponse(pdf, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="{entry.receipt_id}.pdf"'
         return response
+
+
+def _digits_only(s: str) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+
+class CustomerLookupAPIView(APIView):
+    """
+    GET /api/v1/staff/payments/customer-lookup/?matri_id=AM100001
+    GET /api/v1/staff/payments/customer-lookup/?mobile=9876543210
+    Allowed: Staff + Branch Manager (via the corresponding URL namespaces).
+    """
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        role = normalize_admin_role(getattr(request.user, "role", ""))
+        if role == AdminUser.ROLE_STAFF:
+            staff_admin, err = _resolve_staff(request)
+            if err:
+                return err
+            staff_profile = staff_profile_for_dashboard(staff_admin)
+            if not staff_profile:
+                return _err_response("Staff profile not configured. Contact admin.", 400)
+            scope_filter = _staff_payment_customer_scope_q(staff_profile)
+        elif role == AdminUser.ROLE_BRANCH_MANAGER:
+            branch_manager, err = _resolve_branch_manager(request)
+            if err:
+                return err
+            bid = branch_manager.branch_id
+            scope_filter = Q(staff_assignment__staff__branch_id=bid) | Q(
+                staff_assignment__isnull=True, branch_id=bid
+            )
+        else:
+            return _err_response("Access denied.", 403)
+
+        matri_id = (request.query_params.get("matri_id") or "").strip()
+        mobile_raw = (request.query_params.get("mobile") or "").strip()
+
+        if not matri_id and not mobile_raw:
+            return _err_response("matri_id or mobile is required.", 400)
+
+        qs = User.objects.filter(role="user", is_active=True).filter(scope_filter)
+
+        user = None
+        if matri_id:
+            user = qs.filter(matri_id__iexact=matri_id).first()
+        else:
+            digits = _digits_only(mobile_raw)
+            mobile10 = digits[-10:] if len(digits) >= 10 else digits
+            if not mobile10:
+                return _err_response("mobile is invalid.", 400)
+            user = qs.filter(mobile__endswith=mobile10).first()
+
+        if not user:
+            return _err_response("Customer not found.", 404)
+
+        create_audit_log(
+            request,
+            action="other",
+            resource=f"customer_lookup:{user.matri_id}",
+            details="Customer details looked up for payment entry.",
+        )
+
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "id": str(user.id),
+                    "matri_id": user.matri_id or "",
+                    "name": user.name or "",
+                    "mobile": user.mobile or "",
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class BranchPaymentVerifyAPIView(APIView):

@@ -263,6 +263,13 @@ JWT_REFRESH_COOKIE_HTTPONLY = True
 JWT_REFRESH_COOKIE_SECURE = env.bool('JWT_REFRESH_COOKIE_SECURE', default=not DEBUG)
 JWT_REFRESH_COOKIE_SAMESITE = 'Lax'
 
+# Staff panel — cash/UPI payment entry: block identical double-POST and rapid repeat for same customer (same staff).
+# Set STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS=0 in .env to allow back-to-back plans without waiting.
+STAFF_PAYMENT_IDENTICAL_DEDUP_SECONDS = env.int('STAFF_PAYMENT_IDENTICAL_DEDUP_SECONDS', default=120)
+STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS = env.int(
+    'STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS', default=900
+)
+
 # AWS S3 / MinIO (optional; fallback to local MEDIA)
 USE_S3 = env.bool('USE_S3', default=False)
 if USE_S3:

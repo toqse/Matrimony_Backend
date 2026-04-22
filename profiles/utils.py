@@ -285,6 +285,11 @@ def get_full_profile_data(user, request=None):
         LocationDetailsReadSerializer,
         FamilyDetailsReadSerializer,
         EducationDetailsReadSerializer,
+        empty_education_details_read_data,
+        empty_family_details_read_data,
+        empty_location_details_read_data,
+        empty_personal_details_read_data,
+        empty_religion_details_read_data,
     )
     loc = UserLocation.objects.filter(user=user).select_related('country', 'state', 'district', 'city').first()
     rel = UserReligion.objects.filter(user=user).select_related('religion', 'caste_fk', 'mother_tongue').first()
@@ -308,11 +313,11 @@ def get_full_profile_data(user, request=None):
         'matri_id': user.matri_id or '',
         'basic_details': basic_ser.data,
         'photos': PhotosDetailsReadSerializer(photos, context={'request': request}).data if photos else _empty_photos(),
-        'religion_details': ReligionDetailsReadSerializer(rel).data if rel else {},
-        'personal_details': PersonalDetailsReadSerializer(pers).data if pers else {},
-        'location_details': LocationDetailsReadSerializer(loc).data if loc else {},
-        'family_details': FamilyDetailsReadSerializer(fam).data if fam else {},
-        'education_details': EducationDetailsReadSerializer(edu).data if edu else {},
+        'religion_details': ReligionDetailsReadSerializer(rel).data if rel else empty_religion_details_read_data(),
+        'personal_details': PersonalDetailsReadSerializer(pers).data if pers else empty_personal_details_read_data(),
+        'location_details': LocationDetailsReadSerializer(loc).data if loc else empty_location_details_read_data(),
+        'family_details': FamilyDetailsReadSerializer(fam).data if fam else empty_family_details_read_data(),
+        'education_details': EducationDetailsReadSerializer(edu).data if edu else empty_education_details_read_data(),
         'about_me': profile.about_me if profile else '',
     }
 

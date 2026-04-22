@@ -28,6 +28,9 @@ class StaffPaymentCreateSerializer(serializers.Serializer):
     customer_matri_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     plan_id = serializers.IntegerField(required=False, allow_null=True)
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    discount_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True
+    )
     reference_no = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     physical_receipt_no = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     cashier_receipt_no = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -42,6 +45,7 @@ class StaffPaymentCreateSerializer(serializers.Serializer):
         matri_id = (attrs.get("customer_matri_id") or "").strip()
         plan_id = attrs.get("plan_id")
         raw_amount = attrs.get("amount")
+        raw_discount = attrs.get("discount_amount")
 
         if not mode or mode not in self.VALID_MODES:
             self._fail(code="INVALID_MODE", message='mode must be either "cash" or "gpay_upi".')
@@ -65,13 +69,31 @@ class StaffPaymentCreateSerializer(serializers.Serializer):
         except (InvalidOperation, TypeError, ValueError):
             self._fail(code="INVALID_AMOUNT", message="Invalid amount.")
 
+        try:
+            discount = (
+                Decimal(str(raw_discount))
+                if raw_discount is not None and str(raw_discount).strip() != ""
+                else Decimal("0")
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            self._fail(code="INVALID_DISCOUNT", message="Invalid discount amount.")
+
+        if discount < Decimal("0"):
+            self._fail(code="INVALID_DISCOUNT", message="Discount cannot be negative.")
+        if discount >= plan.price:
+            self._fail(
+                code="INVALID_DISCOUNT",
+                message=f"Discount must be less than plan price (₹{plan.price}).",
+            )
+
+        expected_total = (plan.price - discount).quantize(Decimal("0.01"))
         if amount <= Decimal("0"):
             self._fail(code="INVALID_AMOUNT", message="Amount must be greater than zero.")
 
-        if amount != plan.price:
+        if amount != expected_total:
             self._fail(
                 code="INVALID_AMOUNT",
-                message=f"Amount must equal plan price (₹{plan.price}).",
+                message=f"Amount must equal plan price minus discount (expected ₹{expected_total}).",
             )
 
         reference_no = (attrs.get("reference_no") or "").strip()
@@ -101,9 +123,28 @@ class StaffPaymentCreateSerializer(serializers.Serializer):
         attrs["customer"] = customer
         attrs["plan"] = plan
         attrs["amount"] = amount
+        attrs["discount_amount"] = discount
         attrs["reference_no"] = reference_no
         attrs["physical_receipt_no"] = physical_receipt_no
         attrs["cashier_receipt_no"] = cashier_receipt_no
         attrs["otp"] = otp
         attrs["notes"] = (attrs.get("notes") or "").strip()
         return attrs
+
+
+class StaffPaymentPlanQuoteSerializer(serializers.Serializer):
+    """POST body for /api/v1/staff/payments/quote/ — plan + discount preview."""
+
+    plan_id = serializers.IntegerField(required=True)
+    discount_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, default=Decimal("0")
+    )
+
+
+class StaffPaymentCustomerOtpSendSerializer(serializers.Serializer):
+    customer_matri_id = serializers.CharField(required=True, max_length=30)
+
+
+class StaffPaymentCustomerOtpVerifySerializer(serializers.Serializer):
+    customer_matri_id = serializers.CharField(required=True, max_length=30)
+    otp = serializers.CharField(required=True, max_length=12)

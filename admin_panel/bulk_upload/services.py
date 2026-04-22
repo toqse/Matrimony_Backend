@@ -597,30 +597,40 @@ def delete_cached_import(token: str) -> None:
 
 def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
     """Create User + profile records from a validated payload."""
+    def _first(*keys, default=None):
+        for k in keys:
+            if k in payload and payload.get(k) not in (None, ""):
+                return payload.get(k)
+        return default
+
     dob = None
     if payload.get("dob"):
         dob = date.fromisoformat(payload["dob"])
 
     pwd = User.objects.make_random_password()
     email = payload.get("email") or None
+    mobile = _first("mobile", "phone")
     user = User.objects.create_user(
         email=email,
-        mobile=payload["mobile"],
+        mobile=mobile,
         password=pwd,
-        name=payload["name"],
+        name=payload.get("name") or "",
         dob=dob,
-        gender=payload["gender"],
+        gender=payload.get("gender") or "",
         branch_id=branch_id,
     )
     user.is_active = True
     user.mobile_verified = True
     if email:
         user.email_verified = True
+    # Ensure this is a member profile for admin panel lists.
+    user.role = "user"
     user.save(
         update_fields=[
             "is_active",
             "mobile_verified",
             "email_verified",
+            "role",
             "updated_at",
         ]
     )
@@ -642,6 +652,7 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
             "state_id": payload.get("state_id"),
             "district_id": payload.get("district_id"),
             "city_id": payload.get("city_id"),
+            "address": payload.get("address") or "",
         },
     )
 
@@ -659,11 +670,13 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
             ur_defaults["caste"] = c.name
     UserReligion.objects.update_or_create(user=user, defaults=ur_defaults)
 
-    num_ch = int(payload.get("num_children") or 0)
+    # children keys vary by validator version
+    num_ch = int(_first("number_of_children", "num_children", default=0) or 0)
     weight = None
-    if payload.get("weight"):
+    weight_raw = _first("weight_kg", "weight")
+    if weight_raw is not None:
         try:
-            weight = Decimal(payload["weight"])
+            weight = Decimal(str(weight_raw))
         except (InvalidOperation, ValueError):
             weight = None
 
@@ -674,15 +687,21 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
         user=user,
         defaults={
             "marital_status_id": payload.get("marital_status_id"),
-            "has_children": num_ch > 0,
+            "has_children": bool(payload.get("has_children")) if payload.get("has_children") is not None else num_ch > 0,
             "number_of_children": num_ch,
             "children_living_with": payload.get("children_living_with") or "",
             "height_id": payload.get("height_id"),
             "height_text": height_text,
             "weight": weight,
             "colour": payload.get("complexion") or "",
+            "blood_group": payload.get("blood_group") or "",
         },
     )
+
+    brothers = int(_first("brothers", "num_brothers", default=0) or 0)
+    sisters = int(_first("sisters", "num_sisters", default=0) or 0)
+    married_brothers = int(_first("married_brothers", "num_married_brothers", default=0) or 0)
+    married_sisters = int(_first("married_sisters", "num_married_sisters", default=0) or 0)
 
     UserFamily.objects.update_or_create(
         user=user,
@@ -691,11 +710,11 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
             "father_occupation": payload.get("father_occupation") or "",
             "mother_name": payload.get("mother_name") or "",
             "mother_occupation": payload.get("mother_occupation") or "",
-            "brothers": int(payload.get("brothers") or 0),
-            "sisters": int(payload.get("sisters") or 0),
-            "married_brothers": 0,
-            "married_sisters": 0,
-            "about_family": "",
+            "brothers": brothers,
+            "sisters": sisters,
+            "married_brothers": married_brothers,
+            "married_sisters": married_sisters,
+            "about_family": payload.get("about_family") or "",
             "family_type": payload.get("family_type") or "",
             "family_status": payload.get("family_status") or "",
         },
@@ -704,11 +723,11 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
     UserEducation.objects.update_or_create(
         user=user,
         defaults={
-            "highest_education_id": payload.get("education_id"),
+            "highest_education_id": _first("highest_education_id", "education_id"),
             "education_subject_id": payload.get("education_subject_id"),
             "occupation_id": payload.get("occupation_id"),
             "annual_income_id": payload.get("annual_income_id"),
-            "employment_status": "",
+            "employment_status": _first("employment", "employment_status", default="") or "",
             "company": payload.get("company") or "",
             "working_location": payload.get("working_location") or "",
         },

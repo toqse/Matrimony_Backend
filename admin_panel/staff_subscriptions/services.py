@@ -16,6 +16,34 @@ from plans.models import Plan, ServiceCharge, Transaction, UserPlan
 
 
 VALID_STATUS = frozenset({"active", "expired", "cancelled"})
+
+
+def resolve_current_active_user_plan(any_up: UserPlan | None, today) -> UserPlan | None:
+    """Subscription row considered 'currently active' (same rule as plan purchase / upgrade)."""
+    if not any_up or not any_up.is_active:
+        return None
+    if any_up.valid_until is not None and any_up.valid_until < today:
+        return None
+    return any_up
+
+
+def same_plan_new_purchase_blocked_message(old_up: UserPlan | None, plan: Plan) -> str | None:
+    """If customer already holds this plan as an active subscription, return a blocking message."""
+    if old_up and old_up.plan_id == plan.id:
+        return f"Customer already has an active {plan.name} plan. Use renew instead."
+    return None
+
+
+def staff_subscription_same_plan_active_preflight(customer: User, plan: Plan) -> str | None:
+    """
+    For POST /api/v1/staff/subscriptions/: return an error message if a new sale of this plan
+    must be rejected (None if the purchase may proceed). Uses the same rules as
+    record_staff_plan_purchase (without row locks — record remains authoritative).
+    """
+    today = timezone.now().date()
+    up = UserPlan.objects.filter(user=customer).select_related("plan").first()
+    old_up = resolve_current_active_user_plan(up, today)
+    return same_plan_new_purchase_blocked_message(old_up, plan)
 STAFF_PAYMENT_MODES = frozenset({"cash", "upi", "card", "netbanking"})
 
 
@@ -155,9 +183,9 @@ def record_staff_plan_purchase(
     from django.db import transaction as db_transaction
 
     plan_price = plan.price or Decimal("0")
-    if amount != plan_price:
+    if amount <= Decimal("0") or amount > plan_price:
         raise ValueError(
-            f"Amount must equal plan price (₹{plan_price})."
+            f"Amount must be greater than zero and at most plan price (₹{plan_price})."
         )
 
     today = timezone.now().date()
@@ -170,7 +198,7 @@ def record_staff_plan_purchase(
     except ServiceCharge.DoesNotExist:
         service_charge_total = Decimal("0")
 
-    amount_paid = plan_price
+    amount_paid = amount
     service_charge_paid = Decimal("0")
 
     with db_transaction.atomic():
@@ -180,25 +208,11 @@ def record_staff_plan_purchase(
             .filter(user=customer)
             .first()
         )
-        old_up = (
-            any_up
-            if (
-                any_up
-                and any_up.is_active
-                and (any_up.valid_until is None or any_up.valid_until >= today)
-            )
-            else None
-        )
+        old_up = resolve_current_active_user_plan(any_up, today)
 
-        if (
-            old_up
-            and old_up.plan_id == plan.id
-            and old_up.is_active
-            and (old_up.valid_until is None or old_up.valid_until >= today)
-        ):
-            raise ValueError(
-                f"Customer already has an active {plan.name} plan. Use renew instead."
-            )
+        blocked = same_plan_new_purchase_blocked_message(old_up, plan)
+        if blocked:
+            raise ValueError(blocked)
 
         if old_up:
             def _remaining(plan_limit, bonus, used):
@@ -250,7 +264,7 @@ def record_staff_plan_purchase(
             user=customer,
             defaults={
                 "plan": plan,
-                "price_paid": plan_price,
+                "price_paid": amount_paid,
                 "service_charge": service_charge_total,
                 "service_charge_paid": service_charge_paid,
                 "valid_from": valid_from,

@@ -28,6 +28,9 @@ class AuditLogListAPIView(APIView):
                 Q(actor_name__icontains=search)
                 | Q(resource__icontains=search)
                 | Q(details__icontains=search)
+                | Q(branch_name__icontains=search)
+                | Q(staff_name__icontains=search)
+                | Q(target_profile_name__icontains=search)
             )
 
         action = (request.query_params.get("action") or "").strip()
@@ -39,6 +42,16 @@ class AuditLogListAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             qs = qs.filter(action=action)
+
+        action_type = (request.query_params.get("action_type") or "").strip()
+        if action_type:
+            valid_types = {c[0] for c in AuditLog.ACTION_TYPE_CHOICES}
+            if action_type not in valid_types:
+                return Response(
+                    {"success": False, "error": {"code": 400, "message": "Invalid action_type filter."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(action_type=action_type)
 
         role = (request.query_params.get("role") or "").strip()
         if role:
@@ -128,11 +141,17 @@ class AuditLogActionOptionsAPIView(APIView):
             if value not in role_values:
                 roles.append({"value": value, "label": value.replace("_", " ").title()})
 
+        action_types = [
+            {"value": value, "label": label}
+            for value, label in AuditLog.ACTION_TYPE_CHOICES
+        ]
+
         return Response(
             {
                 "success": True,
                 "data": {
                     "actions": actions,
+                    "action_types": action_types,
                     "roles": roles,
                     "usernames": usernames,
                 },

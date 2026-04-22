@@ -102,7 +102,9 @@ def apply_family(user, payload: dict):
 
 
 def apply_education(user, payload: dict):
-    ser = EducationDetailsUpdateSerializer(data=payload, partial=True)
+    ser = EducationDetailsUpdateSerializer(
+        data=payload, partial=True, context={'user': user}
+    )
     ser.is_valid(raise_exception=True)
     vd = ser.validated_data
     edu, _ = UserEducation.objects.get_or_create(user=user, defaults={})

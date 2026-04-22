@@ -97,7 +97,19 @@ class BulkUploadValidateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        _, data_rows = parse_upload_file(f)
+        try:
+            _, data_rows = parse_upload_file(f)
+        except ValueError as exc:
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "message": str(exc),
+                        "details": [{"row": 1, "field": "headers", "message": str(exc)}],
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         total_rows, valid_rows, error_rows, errors, valid_payloads = validate_rows(data_rows)
         job = BulkUploadJob.objects.create(
             uploaded_by=request.user,

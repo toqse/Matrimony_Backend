@@ -33,6 +33,18 @@ SPECIAL_MARITALS = {"divorced", "widowed", "separated"}
 MAX_AVAILABLE_VALUES_IN_ERROR = 20
 
 
+def normalize_gender(raw: str) -> str:
+    """Accept M/F/O or common full words from spreadsheets."""
+    s = (raw or "").strip().upper()
+    if s in {"M", "MALE", "MAN", "BOY"}:
+        return "M"
+    if s in {"F", "FEMALE", "WOMAN", "GIRL"}:
+        return "F"
+    if s in {"O", "OTHER", "OTHERS"}:
+        return "O"
+    return s
+
+
 def normalize_phone(raw: str) -> str | None:
     s = "".join(ch for ch in (raw or "") if ch.isdigit())
     if len(s) == 12 and s.startswith("91"):
@@ -165,9 +177,15 @@ def validate_rows(data_rows: list[dict[str, str]]):
         elif dob == "__future__":
             row_err.append({"row": row, "field": "dob", "message": "Date of Birth cannot be in the future"})
 
-        gender = (r.get("gender") or "").strip().upper()
+        gender = normalize_gender(r.get("gender") or "")
         if gender and gender not in {"M", "F", "O"}:
-            row_err.append({"row": row, "field": "gender", "message": "Gender must be M, F, or O"})
+            row_err.append(
+                {
+                    "row": row,
+                    "field": "gender",
+                    "message": "Gender must be M, F, O (or Male/Female/Other)",
+                }
+            )
 
         religion_name = (r.get("religion") or "").strip()
         religion = _resolve_name(Religion, religion_name) if religion_name else None
@@ -176,11 +194,7 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 {
                     "row": row,
                     "field": "religion",
-                    "message": _not_found_with_available_message(
-                        "Religion",
-                        "Religions",
-                        _active_names(Religion),
-                    ),
+                    "message": "Invalid religion",
                 }
             )
 
@@ -203,17 +217,14 @@ def validate_rows(data_rows: list[dict[str, str]]):
                     }
                 )
 
-        mother_tongue = _resolve_name(MotherTongue, r.get("mother_tongue") or "")
-        if (r.get("mother_tongue") or "").strip() and not mother_tongue:
+        mt_raw = (r.get("mother_tongue") or "").strip()
+        mother_tongue = _resolve_name(MotherTongue, mt_raw)
+        if mt_raw and not mother_tongue:
             row_err.append(
                 {
                     "row": row,
                     "field": "mother_tongue",
-                    "message": _not_found_with_available_message(
-                        "Mother Tongue",
-                        "Mother Tongues",
-                        _active_names(MotherTongue),
-                    ),
+                    "message": "Invalid mother_tongue",
                 }
             )
 
@@ -338,6 +349,12 @@ def validate_rows(data_rows: list[dict[str, str]]):
             )
 
         c, s, d, ci = _resolve_location(r.get("country"), r.get("state"), r.get("district"), r.get("city"))
+        country_raw = (r.get("country") or "").strip()
+        if country_raw and not c:
+            row_err.append({"row": row, "field": "country", "message": "Invalid country"})
+        state_raw = (r.get("state") or "").strip()
+        if state_raw and country_raw and c and not s:
+            row_err.append({"row": row, "field": "state", "message": "Invalid state"})
 
         highest_education = _resolve_name(Education, r.get("highest_education") or "")
         education_subject = _resolve_name(EducationSubject, r.get("education_subject") or "")
@@ -372,11 +389,7 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 {
                     "row": row,
                     "field": "occupation",
-                    "message": _not_found_with_available_message(
-                        "Occupation",
-                        "Occupations",
-                        _active_names(Occupation),
-                    ),
+                    "message": "Invalid occupation",
                 }
             )
         if (r.get("annual_income") or "").strip() and not annual_income:

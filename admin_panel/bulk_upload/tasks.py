@@ -16,17 +16,33 @@ from profiles.models import (
 from profiles.utils import get_profile_completion_data
 
 from .models import BulkUploadJob
-from .validators import delete_cached_payload, get_cached_payload
+from .validators import delete_cached_payload, get_cached_payload, normalize_gender
 
 
 def _import_single_row(payload: dict, branch_id: int | None):
-    dob = date.fromisoformat(payload["dob"]) if payload.get("dob") else None
+    # Debug: show normalized row data before saving.
+    # (Intentional print for troubleshooting bulk upload issues.)
+    print("BULK_UPLOAD_ROW:", payload)
+
+    # Payload keys vary slightly across older/newer templates & validators.
+    mobile = (
+        payload.get("phone")
+        or payload.get("phone_number")
+        or payload.get("mobile")
+        or payload.get("mobile_number")
+        or None
+    )
+    dob_raw = payload.get("dob") or payload.get("date_of_birth") or payload.get("date of birth") or None
+    dob = date.fromisoformat(dob_raw) if dob_raw else None
+    g = normalize_gender(payload.get("gender") or "")
+    if g not in ("M", "F", "O"):
+        g = ""
     user = User(
         name=payload.get("name") or "",
-        mobile=payload.get("phone") or None,
+        mobile=mobile,
         email=payload.get("email") or None,
         dob=dob,
-        gender=(payload.get("gender") or "").upper()[:1],
+        gender=g,
         role="user",
         branch_id=branch_id,
         is_active=True,

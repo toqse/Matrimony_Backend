@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.conf import settings
+from django.db import transaction
 from django.core.mail import send_mail
 from django.db.models import Q
 from django.urls import reverse
@@ -12,6 +13,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from admin_panel.audit_log.models import AuditLog
+from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.my_profiles.models import EmailTemplate
@@ -347,67 +350,38 @@ class StaffMyProfilesDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         profile, _ = UserProfile.objects.get_or_create(user=user)
-        if "has_horoscope" in data:
-            profile.has_horoscope = bool(data["has_horoscope"])
-            profile.save(update_fields=["has_horoscope", "updated_at"])
-        for key, handler in SECTION_HANDLERS.items():
-            if key not in data:
-                continue
-            payload = data[key]
-            if payload is None:
-                continue
-            if key == "about_me":
-                if isinstance(payload, str):
-                    if len(payload) > 500:
-                        return Response(
-                            {
-                                "success": False,
-                                "error": {"code": 400, "message": "About me must be 500 characters or fewer."},
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    try:
-                        handler(user, {"about_me": payload})
-                    except DRFValidationError as e:
-                        return Response(
-                            {
-                                "success": False,
-                                "error": {"code": 400, "message": _first_drf_error(e)},
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                else:
-                    if isinstance(payload, dict):
-                        t = payload.get("about_me") or ""
-                        if len(t) > 500:
-                            return Response(
-                                {
-                                    "success": False,
-                                    "error": {"code": 400, "message": "About me must be 500 characters or fewer."},
-                                },
-                                status=status.HTTP_400_BAD_REQUEST,
-                            )
-                    try:
+        try:
+            with transaction.atomic():
+                if "has_horoscope" in data:
+                    profile.has_horoscope = bool(data["has_horoscope"])
+                    profile.save(update_fields=["has_horoscope", "updated_at"])
+                for key, handler in SECTION_HANDLERS.items():
+                    if key not in data:
+                        continue
+                    payload = data[key]
+                    if payload is None:
+                        continue
+                    if key == "about_me":
+                        if isinstance(payload, str):
+                            if len(payload) > 500:
+                                raise DRFValidationError("About me must be 500 characters or fewer.")
+                            handler(user, {"about_me": payload})
+                        else:
+                            if isinstance(payload, dict):
+                                t = payload.get("about_me") or ""
+                                if len(t) > 500:
+                                    raise DRFValidationError("About me must be 500 characters or fewer.")
+                            handler(user, payload)
+                    else:
                         handler(user, payload)
-                    except DRFValidationError as e:
-                        return Response(
-                            {
-                                "success": False,
-                                "error": {"code": 400, "message": _first_drf_error(e)},
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-            else:
-                try:
-                    handler(user, payload)
-                except DRFValidationError as e:
-                    return Response(
-                        {
-                            "success": False,
-                            "error": {"code": 400, "message": _first_drf_error(e)},
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+        except DRFValidationError as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": 400, "message": _first_drf_error(e)},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         save_profile_uploads(user, files)
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
@@ -649,6 +623,16 @@ class StaffMyProfilesCreateView(APIView):
                 {"success": False, "error": {"code": 400, "message": str(exc)}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        actor_nm = (getattr(request.user, "name", "") or "").strip()
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_CREATE_PROFILE,
+            resource=f"profile:{user.matri_id}",
+            details=f"{actor_nm} created profile for {user.name}.",
+            target_profile_name=(user.name or "").strip(),
+            action_type=AuditLog.ACTION_TYPE_CREATE_PROFILE,
+        )
 
         return Response(
             {

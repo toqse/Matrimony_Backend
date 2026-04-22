@@ -88,6 +88,27 @@ _HEADER_TO_KEY = {
     "about my family": "about_family",
 }
 
+# Excel often truncates headers; map normalized short headers when unambiguous.
+_HEADER_ALIASES = {
+    "phone nu": "phone",
+    "phone no": "phone",
+    "mobile": "phone",
+    "mobile number": "phone",
+    "mother to": "mother_tongue",
+    "marital sta": "marital_status",
+    "partner pr": "partner_preference",
+    "highest ed": "highest_education",
+    "annual inc": "annual_income",
+    "about my fam": "about_family",
+    # Common shortened headings (without "(integer >= 0)" suffix)
+    "number of brothers": "num_brothers",
+    "number of married brothers": "num_married_brothers",
+    "number of sisters": "num_sisters",
+    "number of married sisters": "num_married_sisters",
+    "about my family": "about_family",
+    "about my family..": "about_family",
+}
+
 
 def _norm(s: Any) -> str:
     if s is None:
@@ -98,8 +119,10 @@ def _norm(s: Any) -> str:
 def _cell(v: Any) -> str:
     if v is None:
         return ""
-    if isinstance(v, float) and v == int(v):
-        return str(int(v))
+    if isinstance(v, float):
+        # Excel stores phone counts etc. as float; avoid "9876543210.0" and scientific str quirks.
+        if abs(v - round(v)) < 1e-9:
+            return str(int(round(v)))
     return str(v).strip()
 
 
@@ -107,8 +130,37 @@ def parse_upload_file(uploaded_file) -> tuple[list[str], list[dict[str, str]]]:
     name = (getattr(uploaded_file, "name", "") or "").lower()
     data = uploaded_file.read()
     if name.endswith(".xlsx"):
-        return _parse_xlsx(data)
-    return _parse_csv(data)
+        headers, rows = _parse_xlsx(data)
+    else:
+        headers, rows = _parse_csv(data)
+
+    _validate_headers_strict(headers)
+    return headers, rows
+
+
+def _validate_headers_strict(headers: list[str]) -> None:
+    """
+    Enforce exact column mapping.
+    - Normalization is already applied via _norm().
+    - If a header isn't recognized -> error
+    - If a required template header is missing -> error
+    """
+    provided = [h for h in headers if (h or "").strip()]
+    provided_keys = [(_HEADER_TO_KEY.get(h) or _HEADER_ALIASES.get(h)) for h in provided]
+    unknown = [h for h in provided if not (_HEADER_TO_KEY.get(h) or _HEADER_ALIASES.get(h))]
+
+    required_headers = [_norm(h) for h in TEMPLATE_COLUMNS]
+    required_keys = [(_HEADER_TO_KEY.get(h) or _HEADER_ALIASES.get(h)) for h in required_headers]
+    required_keys = [k for k in required_keys if k]  # safety
+    missing_keys = [k for k in required_keys if k not in set(provided_keys)]
+
+    if unknown or missing_keys:
+        parts: list[str] = []
+        if missing_keys:
+            parts.append("Missing columns: " + ", ".join(missing_keys))
+        if unknown:
+            parts.append("Unknown columns: " + ", ".join(unknown))
+        raise ValueError("Invalid template headers. " + " | ".join(parts))
 
 
 def _parse_csv(raw: bytes) -> tuple[list[str], list[dict[str, str]]]:
@@ -125,7 +177,7 @@ def _parse_csv(raw: bytes) -> tuple[list[str], list[dict[str, str]]]:
     for row in rows[1:]:
         item: dict[str, str] = {}
         for i, h in enumerate(headers):
-            key = _HEADER_TO_KEY.get(h)
+            key = _HEADER_TO_KEY.get(h) or _HEADER_ALIASES.get(h)
             if not key:
                 continue
             item[key] = _cell(row[i]) if i < len(row) else ""
@@ -147,7 +199,7 @@ def _parse_xlsx(raw: bytes) -> tuple[list[str], list[dict[str, str]]]:
     for row in rows:
         item: dict[str, str] = {}
         for i, h in enumerate(headers):
-            key = _HEADER_TO_KEY.get(h)
+            key = _HEADER_TO_KEY.get(h) or _HEADER_ALIASES.get(h)
             if not key:
                 continue
             val = row[i] if i < len(row) else None

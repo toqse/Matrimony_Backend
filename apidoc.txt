@@ -4066,16 +4066,21 @@ GET /api/v1/admin/profiles/{matri_id}/
 ----------------------------------------------------------------------------
 PATCH /api/v1/admin/profiles/{matri_id}/
   Auth: Required (Admin JWT; BM/Staff scoped)
-  Content-Type: application/json
-  Description: Partial update — send only keys you want to change. Nested objects use the same field names as
-    PATCH /api/v1/profile/basic/, /profile/location/, /profile/religion/, etc.
-  Body (JSON) — all keys optional; combine any subset in one request:
+  Content-Type: application/json  OR  multipart/form-data
+  Description: Partial update — send only keys you want to change. All section keys use the same nested shape as
+    staff/branch profile PATCH. Master FKs must be active IDs from /api/v1/master/… (country_id, state_id, district_id,
+    city_id, religion_id, caste_id, mother_tongue_id, marital_status_id, highest_education_id, education_subject_id,
+    occupation_id, annual_income_id). When multiple location or religion+caste IDs are sent together, hierarchy is validated
+    (e.g. state belongs to country). Response 200 always returns the full profile object (all sections + photos + about_me);
+    missing values appear as null or empty strings/arrays — same shape as GET.
+
+  A) application/json — optional keys; combine any subset in one request:
     {
       "admin_verified": true,
       "has_horoscope": true,
       "basic_details": {
         "name": "Priya Sharma",
-        "gender": "male | female | other",
+        "gender": "M | F | O  (or Male/Female/Other)",
         "dob": "15-05-1998",
         "email": "user@example.com",
         "profile_for": "myself | son | daughter | brother | sister | friend | relative"
@@ -4098,11 +4103,12 @@ PATCH /api/v1/admin/profiles/{matri_id}/
       },
       "personal_details": {
         "marital_status": "Never Married",
+        "marital_status_id": 1,
         "has_children": false,
         "number_of_children": 0,
         "height_cm": 165,
         "weight_kg": "55.00",
-        "complexion": "Fair | Wheatish | Dark | Very Fair",
+        "complexion": "Fair | Wheatish | Dark | Very Fair | Wheatish Brown | Other",
         "colour": "",
         "blood_group": "O+"
       },
@@ -4115,7 +4121,9 @@ PATCH /api/v1/admin/profiles/{matri_id}/
         "married_brothers": 0,
         "sisters": 0,
         "married_sisters": 0,
-        "about_family": ""
+        "about_family": "",
+        "family_type": "",
+        "family_status": ""
       },
       "education_details": {
         "highest_education_id": 1,
@@ -4126,10 +4134,38 @@ PATCH /api/v1/admin/profiles/{matri_id}/
       },
       "about_me": "Short paragraph text"
     }
-  Note: For about_me you may send a string (as above) or { "about_me": "..." } — both are accepted.
-  Response 200: { "success": true, "data": { ...same shape as GET /api/v1/admin/profiles/{matri_id}/... } }
-  Staff role: if request body includes `admin_verified` -> 403
+    Note: Send either marital_status (master name) or marital_status_id, not both.
+
+  B) multipart/form-data — same nested JSON in one form field named profile (or data, payload, registration), plus file
+    fields at the top level (same as staff create/PATCH):
+      profile_photo, passport_photo (stored as profile_photo), full_photo, selfie_photo, family_photo,
+      aadhaar_front, aadhaar_back
+    Example fields: profile = {"basic_details":{...},"location_details":{...}, ...} ; profile_photo = <file>
+
+  Note: For about_me you may send a string or { "about_me": "..." } — both are accepted.
+  Response 200: { "success": true, "data": { ...full GET shape including photos and all sections... } }
+  Staff role: if merged body includes `admin_verified` -> 403
     "Profile verification requires Branch Manager or Admin role." (use Branch Manager or Admin to verify.)
+
+----------------------------------------------------------------------------
+Platform admin — per-section PATCH (role `admin` only; IsAdminUser)
+----------------------------------------------------------------------------
+  Same base path prefix `/api/v1/admin/profiles/{matri_id}/…`. The member is always loaded by `matri_id` (role=user);
+  these routes do not use `request.user` as the profile being edited. Reuses the same serializers/validation as
+  `/api/v1/profile/…` member endpoints. Returns only the updated section in `data`.
+
+  PATCH /api/v1/admin/profiles/{matri_id}/basic/       Content-Type: application/json — body: BasicDetailsUpdate fields.
+  PATCH /api/v1/admin/profiles/{matri_id}/location/    JSON — LocationDetailsUpdate fields (master IDs validated).
+  PATCH /api/v1/admin/profiles/{matri_id}/religion/    JSON — ReligionDetailsUpdate fields.
+  PATCH /api/v1/admin/profiles/{matri_id}/personal/   JSON — PersonalDetailsUpdate fields.
+  PATCH /api/v1/admin/profiles/{matri_id}/education/   JSON — EducationDetailsUpdate fields (context user = target).
+  PATCH /api/v1/admin/profiles/{matri_id}/about/       JSON — AboutDetailsUpdate (`about_me`).
+  PATCH /api/v1/admin/profiles/{matri_id}/photos/      multipart/form-data and/or JSON — UserPhotos fields plus optional
+    file keys: profile_photo, passport_photo (→ profile_photo), full_photo, selfie_photo, family_photo, aadhaar_front,
+    aadhaar_back (same as staff multipart); may embed JSON in form field `profile`/`data`/`payload`/`registration`.
+
+  Response 200 each: `{ "success": true, "data": { …section read serializer… } }` (photos: image URLs; about: `{ "about_me": "…" }`).
+  403 if JWT user is not platform admin. 404 if matri_id not found.
 
 ----------------------------------------------------------------------------
 PATCH /api/v1/admin/profiles/{matri_id}/verify/

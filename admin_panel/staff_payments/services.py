@@ -33,6 +33,14 @@ def generate_receipt_no() -> str:
     return allocate_next_receipt_id()
 
 
+def staff_payment_customer_otp_identifier(*, customer_id: str, staff_admin_id: str) -> str:
+    """
+    OTP namespace for staff cash payment customer authorization.
+    Must match send + verify + final payment create (cash).
+    """
+    return f"staff_payment_auth:{customer_id}:{staff_admin_id}"
+
+
 def _otp_cache_key(identifier: str) -> str:
     return f"otp:{identifier}"
 

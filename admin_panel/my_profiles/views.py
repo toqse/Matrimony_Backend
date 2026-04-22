@@ -10,20 +10,30 @@ from django.db.models import Q
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from admin_panel.audit_log.models import AuditLog
+from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.bulk_upload.services import import_profile_row, mobile_exists_in_db, normalize_mobile
 from admin_panel.commissions.views import _branch_manager_code_or_error
 from admin_panel.permissions import IsBranchManager
-from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
+from admin_panel.staff_profiles.registration import (
+    _first_drf_error,
+    apply_profile_sections,
+    parse_request_data_and_files,
+    save_profile_uploads,
+)
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from master.models import Branch as MasterBranch
 from profiles.models import UserPhotos, UserProfile
+from profiles.utils import get_profile_completion_data
 from profiles.views import _build_profile_data_for_user
 from wishlist.models import Wishlist
 
@@ -319,6 +329,7 @@ class MyProfilesListView(APIView):
 class MyProfilesDetailView(APIView):
     authentication_classes = [AdminJWTAuthentication]
     permission_classes = [IsAuthenticated, IsBranchManager]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request, matri_id):
         user, err = _resolve_user_or_error(request, matri_id)
@@ -348,25 +359,37 @@ class MyProfilesDetailView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        try:
+            data, files = parse_request_data_and_files(request)
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         profile, _ = UserProfile.objects.get_or_create(user=user)
-        if "admin_verified" in request.data:
-            profile.admin_verified = bool(request.data["admin_verified"])
-            profile.save(update_fields=["admin_verified", "updated_at"])
-        if "has_horoscope" in request.data:
-            profile.has_horoscope = bool(request.data["has_horoscope"])
-            profile.save(update_fields=["has_horoscope", "updated_at"])
-        for key, handler in SECTION_HANDLERS.items():
-            if key not in request.data:
-                continue
-            payload = request.data[key]
-            if payload is None:
-                continue
-            if key == "about_me" and isinstance(payload, str):
-                handler(user, {"about_me": payload})
-            else:
-                handler(user, payload)
-        data = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
-        return Response({"success": True, "message": "Profile updated successfully.", "data": data})
+        try:
+            with transaction.atomic():
+                if "admin_verified" in data:
+                    profile.admin_verified = bool(data["admin_verified"])
+                    profile.save(update_fields=["admin_verified", "updated_at"])
+                if "has_horoscope" in data:
+                    profile.has_horoscope = bool(data["has_horoscope"])
+                    profile.save(update_fields=["has_horoscope", "updated_at"])
+                apply_profile_sections(user, data)
+        except DRFValidationError as exc:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": 400, "message": _first_drf_error(exc)},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        save_profile_uploads(user, files)
+        completion = get_profile_completion_data(user)
+        user.is_registration_profile_completed = completion["profile_status"] == "completed"
+        user.save(update_fields=["is_registration_profile_completed", "updated_at"])
+        payload = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
+        return Response({"success": True, "message": "Profile updated successfully.", "data": payload})
 
 
 class MyProfilesVerifyView(APIView):
@@ -654,6 +677,15 @@ class MyProfilesCreateView(APIView):
                 {"success": False, "error": {"code": 500, "message": "Profile created but user not found"}},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        actor_nm = (getattr(request.user, "name", "") or "").strip()
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_CREATE_PROFILE,
+            resource=f"profile:{user.matri_id}",
+            details=f"{actor_nm} created profile for {user.name}.",
+            target_profile_name=(user.name or "").strip(),
+            action_type=AuditLog.ACTION_TYPE_CREATE_PROFILE,
+        )
         return Response(
             {
                 "success": True,

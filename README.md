@@ -58,7 +58,7 @@ python manage.py runserver
 3. **Access:**
    - API: http://localhost:8000/
    - Plans (no auth): http://localhost:8000/api/v1/subscriptions/plans/
-   - Admin: http://localhost:8000/admin/ (create a superuser inside the container first)
+   - Admin: http://localhost:8000/admin/ — set `DJANGO_SUPERUSER_EMAIL` and `DJANGO_SUPERUSER_PASSWORD` in `.env` so the entrypoint creates/resets that superuser on startup, **or** run once: `docker compose exec django python manage.py set_admin_password admin@gmail.com 'YourPassword'`
 
 4. **MySQL** is mapped to host port **3307** (to avoid conflict with local MySQL on 3306). Connect with a DB client to `localhost:3307` if needed.
 

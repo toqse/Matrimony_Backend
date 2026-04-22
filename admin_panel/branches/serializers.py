@@ -21,6 +21,11 @@ class BranchSerializer(serializers.ModelSerializer):
     def validate_name(self, value):
         if len(value) < 3:
             raise serializers.ValidationError("Name too short")
+        qs = Branch.objects.filter(name__iexact=value.strip(), is_deleted=False)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Branch with this name already exists")
         return value
 
     def validate_phone(self, value):
@@ -34,6 +39,15 @@ class BranchSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Phone number already registered to another branch"
             )
+        return value
+
+    def validate_email(self, value):
+        value = (value or "").strip().lower()
+        qs = Branch.objects.filter(email__iexact=value, is_deleted=False)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Email already registered to another branch")
         return value
 
     def create(self, validated_data):

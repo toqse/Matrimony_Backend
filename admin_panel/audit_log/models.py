@@ -21,6 +21,8 @@ class AuditLog(TimeStampedModel):
     ACTION_PAYMENT_CREATE = "payment_create"
     ACTION_OTP_VERIFY = "otp_verify"
     ACTION_PROFILE_UPDATE = "profile_update"
+    ACTION_CREATE_PROFILE = "create_profile"
+    ACTION_UPDATE_PROFILE = "update_profile"
 
     ACTION_PROFILE_VERIFY = "profile_verify"
     ACTION_PROFILE_UNVERIFY = "profile_unverify"
@@ -31,6 +33,13 @@ class AuditLog(TimeStampedModel):
     ACTION_SUBSCRIPTION_UPDATE = "subscription_update"
     ACTION_OTHER = "other"
 
+    ACTION_TYPE_CREATE_PROFILE = "create_profile"
+    ACTION_TYPE_UPDATE_PROFILE = "update_profile"
+    ACTION_TYPE_CHOICES = (
+        (ACTION_TYPE_CREATE_PROFILE, "Create Profile"),
+        (ACTION_TYPE_UPDATE_PROFILE, "Update Profile"),
+    )
+
     ACTION_CHOICES = (
         (ACTION_CREATE, "Create"),
         (ACTION_UPDATE, "Update"),
@@ -38,6 +47,8 @@ class AuditLog(TimeStampedModel):
         (ACTION_PAYMENT_CREATE, "Payment Create"),
         (ACTION_OTP_VERIFY, "OTP Verify"),
         (ACTION_PROFILE_UPDATE, "Profile Update"),
+        (ACTION_CREATE_PROFILE, "Create Profile"),
+        (ACTION_UPDATE_PROFILE, "Update Profile"),
         (ACTION_PROFILE_VERIFY, "Profile Verified"),
         (ACTION_PROFILE_UNVERIFY, "Profile Unverified"),
         (ACTION_COMMISSION_CREATE, "Commission Created"),
@@ -64,6 +75,10 @@ class AuditLog(TimeStampedModel):
     old_value = models.JSONField(null=True, blank=True)
     new_value = models.JSONField(null=True, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    branch_name = models.CharField(max_length=150, blank=True)
+    staff_name = models.CharField(max_length=150, blank=True)
+    target_profile_name = models.CharField(max_length=200, blank=True)
+    action_type = models.CharField(max_length=20, blank=True, choices=ACTION_TYPE_CHOICES)
 
     class Meta:
         db_table = "admin_audit_log"
