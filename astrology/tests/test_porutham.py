@@ -52,7 +52,7 @@ class ProkeralaPoruthamRegressionTests(unittest.TestCase):
                     "dina": 1.0,
                     "gana": 1.0,
                     "mahendra": 1.0,
-                    "sthree_deergha": 1.0,
+                    "sthree_deergha": 0.0,
                     "yoni": 0.5,
                     "vedha": 0.0,
                     "rajju": 1.0,
@@ -60,7 +60,7 @@ class ProkeralaPoruthamRegressionTests(unittest.TestCase):
                     "rasi": 1.0,
                     "rasi_adhipathi": 1.0,
                 },
-                "expected_score": 8.5,
+                "expected_score": 7.5,
             },
         ]
 

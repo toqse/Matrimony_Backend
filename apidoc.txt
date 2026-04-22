@@ -11,6 +11,12 @@ Admin Subscriptions: /api/v1/admin/subscriptions/ | Staff Subscriptions: /api/v1
 Profile Base: /api/v1/profile/
 Master Base: /api/v1/master/
 Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt)
+Horoscope Management (Admin JWT, same paths under each base; data scoped by role):
+  Admin: /api/v1/admin/horoscope/  |  Staff: /api/v1/staff/horoscope/  |  Branch Manager: /api/v1/branch/horoscope/
+  Endpoints: GET summary/  |  GET records/?search=&branch_id=&page=&page_size=  |  GET records/by-matri/<matri_id>/
+  |  GET records/<user_uuid>/  |  POST records/<user_uuid>/regenerate/  |  POST porutham/  (body: bride_profile_id, groom_profile_id; no plan quota)
+  |  GET jathakam-pdfs/
+  Chart refresh uses the same pipeline as member APIs (horoscope_runtime). match_calculations KPI sums UserPlan.horoscope_used for users in scope.
 
 --- Authentication ---
 All authenticated endpoints require header: Authorization: Bearer <access_token>

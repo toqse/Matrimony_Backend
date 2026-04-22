@@ -38,7 +38,10 @@ from .serializers import (
 from .services.chart_service import generate_chart_image
 from .services.generate_ui_service import build_match_ui, build_person_card, resolve_bride_groom_horoscopes
 from .services.match_ui_copy import generate_ui_config
-from .services.horoscope_service import generate_horoscope_payload
+from .services.horoscope_runtime import (
+    create_or_update_horoscope,
+    resolve_horoscope_for_profile,
+)
 from .services.jathakam_pdf_service import build_jathakam_pdf
 from .services.match_report_service import build_match_report_pdf
 from .services.razorpay_pdf_orders import (
@@ -61,51 +64,6 @@ from .services.public_url_signing import (
     verify_match_report_access,
     verify_pdf_credit_access,
 )
-from .services.utils import build_birth_input_hash
-
-
-def _profile_birth_inputs(profile: UserProfile):
-    dob = getattr(profile.user, 'dob', None)
-    tob = getattr(profile, 'time_of_birth', None)
-    pob = getattr(profile, 'place_of_birth', '')
-    if not dob or not tob or not pob:
-        return None
-    return dob, tob, pob
-
-
-def _create_or_update_horoscope(profile: UserProfile):
-    birth_inputs = _profile_birth_inputs(profile)
-    if not birth_inputs:
-        raise ValueError('Profile birth details are incomplete.')
-
-    dob, tob, pob = birth_inputs
-    payload = generate_horoscope_payload(dob, tob, pob)
-    horoscope, _ = Horoscope.objects.update_or_create(
-        profile=profile,
-        defaults=payload,
-    )
-    return horoscope
-
-
-def _resolve_horoscope_for_profile(profile: UserProfile) -> Horoscope:
-    """
-    Load stored horoscope or create/refresh from profile birth inputs.
-    Raises ValueError('Birth details not available.') if no row exists and inputs are incomplete.
-    """
-    horoscope = Horoscope.objects.filter(profile=profile).first()
-    birth_inputs = _profile_birth_inputs(profile)
-    if horoscope is None:
-        if not birth_inputs:
-            raise ValueError('Birth details not available.')
-        return _create_or_update_horoscope(profile)
-    if birth_inputs:
-        dob, tob, pob = birth_inputs
-        current_hash = build_birth_input_hash(dob, tob, pob)
-        if horoscope.birth_input_hash != current_hash:
-            return _create_or_update_horoscope(profile)
-    return horoscope
-
-
 def _chart_absolute_url(request, profile_id: int, style: str = 'south') -> str:
     rel = reverse('astrology:horoscope_chart', kwargs={'profile_id': profile_id})
     query = urlencode({
@@ -201,7 +159,7 @@ class GenerateHoroscopeView(APIView):
         UserProfile.objects.get_or_create(user=user, defaults={})
         profile = UserProfile.objects.select_related('user').get(user=user)
         try:
-            horoscope = _create_or_update_horoscope(profile)
+            horoscope = create_or_update_horoscope(profile)
         except ValueError as exc:
             return Response(
                 {'success': False, 'error': {'code': 400, 'message': str(exc)}},
@@ -231,7 +189,7 @@ class GenerateHoroscopeView(APIView):
                 UserProfile.objects.get_or_create(user=partner_user, defaults={})
                 partner_profile = UserProfile.objects.select_related('user').get(user=partner_user)
                 try:
-                    _create_or_update_horoscope(partner_profile)
+                    create_or_update_horoscope(partner_profile)
                 except ValueError:
                     pass
                 partner_h = (
@@ -355,7 +313,7 @@ class HoroscopeDetailView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            horoscope = _resolve_horoscope_for_profile(profile)
+            horoscope = resolve_horoscope_for_profile(profile)
         except ValueError as exc:
             return Response(
                 {'success': False, 'error': {'code': 400, 'message': str(exc)}},
@@ -375,7 +333,7 @@ class HoroscopeMeView(APIView):
         UserProfile.objects.get_or_create(user=request.user, defaults={})
         profile = UserProfile.objects.select_related('user').get(user=request.user)
         try:
-            horoscope = _resolve_horoscope_for_profile(profile)
+            horoscope = resolve_horoscope_for_profile(profile)
         except ValueError as exc:
             return Response(
                 {'success': False, 'error': {'code': 400, 'message': str(exc)}},
@@ -853,7 +811,7 @@ def _serve_pdf_by_signed_credit(request, credit_id: int, expected_product: str, 
         user = credit.user
         profile = UserProfile.objects.select_related('user').get(user=user)
         try:
-            horoscope = _resolve_horoscope_for_profile(profile)
+            horoscope = resolve_horoscope_for_profile(profile)
         except ValueError as exc:
             return None, Response(
                 {'success': False, 'error': {'code': 400, 'message': str(exc)}},
@@ -893,7 +851,7 @@ def _consume_credit_and_build_pdf(request, product: str, builder):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            horoscope = _resolve_horoscope_for_profile(profile)
+            horoscope = resolve_horoscope_for_profile(profile)
         except ValueError as exc:
             return None, Response(
                 {'success': False, 'error': {'code': 400, 'message': str(exc)}},

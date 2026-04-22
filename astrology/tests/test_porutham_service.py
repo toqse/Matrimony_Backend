@@ -180,7 +180,7 @@ class PoruthamServiceTests(unittest.TestCase):
         self.assertAlmostEqual(out['score'], round(s, 2), places=2)
 
     def test_gana_is_derived_from_nakshatra_when_available(self):
-        # Pair not in PAIR_POINT_OVERRIDES so gana comes from NAKSHATRA_GANA (horoscope gana ignored).
+        # Pair not in PAIR_POINT_OVERRIDES so gana comes from nakshatra_data (horoscope gana ignored).
         bride = _h(nakshatra='Bharani', gana='Deva')
         groom = _h(nakshatra='Ashwini', gana='Deva')
         out = calculate_porutham(bride, groom)
