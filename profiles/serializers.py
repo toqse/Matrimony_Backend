@@ -790,6 +790,26 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
     employment_status = serializers.CharField(required=False, allow_blank=True)
     occupation_id = serializers.IntegerField(required=False, allow_null=True)
     annual_income_id = serializers.IntegerField(required=False, allow_null=True)
+    employment = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    # Backward/forward compatible: allow clients to send master "name" strings
+    # instead of IDs (UI often deals with labels).
+    highest_education = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    education_subject = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    occupation = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    annual_income = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    def _resolve_active_name_to_id(self, model, label: str, *, field_name: str) -> int:
+        cleaned = (label or '').strip()
+        if not cleaned:
+            raise serializers.ValidationError({field_name: 'This field may not be blank.'})
+
+        qs = model.objects.filter(name__iexact=cleaned, is_active=True)
+        count = qs.count()
+        if count == 1:
+            return int(qs.values_list('id', flat=True).first())
+        if count == 0:
+            raise serializers.ValidationError({field_name: f'Invalid {field_name}.'})
+        raise serializers.ValidationError({field_name: f'Ambiguous {field_name}; multiple matches found.'})
 
     def validate_highest_education_id(self, v):
         if v is None:
@@ -824,6 +844,49 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
         return v
 
     def validate(self, attrs):
+        # Allow either *_id or string label. If both are provided, *_id wins.
+        from master.models import Education, EducationSubject, Occupation, IncomeRange
+
+        # Accept `employment` alias for `employment_status`
+        if 'employment_status' not in attrs and 'employment' in attrs:
+            attrs['employment_status'] = attrs.pop('employment')
+
+        if attrs.get('highest_education_id') is None and 'highest_education' in attrs:
+            v = attrs.pop('highest_education')
+            if v.strip() == '':
+                attrs['highest_education_id'] = None
+            else:
+                attrs['highest_education_id'] = self._resolve_active_name_to_id(
+                    Education, v, field_name='highest_education'
+                )
+
+        if attrs.get('education_subject_id') is None and 'education_subject' in attrs:
+            v = attrs.pop('education_subject')
+            if v.strip() == '':
+                attrs['education_subject_id'] = None
+            else:
+                attrs['education_subject_id'] = self._resolve_active_name_to_id(
+                    EducationSubject, v, field_name='education_subject'
+                )
+
+        if attrs.get('occupation_id') is None and 'occupation' in attrs:
+            v = attrs.pop('occupation')
+            if v.strip() == '':
+                attrs['occupation_id'] = None
+            else:
+                attrs['occupation_id'] = self._resolve_active_name_to_id(
+                    Occupation, v, field_name='occupation'
+                )
+
+        if attrs.get('annual_income_id') is None and 'annual_income' in attrs:
+            v = attrs.pop('annual_income')
+            if v.strip() == '':
+                attrs['annual_income_id'] = None
+            else:
+                attrs['annual_income_id'] = self._resolve_active_name_to_id(
+                    IncomeRange, v, field_name='annual_income'
+                )
+
         subject_id = attrs.get('education_subject_id')
         if subject_id is None:
             return attrs
