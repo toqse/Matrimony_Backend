@@ -73,10 +73,6 @@
       font-size: 11px; font-weight: 700; color: #c0392b;
       font-family: 'Noto Sans Malayalam', 'Manjari', 'Meera', system-ui, sans-serif;
     }
-    .planet-label.ml-off {
-      font-family: system-ui, sans-serif;
-      font-size: 10px;
-    }
     .nakshatra-info { margin-top: 8px; font-size: 12px; line-height: 1.35; color: #333; }
     .nak-name { font-weight: 600; }
     .nak-sub { color: #555; }
@@ -162,8 +158,6 @@
 <script>
   const BRIDE_PROFILE_ID = Number('{{ bride_profile_id|default_if_none:"" }}') || null;
   const GROOM_PROFILE_ID = Number('{{ groom_profile_id|default_if_none:"" }}') || null;
-  const USE_MALAYALAM = '{{ use_malayalam|yesno:"true,false,true" }}' !== 'false';
-
   // Display-only Malayalam labels. Keep API values and placement logic unchanged.
   const PLANET_MLY = {
     Lagna: 'ല',
@@ -177,19 +171,6 @@
     Rahu: 'ര',
     Ketu: 'കേ'
   };
-  const PLANET_EN = {
-    Lagna: 'La',
-    Sun: 'Su',
-    Moon: 'Mo',
-    Mars: 'Ma',
-    Mercury: 'Me',
-    Jupiter: 'Ju',
-    Venus: 'Ve',
-    Saturn: 'Sa',
-    Rahu: 'Ra',
-    Ketu: 'Ke',
-  };
-
   function authHeaders() {
     const headers = { 'Content-Type': 'application/json' };
     const t = localStorage.getItem('access') || localStorage.getItem('access_token') || localStorage.getItem('token');
@@ -203,7 +184,7 @@
     }
     const base = (window.API_BASE || '') + '/api/v1/astrology/match-chart/';
     const response = await fetch(
-      base + BRIDE_PROFILE_ID + '/' + GROOM_PROFILE_ID + '/' + chartType + '/',
+      base + BRIDE_PROFILE_ID + '/' + GROOM_PROFILE_ID + '/' + chartType + '/?lang=ml',
       { headers: authHeaders(), credentials: 'same-origin' }
     );
     if (!response.ok) {
@@ -214,8 +195,7 @@
   }
 
   function planetLabel(name) {
-    if (USE_MALAYALAM) return PLANET_MLY[name] || name;
-    return PLANET_EN[name] || name;
+    return PLANET_MLY[name] || name;
   }
 
   function renderChart(containerId, planetsData, personData) {
@@ -228,7 +208,7 @@
       if (!cell || !Array.isArray(planets)) continue;
       planets.forEach((planet) => {
         const span = document.createElement('span');
-        span.className = 'planet-label' + (USE_MALAYALAM ? '' : ' ml-off');
+        span.className = 'planet-label';
         span.textContent = planetLabel(planet);
         cell.appendChild(span);
       });
