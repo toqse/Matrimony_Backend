@@ -38,7 +38,6 @@ from .serializers import (
 )
 from .services.chart_service import generate_chart_image
 from .services.chart_url import build_horoscope_chart_absolute_url
-from .services.chart_malayalam_data import LAGNA_MLY, PLANET_MLY
 from .services.generate_ui_service import build_match_ui, build_person_card, resolve_bride_groom_horoscopes
 from .services.match_ui_copy import generate_ui_config
 from .services.horoscope_runtime import (
@@ -166,26 +165,6 @@ def _dasa_fields(horoscope: Horoscope) -> tuple[str, str]:
     if not dasa:
         return '', ''
     return str(dasa.get('lord') or ''), str(dasa.get('remaining_label') or '')
-
-
-def _malayalam_planet_labels(planets: dict) -> dict:
-    """Display-only transform for chart APIs: English planet labels -> Malayalam glyphs."""
-    eng_to_ml = {
-        'Sun': PLANET_MLY.get('sun', 'Sun'),
-        'Moon': PLANET_MLY.get('moon', 'Moon'),
-        'Mars': PLANET_MLY.get('mars', 'Mars'),
-        'Mercury': PLANET_MLY.get('mercury', 'Mercury'),
-        'Jupiter': PLANET_MLY.get('jupiter', 'Jupiter'),
-        'Venus': PLANET_MLY.get('venus', 'Venus'),
-        'Saturn': PLANET_MLY.get('saturn', 'Saturn'),
-        'Rahu': PLANET_MLY.get('rahu', 'Rahu'),
-        'Ketu': PLANET_MLY.get('ketu', 'Ketu'),
-        'Lagna': LAGNA_MLY,
-    }
-    out = {}
-    for rasi, items in (planets or {}).items():
-        out[rasi] = [eng_to_ml.get(name, name) for name in (items or [])]
-    return out
 
 
 def _generate_is_self_only(request, matri_id: str, partner_mid: str) -> bool:
@@ -1082,7 +1061,7 @@ def get_chart_data(request, profile_id, chart_type):
         'lagna': horoscope.lagna,
         'dasa_lord': dasa_lord,
         'dasa_balance': dasa_balance,
-        'planets': _malayalam_planet_labels(planets),
+        'planets': planets,
     }
     cache.set(cache_key, payload, timeout=86400)
     return Response(payload)
@@ -1147,7 +1126,7 @@ def get_match_chart_data(request, bride_id, groom_id, chart_type):
             'lagna': horo.lagna,
             'dasa_lord': dasa_lord,
             'dasa_balance': dasa_balance,
-            'planets': _malayalam_planet_labels(planets),
+            'planets': planets,
         }
 
     payload = {

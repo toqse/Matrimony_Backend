@@ -160,22 +160,22 @@
 </div>
 
 <script>
-  const BRIDE_PROFILE_ID = {{ bride_profile_id|default:"null" }};
-  const GROOM_PROFILE_ID = {{ groom_profile_id|default:"null" }};
-  const USE_MALAYALAM = {% if use_malayalam == False %}false{% else %}true{% endif %};
+  const BRIDE_PROFILE_ID = Number('{{ bride_profile_id|default_if_none:"" }}') || null;
+  const GROOM_PROFILE_ID = Number('{{ groom_profile_id|default_if_none:"" }}') || null;
+  const USE_MALAYALAM = '{{ use_malayalam|yesno:"true,false,true" }}' !== 'false';
 
-  // Must match astrology/services/chart_malayalam_data.PLANET_MLY + LAGNA_MLY exactly.
+  // Display-only Malayalam labels. Keep API values and placement logic unchanged.
   const PLANET_MLY = {
-    Lagna: 'ലഗ്നം',
-    Sun: 'ര',
+    Lagna: 'ല',
+    Sun: 'സൂ',
     Moon: 'ച',
-    Mars: 'കു',
+    Mars: 'മ',
     Mercury: 'ബു',
     Jupiter: 'ഗു',
     Venus: 'ശു',
     Saturn: 'ശ',
-    Rahu: 'റാ',
-    Ketu: 'കേ',
+    Rahu: 'ര',
+    Ketu: 'കേ'
   };
   const PLANET_EN = {
     Lagna: 'La',

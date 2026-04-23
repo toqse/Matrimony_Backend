@@ -608,10 +608,9 @@ Success 200 (single chart):
   }
 }
 
-- **planets**: object keys are **Rasi** names (`Mesha`, `Vrishabha`, … `Meena`). Values are arrays of Malayalam
-  display labels from `astrology.services.chart_malayalam_data`:
-  **ര**, **ച**, **കു**, **ബു**, **ഗു**, **ശു**, **ശ**, **റാ**, **കേ**, and **ലഗ്നം**.
-  Only signs that contain at least one body are present. **ലഗ്നം** is listed first inside its sign when present.
+- **planets**: object keys are **Rasi** names (`Mesha`, `Vrishabha`, … `Meena`). Values are arrays of English
+  labels: **Sun**, **Moon**, **Mars**, **Mercury**, **Jupiter**, **Venus**, **Saturn**, **Rahu**, **Ketu**, **Lagna**.
+  Only signs that contain at least one body are present. **Lagna** is listed first inside its sign when present.
 - **dasa_lord** / **dasa_balance**: from Vimshottari mahadasha state (same source as **primary.center_panel.dasa**
   on POST generate); empty strings if moon longitude is missing.
 
