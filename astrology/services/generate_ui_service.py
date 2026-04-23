@@ -141,6 +141,7 @@ def build_person_card(profile, horoscope, chart_url: str) -> dict:
         'name': (user.name or '').strip(),
         'role': role_label(getattr(user, 'gender', '') or ''),
         'profile_id': profile.pk,
+        'horoscope_id': horoscope.pk,
         'gender': user.gender or '',
         'nakshatra': nk,
         'nakshatra_label': nk_label,
@@ -209,6 +210,10 @@ def build_match_ui(
     return {
         'bride_matri_id': getattr(bride_h.profile.user, 'matri_id', '') or '',
         'groom_matri_id': getattr(groom_h.profile.user, 'matri_id', '') or '',
+        'bride_profile_id': bride_h.profile_id,
+        'groom_profile_id': groom_h.profile_id,
+        'bride_horoscope_id': bride_h.pk,
+        'groom_horoscope_id': groom_h.pk,
         'poruthams': p,
         'matched_poruthams': matched_poruthams,
         'score': score,

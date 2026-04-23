@@ -10,7 +10,7 @@ Staff My Commissions: /api/v1/staff/commissions/ | Staff My Salary: /api/v1/staf
 Admin Subscriptions: /api/v1/admin/subscriptions/ | Staff Subscriptions: /api/v1/staff/subscriptions/ (admin_panel.staff_subscriptions) | Admin Commissions: /api/v1/admin/commissions/ | Branch Manager Commissions (approval): /api/v1/branch/commissions/ | Branch Manager My Commissions: /api/v1/branch/my-commissions/ | Branch Manager My Profiles: /api/v1/branch/my-profiles/ | Admin Payroll: /api/v1/admin/payroll/ | Branch Manager Payroll: /api/v1/branch/payroll/ | Legacy staff payroll list: /api/v1/staff/payroll/ | Admin Enquiries: /api/v1/admin/enquiries/ | Staff Enquiries: /api/v1/staff/enquiries/ | Branch Manager Enquiries: /api/v1/branch/enquiries/
 Profile Base: /api/v1/profile/
 Master Base: /api/v1/master/
-Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt)
+Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt; includes GET chart/<profile_id>/[chart_type]/ and GET match-chart/<bride_id>/<groom_id>/[chart_type]/ for South Indian Rasi / Navamsa / Bhava cell JSON — see horoscope_apidoc §4b)
 Horoscope Management (Admin JWT, same paths under each base; data scoped by role):
   Admin: /api/v1/admin/horoscope/  |  Staff: /api/v1/staff/horoscope/  |  Branch Manager: /api/v1/branch/horoscope/
   Endpoints: GET summary/  |  GET records/?search=&branch_id=&page=&page_size=  |  GET records/by-matri/<matri_id>/

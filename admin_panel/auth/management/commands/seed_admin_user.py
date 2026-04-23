@@ -11,12 +11,21 @@ class Command(BaseCommand):
         parser.add_argument("mobile", type=str, help="10 digit Indian mobile number (e.g. 9999999999)")
         parser.add_argument("--role", type=str, default=AdminUser.ROLE_ADMIN, help="admin|branch_manager|staff")
         parser.add_argument("--name", type=str, default="Seed Admin", help="Admin user's display name")
+        parser.add_argument("--email", type=str, default="", help="Optional email for this admin user")
+        parser.add_argument(
+            "--branch-id",
+            type=int,
+            default=None,
+            help="Optional Branch ID (useful for branch_manager/staff). Omit for admin.",
+        )
         parser.add_argument("--inactive", action="store_true", help="Create/update as inactive (is_active=False)")
 
     def handle(self, *args, **options):
         mobile_10 = (options["mobile"] or "").strip()
         role = (options["role"] or "").strip().lower()
         name = (options["name"] or "").strip() or "Seed Admin"
+        email = (options["email"] or "").strip()
+        branch_id = options.get("branch_id")
         is_active = not bool(options["inactive"])
 
         if role not in {c[0] for c in AdminUser.ROLE_CHOICES}:
@@ -31,17 +40,20 @@ class Command(BaseCommand):
 
         user, created = AdminUser.objects.get_or_create(
             mobile=mobile_e164,
-            defaults={"role": role, "name": name, "is_active": is_active},
+            defaults={"role": role, "name": name, "email": email, "branch_id": branch_id, "is_active": is_active},
         )
         if not created:
             user.role = role
             user.name = name
+            user.email = email
+            user.branch_id = branch_id
             user.is_active = is_active
-            user.save(update_fields=["role", "name", "is_active", "updated_at"])
+            user.save(update_fields=["role", "name", "email", "branch", "is_active", "updated_at"])
 
         action = "Created" if created else "Updated"
         self.stdout.write(
             self.style.SUCCESS(
-                f"{action} AdminUser: mobile={user.mobile}, role={user.role}, name={user.name}, is_active={user.is_active}"
+                f"{action} AdminUser: mobile={user.mobile}, role={user.role}, name={user.name}, "
+                f"email={user.email or '-'}, branch_id={user.branch_id or '-'}, is_active={user.is_active}"
             )
         )

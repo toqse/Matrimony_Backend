@@ -10,6 +10,7 @@ from .nakshatra_data import NAKSHATRA_DATA
 from .utils import (
     PLANET_FULL_NAMES,
     PLANET_NAME_MAP,
+    RASI_NAMES,
     build_birth_input_hash,
     nakshatra_index_from_longitude,
     nakshatra_pada_from_longitude,
@@ -241,3 +242,127 @@ def generate_horoscope_payload(date_of_birth, time_of_birth, place_of_birth):
         use_sidereal,
     )
     return payload
+
+
+class HoroscopeService:
+    """
+    Chart helpers from a persisted Horoscope row (sidereal grahanila JSON).
+    Planet keys in chart dicts match HoroscopeSerializer / grahanila full_name labels.
+    """
+
+    NAVAMSA_START = {
+        0: 0,
+        1: 9,
+        2: 6,
+        3: 3,
+        4: 0,
+        5: 9,
+        6: 6,
+        7: 3,
+        8: 0,
+        9: 9,
+        10: 6,
+        11: 3,
+    }
+
+    _PLANET_ORDER = (
+        'sun',
+        'moon',
+        'mars',
+        'mercury',
+        'jupiter',
+        'venus',
+        'saturn',
+        'rahu',
+        'ketu',
+    )
+
+    def __init__(self, horoscope):
+        self._horoscope = horoscope
+
+    def get_lagna_longitude(self):
+        g = self._horoscope.grahanila or {}
+        lon = g.get('lagna_longitude')
+        if lon is None:
+            return None
+        return float(lon)
+
+    def get_planet_positions(self):
+        """
+        Sidereal longitudes from stored grahanila (Lahiri already applied at generation).
+        Keys: English full names as used by chart APIs (Sun, Moon, …).
+        """
+        planets = (self._horoscope.grahanila or {}).get('planets') or {}
+        out = {}
+        for key in self._PLANET_ORDER:
+            row = planets.get(key)
+            if not isinstance(row, dict):
+                continue
+            lon = row.get('longitude')
+            if lon is None:
+                continue
+            label = PLANET_FULL_NAMES.get(key, key.replace('_', ' ').title())
+            out[label] = {'longitude': float(lon)}
+        return out
+
+    def get_rasi_chart(self):
+        result = {r: [] for r in RASI_NAMES}
+        positions = self.get_planet_positions()
+        lagna_long = self.get_lagna_longitude()
+        if lagna_long is None:
+            return {}
+
+        for planet_name, data in positions.items():
+            longitude = data.get('longitude', 0.0)
+            rasi_index = int(longitude / 30.0) % 12
+            rasi = RASI_NAMES[rasi_index]
+            result[rasi].append(planet_name)
+
+        lagna_rasi_index = int(lagna_long / 30.0) % 12
+        result[RASI_NAMES[lagna_rasi_index]].insert(0, 'Lagna')
+
+        return {k: v for k, v in result.items() if v}
+
+    def get_navamsa_chart(self):
+        result = {r: [] for r in RASI_NAMES}
+        positions = self.get_planet_positions()
+        lagna_long = self.get_lagna_longitude()
+        if lagna_long is None:
+            return {}
+
+        for planet_name, data in positions.items():
+            longitude = data.get('longitude', 0.0)
+            rasi_index = int(longitude / 30.0) % 12
+            position_in_rasi = longitude % 30.0
+            navamsa_pada = int(position_in_rasi / (30.0 / 9.0))
+            navamsa_rasi_index = (self.NAVAMSA_START[rasi_index] + navamsa_pada) % 12
+            rasi = RASI_NAMES[navamsa_rasi_index]
+            result[rasi].append(planet_name)
+
+        lagna_rasi_idx = int(lagna_long / 30.0) % 12
+        lagna_pos = lagna_long % 30.0
+        lagna_pada = int(lagna_pos / (30.0 / 9.0))
+        lagna_navamsa_idx = (self.NAVAMSA_START[lagna_rasi_idx] + lagna_pada) % 12
+        result[RASI_NAMES[lagna_navamsa_idx]].insert(0, 'Lagna')
+
+        return {k: v for k, v in result.items() if v}
+
+    def get_bhava_chart(self):
+        result = {r: [] for r in RASI_NAMES}
+        positions = self.get_planet_positions()
+        lagna_long = self.get_lagna_longitude()
+        if lagna_long is None:
+            return {}
+
+        lagna_rasi_index = int(lagna_long / 30.0) % 12
+        result[RASI_NAMES[lagna_rasi_index]].insert(0, 'Lagna')
+
+        for planet_name, data in positions.items():
+            longitude = data.get('longitude', 0.0)
+            diff = (longitude - lagna_long + 360.0) % 360.0
+            house_number = int(diff / 30.0)
+            house_rasi_index = (lagna_rasi_index + house_number) % 12
+            rasi = RASI_NAMES[house_rasi_index]
+            result[rasi].append(planet_name)
+
+        return {k: v for k, v in result.items() if v}

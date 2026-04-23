@@ -26,7 +26,9 @@ Without an active plan, a member may still:
   (or only empty partner), to compute/refresh their own horoscope only.
 - GET /api/v1/astrology/horoscope/<profile_id>/ when profile_id is their own UserProfile id.
 
-With an active plan, all astrology endpoints below are available subject to horoscope match quota.
+With an active plan, all astrology endpoints below are available subject to horoscope match quota,
+except **chart JSON** APIs in §4b (GET …/chart/… and …/match-chart/…): those require JWT only and do **not**
+consume horoscope match quota; they use ownership rules described in §4b instead of the plan gate.
 
 Horoscope match quota (Plan.horoscope_match_limit on the user's plan; 0 = unlimited):
 - Each successful compatibility action decrements one unit from horoscope_used on UserPlan:
@@ -223,8 +225,8 @@ Behavior:
     missing or both the same, defaults to bride = primary matri_id, groom = partner_matri_id (same as porutham
     ordering used in **match** when genders are ambiguous).
 - If partner omitted or partner horoscope cannot be built: partner_chart_url and match_report_pdf_url are null.
-- **primary**: UI card for the requested matri_id (name, role, chart_url, center_panel with nakshatra labels,
-  pada, Vimshottari dasa lord + remaining, kuja flag, etc.).
+- **primary**: UI card for the requested matri_id (name, role, **profile_id**, **horoscope_id**, chart_url,
+  center_panel with nakshatra labels, pada, Vimshottari dasa lord + remaining, kuja flag, etc.).
 - **partner**: same shape as primary when a partner horoscope exists; otherwise null.
 - **match**: when partner horoscope exists, porutham-based checklist (Rasi, Rasyadhip, Vasyam, Deergham, Dinam,
   Mahendra, Ganam, Yoni, Rajju Dosham, Vedham) plus Kuja Dosham (matched when both have same kuja-dosham flag),
@@ -334,6 +336,7 @@ Success 200:
       "name": "Example Bride",
       "role": "Bride",
       "profile_id": 123,
+      "horoscope_id": 9001,
       "gender": "F",
       "nakshatra": "Pushya",
       "nakshatra_label": "Pooyam",
@@ -367,6 +370,10 @@ Success 200:
     "match": {
       "bride_matri_id": "AM100001",
       "groom_matri_id": "AM100002",
+      "bride_profile_id": 123,
+      "groom_profile_id": 456,
+      "bride_horoscope_id": 9001,
+      "groom_horoscope_id": 9002,
       "poruthams": { "dina": true, "gana": true, "...": "..." },
       "matched_poruthams": ["dina", "gana", "rasi", "..."],
       "score": 8.0,
@@ -545,6 +552,112 @@ Error 403:
 - No active plan or horoscope match quota exhausted.
 
 --------------------------------------------------------------------------------
+4b) CHART DATA JSON (SOUTH INDIAN RASI / NAVAMSA / BHAVA — MATCHING UI)
+--------------------------------------------------------------------------------
+Purpose:
+- Returns planet placement per **Rasi name** for rendering a **fixed-layout South Indian** square chart in HTML/JS
+  (separate from the PNG chart in §5). Same sidereal **grahanila** as HoroscopeSerializer (Lahiri when sidereal).
+- **chart_type** `rasi` = D1 (longitude sign); `amsakom` = D9 Navamsa (Parashari-style navamsa from sign + ninth);
+  `bhavam` = whole-sign houses counted from Lagna (house 1 = Lagna rasi).
+
+Auth: **JWT required** (`Authorization: Bearer <access_token>`).
+
+Quota / plan:
+- Does **not** decrement **horoscope_used** (no horoscope match quota consumption).
+- Does **not** require an active subscription. Access is limited by **ownership** (and staff), see below.
+
+Identifiers (important):
+- **profile_id**, **bride_id**, and **groom_id** in these URLs are **UserProfile primary keys** — the same integers
+  as **bride_id** / **groom_id** in POST /api/v1/astrology/porutham/ and **profile_id** in birth-detail-candidates
+  results (not Horoscope row pk, not User pk).
+
+Endpoints:
+
+1) GET /api/v1/astrology/chart/<profile_id>/<chart_type>/
+   - **chart_type**: `rasi` | `amsakom` | `bhavam`
+2) GET /api/v1/astrology/chart/<profile_id>/
+   - Same as (1) with **chart_type** defaulted to `rasi`.
+
+3) GET /api/v1/astrology/match-chart/<bride_id>/<groom_id>/<chart_type>/
+4) GET /api/v1/astrology/match-chart/<bride_id>/<groom_id>/
+   - **bride_id** / **groom_id**: UserProfile IDs for the pair (same convention as porutham POST body).
+
+Authorization rules:
+- Single chart (1–2): allowed if the caller is **Django staff** OR the horoscope’s **profile.user** is the caller.
+- Match chart (3–4): allowed if the caller is **staff** OR the caller’s user owns **either** profile
+  (`Horoscope.profile.user_id == request.user.id` for bride or groom row).
+
+Caching:
+- Server caches JSON responses up to **24 hours**; cache keys include horoscope **updated_at** so regenerating
+  a horoscope invalidates cached chart data.
+
+Success 200 (single chart):
+- **Plain JSON** (not wrapped in `{ "success": true, "data": … }` — same style as simple DRF `@api_view` returns).
+{
+  "chart_type": "rasi",
+  "nakshatra": "Dhanishta",
+  "nakshatra_pada": 1,
+  "rasi": "Makara",
+  "lagna": "Kanya",
+  "dasa_lord": "SANI",
+  "dasa_balance": "03y 06m 01d",
+  "planets": {
+    "Mesha": ["Sun", "Mars"],
+    "Makara": ["Lagna", "Moon"],
+    "Tula": ["Venus"]
+  }
+}
+
+- **planets**: object keys are **Rasi** names (`Mesha`, `Vrishabha`, … `Meena`). Values are arrays of Malayalam
+  display labels from `astrology.services.chart_malayalam_data`:
+  **ര**, **ച**, **കു**, **ബു**, **ഗു**, **ശു**, **ശ**, **റാ**, **കേ**, and **ലഗ്നം**.
+  Only signs that contain at least one body are present. **ലഗ്നം** is listed first inside its sign when present.
+- **dasa_lord** / **dasa_balance**: from Vimshottari mahadasha state (same source as **primary.center_panel.dasa**
+  on POST generate); empty strings if moon longitude is missing.
+
+Success 200 (match chart):
+{
+  "chart_type": "rasi",
+  "bride": {
+    "name": "Sisira",
+    "nakshatra": "Dhanishta",
+    "nakshatra_pada": 1,
+    "rasi": "Makara",
+    "lagna": "Kanya",
+    "dasa_lord": "SANI",
+    "dasa_balance": "03y 06m 01d",
+    "planets": { "Makara": ["Lagna", "Moon"], "Mesha": ["Sun"] }
+  },
+  "groom": {
+    "name": "Unnikrishnan",
+    "nakshatra": "Chitra",
+    "nakshatra_pada": 2,
+    "rasi": "Tula",
+    "lagna": "Mithuna",
+    "dasa_lord": "…",
+    "dasa_balance": "…",
+    "planets": { "Tula": ["Moon"], "…": ["…"] }
+  }
+}
+
+POST **generate** (when **match** is non-null) and **match** payload include IDs for these URLs:
+- **primary.horoscope_id**, **partner.horoscope_id** (Horoscope table pk — informational).
+- **match.bride_profile_id**, **match.groom_profile_id** — use with **match-chart** URLs above.
+- **match.bride_horoscope_id**, **match.groom_horoscope_id** — same Horoscope pks as the card fields (optional
+  for admin/debug; chart routes use **profile_id**).
+
+Error 400:
+- Invalid **chart_type** (must be `rasi`, `amsakom`, or `bhavam`).
+
+Error 403:
+- `{"error": "Not authorized"}` — caller cannot view that horoscope / pair under the rules above.
+
+Error 404:
+- Horoscope row missing for the given **profile_id**, or (match-chart) missing for bride or groom profile.
+- `{"error": "Chart not available. Generate horoscope first."}` when **grahanila** is incomplete (e.g. missing
+  **lagna_longitude** or any of the nine graha longitudes).
+
+--------------------------------------------------------------------------------
 5) HOROSCOPE CHART IMAGE API
 --------------------------------------------------------------------------------
 Endpoint: GET /api/v1/astrology/horoscope/<profile_id>/chart/
@@ -643,8 +756,11 @@ For matching/matches app:
 - Use stored Horoscope model records; avoid recomputing grahanila during match list.
 
 For frontend:
-- Use chart endpoint directly as image source.
-- Cache by URL if profile data unchanged.
+- Use chart PNG endpoint (§5) directly as image source; cache by URL if profile data unchanged.
+- For **tabbed South Indian charts** (Rasi / Amsakom / Bhava) in HTML or native apps, call **§4b** JSON
+  (`GET …/chart/<profile_id>/<chart_type>/` or `GET …/match-chart/<bride_profile_id>/<groom_profile_id>/<chart_type>/`)
+  and map **planets** into the fixed 12-cell layout client-side. Planet labels for Malayalam UI should match
+  `astrology.services.chart_malayalam_data.PLANET_MLY` + **LAGNA_MLY** (same as PNG chart graha symbols).
 
 --------------------------------------------------------------------------------
 8) DEPENDENCIES

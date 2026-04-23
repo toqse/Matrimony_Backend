@@ -19,6 +19,8 @@ from admin_panel.my_profiles.views import _my_profiles_base_queryset
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.models import AstrologyPdfCredit, Horoscope
+from astrology.serializers import HoroscopeSerializer
+from astrology.services.chart_url import build_horoscope_chart_absolute_url
 from astrology.services.generate_ui_service import kuja_dosham_horoscope
 from astrology.services.horoscope_runtime import create_or_update_horoscope
 from astrology.services.porutham_service import calculate_porutham
@@ -244,8 +246,6 @@ def record_detail(users_qs, user_id: UUID) -> dict[str, Any] | None:
     record = build_record_row(user, horo_map)
     horoscope_payload = None
     if h:
-        from astrology.serializers import HoroscopeSerializer
-
         horoscope_payload = HoroscopeSerializer(h).data
     return {"record": record, "horoscope": horoscope_payload}
 
@@ -270,24 +270,51 @@ def regenerate_horoscope(users_qs, user_id: UUID) -> tuple[dict[str, Any] | None
         h = create_or_update_horoscope(profile)
     except ValueError as e:
         return None, str(e)
-    from astrology.serializers import HoroscopeSerializer
-
     return {"horoscope": HoroscopeSerializer(h).data}, None
 
 
-def panel_porutham(users_qs, bride_profile_id: int, groom_profile_id: int) -> tuple[dict | None, str | None]:
+def panel_porutham(
+    users_qs,
+    bride_profile_id: int,
+    groom_profile_id: int,
+    *,
+    request=None,
+    chart_style: str = "south",
+) -> tuple[dict | None, str | None]:
     b_prof = UserProfile.objects.filter(pk=bride_profile_id).select_related("user").first()
     g_prof = UserProfile.objects.filter(pk=groom_profile_id).select_related("user").first()
     if not b_prof or not g_prof:
         return None, "Invalid profile id(s)."
     if not user_in_scope(users_qs, b_prof.user_id) or not user_in_scope(users_qs, g_prof.user_id):
         return None, "One or both profiles are out of scope."
-    bride = Horoscope.objects.filter(profile_id=bride_profile_id).first()
-    groom = Horoscope.objects.filter(profile_id=groom_profile_id).first()
+    bride = (
+        Horoscope.objects.filter(profile_id=bride_profile_id)
+        .select_related("profile__user")
+        .first()
+    )
+    groom = (
+        Horoscope.objects.filter(profile_id=groom_profile_id)
+        .select_related("profile__user")
+        .first()
+    )
     if not bride or not groom:
         return None, "Bride or groom horoscope not found. Regenerate birth charts first."
-    result = calculate_porutham(bride, groom)
-    return result, None
+    porutham = calculate_porutham(bride, groom)
+    # Horoscope payloads first so clients / DevTools show them without scrolling past score fields.
+    payload = {
+        "bride_horoscope": HoroscopeSerializer(bride).data,
+        "groom_horoscope": HoroscopeSerializer(groom).data,
+        **porutham,
+    }
+    if request is not None:
+        style = (chart_style or "south").strip() or "south"
+        payload["bride_chart_url"] = build_horoscope_chart_absolute_url(
+            request, bride_profile_id, style=style
+        )
+        payload["groom_chart_url"] = build_horoscope_chart_absolute_url(
+            request, groom_profile_id, style=style
+        )
+    return payload, None
 
 
 def list_jathakam_pdf_credits(users_qs):

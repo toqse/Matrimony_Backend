@@ -9,7 +9,6 @@ from rest_framework.views import APIView
 
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.permissions import IsAdminUser, IsBranchManagerOnly
-from astrology.serializers import PoruthamResultSerializer
 
 from .permissions import IsPanelStaff
 from .serializers import PanelPoruthamRequestSerializer
@@ -179,20 +178,20 @@ class HoroscopePanelPoruthamView(APIView):
             return err
         ser = PanelPoruthamRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        chart_style = (request.query_params.get("chart_style") or "south").strip() or "south"
         result, msg = horoscope_panel.panel_porutham(
             qs,
             ser.validated_data["bride_profile_id"],
             ser.validated_data["groom_profile_id"],
+            request=request,
+            chart_style=chart_style,
         )
         if msg:
             return Response(
                 {"success": False, "error": {"code": 400, "message": msg}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(
-            {"success": True, "data": PoruthamResultSerializer(result).data},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"success": True, "data": result}, status=status.HTTP_200_OK)
 
 
 class HoroscopePanelJathakamPdfsView(APIView):

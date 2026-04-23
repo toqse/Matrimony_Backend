@@ -10,6 +10,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
     DATABASE_ENGINE=(str, 'sqlite'),
+    JWT_ACCESS_TOKEN_LIFETIME_MINUTES=(int, 180),
+    JWT_REFRESH_TOKEN_LIFETIME_MINUTES=(int, 432000),  # 300 days; same unit as access (minutes)
 )
 
 env_file = BASE_DIR / '.env'
@@ -202,11 +204,13 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
 }
 
-# SimpleJWT
+# SimpleJWT (both lifetimes in minutes; override via env)
 from datetime import timedelta
+_jwt_access_minutes = env('JWT_ACCESS_TOKEN_LIFETIME_MINUTES')
+_jwt_refresh_minutes = env('JWT_REFRESH_TOKEN_LIFETIME_MINUTES')
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=180),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=300),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=_jwt_access_minutes),
+    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=_jwt_refresh_minutes),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'RS256' if env('JWT_PUBLIC_KEY', default='') else 'HS256',

@@ -279,11 +279,17 @@ class VerifyMobileView(APIView):
                 'success': False,
                 'error': {'message': msg},
             }, status=status.HTTP_400_BAD_REQUEST)
-        user, created = User.objects.get_or_create(
-            mobile=mobile,
-            defaults={'is_active': True, 'mobile_verified': True},
-        )
-        if not user.mobile_verified:
+        # Bulk upload may store mobile as 10 digits (or other variants). Avoid creating
+        # a duplicate empty user row by reusing any existing variant.
+        user = get_user_by_mobile_variants(mobile)
+        if not user:
+            user = User.objects.create_user(
+                mobile=mobile,
+                password=User.objects.make_random_password(),
+                is_active=True,
+                mobile_verified=True,
+            )
+        elif not user.mobile_verified or not user.is_active:
             user.mobile_verified = True
             user.is_active = True
             user.save(update_fields=['mobile_verified', 'is_active', 'updated_at'])

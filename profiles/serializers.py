@@ -354,9 +354,10 @@ class BasicDetailsReadSerializer(serializers.Serializer):
     profile_for = serializers.CharField(allow_blank=True, allow_null=True)
 
     def get_gender(self, obj):
-        """Single-letter codes for forms (M / F / O)."""
+        """API-facing gender labels (Male / Female / Other)."""
         g = getattr(obj, 'gender', None)
-        return g if g in ('M', 'F', 'O') else ''
+        mapping = {'M': 'Male', 'F': 'Female', 'O': 'Other'}
+        return mapping.get(g, '')
 
 
 class ReligionDetailsReadSerializer(serializers.Serializer):

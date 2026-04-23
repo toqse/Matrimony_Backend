@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -36,6 +37,8 @@ from .serializers import (
     PoruthamResultSerializer,
 )
 from .services.chart_service import generate_chart_image
+from .services.chart_url import build_horoscope_chart_absolute_url
+from .services.chart_malayalam_data import LAGNA_MLY, PLANET_MLY
 from .services.generate_ui_service import build_match_ui, build_person_card, resolve_bride_groom_horoscopes
 from .services.match_ui_copy import generate_ui_config
 from .services.horoscope_runtime import (
@@ -55,9 +58,10 @@ from .services.razorpay_pdf_orders import (
     verify_payment_signature,
 )
 from .services.thalakuri_pdf_service import build_thalakuri_pdf
+from .services.horoscope_service import HoroscopeService
 from .services.porutham_service import calculate_porutham
+from .services.vimshottari_service import vimshottari_mahadasha_state
 from .services.public_url_signing import (
-    sign_chart_access,
     sign_match_report_access,
     sign_pdf_credit_access,
     verify_chart_access,
@@ -65,12 +69,7 @@ from .services.public_url_signing import (
     verify_pdf_credit_access,
 )
 def _chart_absolute_url(request, profile_id: int, style: str = 'south') -> str:
-    rel = reverse('astrology:horoscope_chart', kwargs={'profile_id': profile_id})
-    query = urlencode({
-        'sig': sign_chart_access(profile_id),
-        'style': style,
-    })
-    return request.build_absolute_uri(f'{rel}?{query}')
+    return build_horoscope_chart_absolute_url(request, profile_id, style=style)
 
 
 def _match_report_absolute_url(request, bride_matri_id: str, groom_matri_id: str) -> str:
@@ -132,6 +131,61 @@ def _horoscope_summary(horoscope: Horoscope) -> dict:
 
 def _current_user_profile_pk(user) -> int | None:
     return UserProfile.objects.filter(user=user).values_list('pk', flat=True).first()
+
+
+def _chart_data_available(horoscope: Horoscope) -> bool:
+    g = horoscope.grahanila or {}
+    if g.get('lagna_longitude') is None:
+        return False
+    planets = g.get('planets') or {}
+    for key in (
+        'sun',
+        'moon',
+        'mars',
+        'mercury',
+        'jupiter',
+        'venus',
+        'saturn',
+        'rahu',
+        'ketu',
+    ):
+        info = planets.get(key)
+        if not isinstance(info, dict) or info.get('longitude') is None:
+            return False
+    return True
+
+
+def _user_can_view_horoscope(user, horoscope: Horoscope) -> bool:
+    if getattr(user, 'is_staff', False):
+        return True
+    return horoscope.profile.user_id == user.id
+
+
+def _dasa_fields(horoscope: Horoscope) -> tuple[str, str]:
+    dasa = vimshottari_mahadasha_state(horoscope, ref_utc=timezone.now())
+    if not dasa:
+        return '', ''
+    return str(dasa.get('lord') or ''), str(dasa.get('remaining_label') or '')
+
+
+def _malayalam_planet_labels(planets: dict) -> dict:
+    """Display-only transform for chart APIs: English planet labels -> Malayalam glyphs."""
+    eng_to_ml = {
+        'Sun': PLANET_MLY.get('sun', 'Sun'),
+        'Moon': PLANET_MLY.get('moon', 'Moon'),
+        'Mars': PLANET_MLY.get('mars', 'Mars'),
+        'Mercury': PLANET_MLY.get('mercury', 'Mercury'),
+        'Jupiter': PLANET_MLY.get('jupiter', 'Jupiter'),
+        'Venus': PLANET_MLY.get('venus', 'Venus'),
+        'Saturn': PLANET_MLY.get('saturn', 'Saturn'),
+        'Rahu': PLANET_MLY.get('rahu', 'Rahu'),
+        'Ketu': PLANET_MLY.get('ketu', 'Ketu'),
+        'Lagna': LAGNA_MLY,
+    }
+    out = {}
+    for rasi, items in (planets or {}).items():
+        out[rasi] = [eng_to_ml.get(name, name) for name in (items or [])]
+    return out
 
 
 def _generate_is_self_only(request, matri_id: str, partner_mid: str) -> bool:
@@ -977,3 +1031,129 @@ class AstrologyPdfThalakuriDownloadView(APIView):
         if err:
             return err
         return resp
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_chart_data(request, profile_id, chart_type):
+    """
+    JSON for South Indian chart UI (Rasi / Navamsa / whole-sign Bhava from Lagna).
+    ``profile_id`` is the UserProfile primary key (same as porutham bride_id/groom_id).
+    """
+    horoscope = get_object_or_404(
+        Horoscope.objects.select_related('profile__user'),
+        profile_id=profile_id,
+    )
+    if not _user_can_view_horoscope(request.user, horoscope):
+        return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+    if not _chart_data_available(horoscope):
+        return Response(
+            {'error': 'Chart not available. Generate horoscope first.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if chart_type not in ('rasi', 'amsakom', 'bhavam'):
+        return Response(
+            {'error': 'Invalid chart type. Use: rasi, amsakom, bhavam'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    cache_key = (
+        f'astrology_chart_api:{horoscope.pk}:{chart_type}:{horoscope.updated_at.isoformat()}'
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
+    service = HoroscopeService(horoscope)
+    if chart_type == 'rasi':
+        planets = service.get_rasi_chart()
+    elif chart_type == 'amsakom':
+        planets = service.get_navamsa_chart()
+    else:
+        planets = service.get_bhava_chart()
+
+    dasa_lord, dasa_balance = _dasa_fields(horoscope)
+    payload = {
+        'chart_type': chart_type,
+        'nakshatra': horoscope.nakshatra,
+        'nakshatra_pada': horoscope.nakshatra_pada,
+        'rasi': horoscope.rasi,
+        'lagna': horoscope.lagna,
+        'dasa_lord': dasa_lord,
+        'dasa_balance': dasa_balance,
+        'planets': _malayalam_planet_labels(planets),
+    }
+    cache.set(cache_key, payload, timeout=86400)
+    return Response(payload)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_match_chart_data(request, bride_id, groom_id, chart_type):
+    """
+    Chart JSON for both profiles in one call. ``bride_id`` / ``groom_id`` are
+    UserProfile primary keys (same as /api/v1/astrology/porutham/).
+    """
+    bride_h = get_object_or_404(
+        Horoscope.objects.select_related('profile__user'),
+        profile_id=bride_id,
+    )
+    groom_h = get_object_or_404(
+        Horoscope.objects.select_related('profile__user'),
+        profile_id=groom_id,
+    )
+
+    if not (
+        _user_can_view_horoscope(request.user, bride_h)
+        or _user_can_view_horoscope(request.user, groom_h)
+    ):
+        return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+
+    if not _chart_data_available(bride_h) or not _chart_data_available(groom_h):
+        return Response(
+            {'error': 'Chart not available. Generate horoscope first.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if chart_type not in ('rasi', 'amsakom', 'bhavam'):
+        return Response({'error': 'Invalid chart type'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cache_key = (
+        'astrology_match_chart_api:'
+        f'{bride_h.pk}:{groom_h.pk}:{chart_type}:'
+        f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
+    bride_service = HoroscopeService(bride_h)
+    groom_service = HoroscopeService(groom_h)
+
+    def _one_chart(service, horo):
+        if chart_type == 'rasi':
+            planets = service.get_rasi_chart()
+        elif chart_type == 'amsakom':
+            planets = service.get_navamsa_chart()
+        else:
+            planets = service.get_bhava_chart()
+        dasa_lord, dasa_balance = _dasa_fields(horo)
+        return {
+            'name': (getattr(horo.profile.user, 'name', None) or '').strip(),
+            'nakshatra': horo.nakshatra,
+            'nakshatra_pada': horo.nakshatra_pada,
+            'rasi': horo.rasi,
+            'lagna': horo.lagna,
+            'dasa_lord': dasa_lord,
+            'dasa_balance': dasa_balance,
+            'planets': _malayalam_planet_labels(planets),
+        }
+
+    payload = {
+        'chart_type': chart_type,
+        'bride': _one_chart(bride_service, bride_h),
+        'groom': _one_chart(groom_service, groom_h),
+    }
+    cache.set(cache_key, payload, timeout=86400)
+    return Response(payload)

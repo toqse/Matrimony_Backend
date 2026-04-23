@@ -12,6 +12,8 @@ from .views import (
     HoroscopeMeView,
     MatchReportPdfView,
     PoruthamCheckView,
+    get_chart_data,
+    get_match_chart_data,
 )
 
 app_name = 'astrology'
@@ -32,4 +34,26 @@ urlpatterns = [
     path('horoscope/<int:profile_id>/chart/', HoroscopeChartView.as_view(), name='horoscope_chart'),
     path('match-report/', MatchReportPdfView.as_view(), name='match_report'),
     path('porutham/', PoruthamCheckView.as_view(), name='porutham'),
+    path(
+        'chart/<int:profile_id>/<str:chart_type>/',
+        get_chart_data,
+        name='chart-data',
+    ),
+    path(
+        'chart/<int:profile_id>/',
+        get_chart_data,
+        {'chart_type': 'rasi'},
+        name='chart-data-default',
+    ),
+    path(
+        'match-chart/<int:bride_id>/<int:groom_id>/<str:chart_type>/',
+        get_match_chart_data,
+        name='match-chart-data',
+    ),
+    path(
+        'match-chart/<int:bride_id>/<int:groom_id>/',
+        get_match_chart_data,
+        {'chart_type': 'rasi'},
+        name='match-chart-data-default',
+    ),
 ]
