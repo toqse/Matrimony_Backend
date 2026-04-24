@@ -570,6 +570,7 @@ Identifiers (important):
 - **profile_id**, **bride_id**, and **groom_id** in these URLs are **UserProfile primary keys** — the same integers
   as **bride_id** / **groom_id** in POST /api/v1/astrology/porutham/ and **profile_id** in birth-detail-candidates
   results (not Horoscope row pk, not User pk).
+- **partner_matri_id** in JWT-driven match-chart URLs is **User.matri_id** (string, e.g. `AM100212`).
 
 Endpoints:
 
@@ -581,11 +582,17 @@ Endpoints:
 3) GET /api/v1/astrology/match-chart/<bride_id>/<groom_id>/<chart_type>/
 4) GET /api/v1/astrology/match-chart/<bride_id>/<groom_id>/
    - **bride_id** / **groom_id**: UserProfile IDs for the pair (same convention as porutham POST body).
+5) GET /api/v1/astrology/match-chart/<partner_matri_id>/<chart_type>/
+6) GET /api/v1/astrology/match-chart/<partner_matri_id>/
+   - JWT-driven pair lookup: requester profile is derived from token, partner is resolved by **partner_matri_id**.
+   - Same response shape as (3) / (4): `{ chart_type, bride, groom }`.
 
 Authorization rules:
 - Single chart (1–2): allowed if the caller is **Django staff** OR the horoscope’s **profile.user** is the caller.
 - Match chart (3–4): allowed if the caller is **staff** OR the caller’s user owns **either** profile
   (`Horoscope.profile.user_id == request.user.id` for bride or groom row).
+- Match chart (5–6): caller must be authenticated; requester is always `request.user` and partner is looked up by
+  `User.matri_id`.
 
 Caching:
 - Server caches JSON responses up to **24 hours**; cache keys include horoscope **updated_at** so regenerating
@@ -644,6 +651,7 @@ POST **generate** (when **match** is non-null) and **match** payload include IDs
 - **match.bride_profile_id**, **match.groom_profile_id** — use with **match-chart** URLs above.
 - **match.bride_horoscope_id**, **match.groom_horoscope_id** — same Horoscope pks as the card fields (optional
   for admin/debug; chart routes use **profile_id**).
+- For JWT-driven route (5–6), pass the opposite side as **partner_matri_id** from `User.matri_id`.
 
 Error 400:
 - Invalid **chart_type** (must be `rasi`, `amsakom`, or `bhavam`).

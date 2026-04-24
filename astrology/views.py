@@ -67,8 +67,35 @@ from .services.public_url_signing import (
     verify_match_report_access,
     verify_pdf_credit_access,
 )
+
+PLANET_LABEL_MALAYALAM = {
+    'Lagna': 'ല',
+    'Sun': 'സൂ',
+    'Moon': 'ച',
+    'Mars': 'മ',
+    'Mercury': 'ബു',
+    'Jupiter': 'ഗു',
+    'Venus': 'ശു',
+    'Saturn': 'ശ',
+    'Rahu': 'ര',
+    'Ketu': 'കേ',
+}
+
+
+def _planet_labels_for_response(planets: dict, lang: str) -> dict:
+    if lang != 'ml':
+        return planets
+    mapped = {}
+    for rasi, names in (planets or {}).items():
+        if not isinstance(names, list):
+            mapped[rasi] = names
+            continue
+        mapped[rasi] = [PLANET_LABEL_MALAYALAM.get(name, name) for name in names]
+    return mapped
+
+
 def _chart_absolute_url(request, profile_id: int, style: str = 'south') -> str:
-    return build_horoscope_chart_absolute_url(request, profile_id, style=style)
+    return build_horoscope_chart_absolute_url(request, profile_id, style=style, lang='ml')
 
 
 def _match_report_absolute_url(request, bride_matri_id: str, groom_matri_id: str) -> str:
@@ -434,6 +461,9 @@ class HoroscopeChartView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
         style = request.query_params.get('style', 'south')
+        lang = (request.query_params.get('lang') or 'ml').strip().lower()
+        if lang not in ('ml', 'en'):
+            lang = 'ml'
         profile = get_object_or_404(UserProfile, pk=profile_id)
         horoscope = (
             Horoscope.objects.filter(profile=profile)
@@ -445,7 +475,11 @@ class HoroscopeChartView(APIView):
                 {'success': False, 'error': {'code': 404, 'message': 'Horoscope not found.'}},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        cache_key = f'astrology_chart:{profile_id}:{style}:{horoscope.updated_at.isoformat()}'
+        # Include lang + renderer version to avoid serving stale English chart PNGs.
+        cache_key = (
+            f'astrology_chart:{profile_id}:{style}:{lang}:v2:'
+            f'{horoscope.updated_at.isoformat()}'
+        )
         png_bytes = cache.get(cache_key)
         if png_bytes is None:
             png_bytes = generate_chart_image(
@@ -1036,9 +1070,13 @@ def get_chart_data(request, profile_id, chart_type):
             {'error': 'Invalid chart type. Use: rasi, amsakom, bhavam'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    lang = (request.query_params.get('lang') or 'ml').strip().lower()
+    if lang not in ('ml', 'en'):
+        lang = 'ml'
 
     cache_key = (
-        f'astrology_chart_api:{horoscope.pk}:{chart_type}:{horoscope.updated_at.isoformat()}'
+        f'astrology_chart_api:{horoscope.pk}:{chart_type}:{lang}:'
+        f'{horoscope.updated_at.isoformat()}'
     )
     cached = cache.get(cache_key)
     if cached is not None:
@@ -1051,6 +1089,7 @@ def get_chart_data(request, profile_id, chart_type):
         planets = service.get_navamsa_chart()
     else:
         planets = service.get_bhava_chart()
+    planets = _planet_labels_for_response(planets, lang)
 
     dasa_lord, dasa_balance = _dasa_fields(horoscope)
     payload = {
@@ -1097,10 +1136,13 @@ def get_match_chart_data(request, bride_id, groom_id, chart_type):
 
     if chart_type not in ('rasi', 'amsakom', 'bhavam'):
         return Response({'error': 'Invalid chart type'}, status=status.HTTP_400_BAD_REQUEST)
+    lang = (request.query_params.get('lang') or 'ml').strip().lower()
+    if lang not in ('ml', 'en'):
+        lang = 'ml'
 
     cache_key = (
         'astrology_match_chart_api:'
-        f'{bride_h.pk}:{groom_h.pk}:{chart_type}:'
+        f'{bride_h.pk}:{groom_h.pk}:{chart_type}:{lang}:'
         f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
     )
     cached = cache.get(cache_key)
@@ -1117,6 +1159,88 @@ def get_match_chart_data(request, bride_id, groom_id, chart_type):
             planets = service.get_navamsa_chart()
         else:
             planets = service.get_bhava_chart()
+        planets = _planet_labels_for_response(planets, lang)
+        dasa_lord, dasa_balance = _dasa_fields(horo)
+        return {
+            'name': (getattr(horo.profile.user, 'name', None) or '').strip(),
+            'nakshatra': horo.nakshatra,
+            'nakshatra_pada': horo.nakshatra_pada,
+            'rasi': horo.rasi,
+            'lagna': horo.lagna,
+            'dasa_lord': dasa_lord,
+            'dasa_balance': dasa_balance,
+            'planets': planets,
+        }
+
+    payload = {
+        'chart_type': chart_type,
+        'bride': _one_chart(bride_service, bride_h),
+        'groom': _one_chart(groom_service, groom_h),
+    }
+    cache.set(cache_key, payload, timeout=86400)
+    return Response(payload)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_match_chart_data_partner(request, partner_matri_id, chart_type):
+    """
+    Chart JSON for requester + partner in one call.
+    Requester is resolved from JWT user; partner is resolved by matri_id.
+    """
+    if chart_type not in ('rasi', 'amsakom', 'bhavam'):
+        return Response({'error': 'Invalid chart type'}, status=status.HTTP_400_BAD_REQUEST)
+    lang = (request.query_params.get('lang') or 'ml').strip().lower()
+    if lang not in ('ml', 'en'):
+        lang = 'ml'
+
+    requester_profile, _ = UserProfile.objects.select_related('user').get_or_create(
+        user=request.user,
+        defaults={},
+    )
+    partner_mid = (partner_matri_id or '').strip()
+    partner_user = User.objects.filter(is_active=True, matri_id__iexact=partner_mid).first()
+    if not partner_user:
+        return Response({'error': 'Partner not found for matri_id.'}, status=status.HTTP_404_NOT_FOUND)
+    partner_profile = UserProfile.objects.select_related('user').filter(user=partner_user).first()
+    if not partner_profile:
+        return Response(
+            {'error': 'Chart not available. Generate horoscope first.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    requester_h = Horoscope.objects.filter(profile=requester_profile).select_related('profile__user').first()
+    partner_h = Horoscope.objects.filter(profile=partner_profile).select_related('profile__user').first()
+    if not requester_h or not partner_h:
+        return Response(
+            {'error': 'Chart not available. Generate horoscope first.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    bride_h, groom_h = resolve_bride_groom_horoscopes(
+        requester_profile, partner_profile, requester_h, partner_h
+    )
+
+    cache_key = (
+        'astrology_match_chart_partner_api:'
+        f'{requester_profile.pk}:{partner_profile.pk}:{chart_type}:{lang}:'
+        f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
+    bride_service = HoroscopeService(bride_h)
+    groom_service = HoroscopeService(groom_h)
+
+    def _one_chart(service, horo):
+        if chart_type == 'rasi':
+            planets = service.get_rasi_chart()
+        elif chart_type == 'amsakom':
+            planets = service.get_navamsa_chart()
+        else:
+            planets = service.get_bhava_chart()
+        planets = _planet_labels_for_response(planets, lang)
         dasa_lord, dasa_balance = _dasa_fields(horo)
         return {
             'name': (getattr(horo.profile.user, 'name', None) or '').strip(),

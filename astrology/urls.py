@@ -14,6 +14,7 @@ from .views import (
     PoruthamCheckView,
     get_chart_data,
     get_match_chart_data,
+    get_match_chart_data_partner,
 )
 
 app_name = 'astrology'
@@ -55,5 +56,16 @@ urlpatterns = [
         get_match_chart_data,
         {'chart_type': 'rasi'},
         name='match-chart-data-default',
+    ),
+    path(
+        'match-chart/<str:partner_matri_id>/<str:chart_type>/',
+        get_match_chart_data_partner,
+        name='match-chart-partner-data',
+    ),
+    path(
+        'match-chart/<str:partner_matri_id>/',
+        get_match_chart_data_partner,
+        {'chart_type': 'rasi'},
+        name='match-chart-partner-data-default',
     ),
 ]

@@ -108,6 +108,9 @@ def resolve_bride_groom_horoscopes(primary_profile, partner_profile, primary_h, 
 
 def build_person_card(profile, horoscope, chart_url: str) -> dict:
     user = profile.user
+    dob = getattr(user, 'dob', None)
+    tob = getattr(profile, 'time_of_birth', None)
+    pob = getattr(profile, 'place_of_birth', None)
     nk = horoscope.nakshatra
     dasa = vimshottari_mahadasha_state(horoscope, ref_utc=dj_tz.now())
 
@@ -143,6 +146,9 @@ def build_person_card(profile, horoscope, chart_url: str) -> dict:
         'profile_id': profile.pk,
         'horoscope_id': horoscope.pk,
         'gender': user.gender or '',
+        'date_of_birth': dob.isoformat() if dob else None,
+        'time_of_birth': tob.strftime('%H:%M:%S') if tob else None,
+        'place_of_birth': (pob or '').strip(),
         'nakshatra': nk,
         'nakshatra_label': nk_label,
         'nakshatra_malayalam': NAKSHATRA_MALAYALAM.get(nk, ''),

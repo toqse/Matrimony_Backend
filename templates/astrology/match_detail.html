@@ -171,6 +171,28 @@
     Rahu: 'ര',
     Ketu: 'കേ'
   };
+  const PLANET_MLY_NORMALIZED = {
+    lagna: 'ല',
+    la: 'ല',
+    sun: 'സൂ',
+    su: 'സൂ',
+    moon: 'ച',
+    mo: 'ച',
+    mars: 'മ',
+    ma: 'മ',
+    mercury: 'ബു',
+    me: 'ബു',
+    jupiter: 'ഗു',
+    ju: 'ഗു',
+    venus: 'ശു',
+    ve: 'ശു',
+    saturn: 'ശ',
+    sa: 'ശ',
+    rahu: 'ര',
+    ra: 'ര',
+    ketu: 'കേ',
+    ke: 'കേ',
+  };
   function authHeaders() {
     const headers = { 'Content-Type': 'application/json' };
     const t = localStorage.getItem('access') || localStorage.getItem('access_token') || localStorage.getItem('token');
@@ -195,7 +217,8 @@
   }
 
   function planetLabel(name) {
-    return PLANET_MLY[name] || name;
+    const raw = String(name || '').trim();
+    return PLANET_MLY[raw] || PLANET_MLY_NORMALIZED[raw.toLowerCase()] || raw;
   }
 
   function renderChart(containerId, planetsData, personData) {
