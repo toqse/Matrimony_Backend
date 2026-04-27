@@ -592,6 +592,8 @@ class PartnerPreferencesView(APIView):
                 'partner_preference_type': UserReligion.PARTNER_PREFERENCE_ALL,
                 'partner_religion_ids': [],
                 'partner_caste_preferences': {},
+                'partner_age_from': None,
+                'partner_age_to': None,
             }
             return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
         data = PartnerPreferencesReadSerializer(rel).data
@@ -612,7 +614,13 @@ class PartnerPreferencesView(APIView):
             context={'request': request, 'existing_obj': rel, 'user': request.user},
         )
         ser.is_valid(raise_exception=True)
-        for key in ('partner_preference_type', 'partner_religion_ids', 'partner_caste_preferences'):
+        for key in (
+            'partner_preference_type',
+            'partner_religion_ids',
+            'partner_caste_preferences',
+            'partner_age_from',
+            'partner_age_to',
+        ):
             if key in ser.validated_data:
                 setattr(rel, key, ser.validated_data[key])
         rel.save()

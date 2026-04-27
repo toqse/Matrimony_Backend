@@ -62,7 +62,7 @@ def build_jathakam_pdf(horoscope, user, _profile) -> bytes:
         c.drawString(2 * cm, y, f"Lagna longitude: {float(lag):.4f}")
         step(0.42 * cm)
     planets = grahanila.get('planets') or {}
-    order = ('sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu')
+    order = ('sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu', 'gulika')
     for key in order:
         if key not in planets:
             continue

@@ -107,6 +107,8 @@ class UserReligion(TimeStampedModel):
         default=PARTNER_PREFERENCE_ALL, blank=True
     )
     partner_religion_ids = models.JSONField(default=list, blank=True)  # list of Religion IDs when type is specific_religions
+    partner_age_from = models.PositiveSmallIntegerField(null=True, blank=True)
+    partner_age_to = models.PositiveSmallIntegerField(null=True, blank=True)
     # Per-religion caste selection for partner preference:
     # { "<religion_id>": [<caste_id>, ...], ... }
     partner_caste_preferences = models.JSONField(default=dict, blank=True)

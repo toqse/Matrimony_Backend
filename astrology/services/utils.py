@@ -16,6 +16,7 @@ PLANET_NAME_MAP = {
     'saturn': 'Sa',
     'rahu': 'Ra',
     'ketu': 'Ke',
+    'gulika': 'Gu',
 }
 
 PLANET_FULL_NAMES = {
@@ -28,6 +29,7 @@ PLANET_FULL_NAMES = {
     'saturn': 'Saturn',
     'rahu': 'Rahu',
     'ketu': 'Ketu',
+    'gulika': 'Gulika',
 }
 
 

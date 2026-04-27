@@ -46,6 +46,7 @@ PLANET_MLY = {
     'saturn': 'ശ',
     'rahu': 'റാ',
     'ketu': 'കേ',
+    'gulika': 'ഗു',
 }
 
 LAGNA_MLY = 'ലഗ്നം'

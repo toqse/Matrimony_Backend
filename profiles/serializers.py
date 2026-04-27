@@ -47,6 +47,25 @@ def _validate_partner_mode_rules(*, attrs, existing_obj=None, user=None):
     from .models import UserReligion
     from master.models import Caste, Religion
 
+    age_from = attrs.get('partner_age_from')
+    age_to = attrs.get('partner_age_to')
+    if age_from is None and existing_obj is not None:
+        age_from = existing_obj.partner_age_from
+    if age_to is None and existing_obj is not None:
+        age_to = existing_obj.partner_age_to
+    if age_from is not None:
+        age_from = int(age_from)
+    if age_to is not None:
+        age_to = int(age_to)
+    if age_from is not None and not (18 <= age_from <= 80):
+        raise serializers.ValidationError({'partner_age_from': 'Age from must be between 18 and 80.'})
+    if age_to is not None and not (18 <= age_to <= 80):
+        raise serializers.ValidationError({'partner_age_to': 'Age to must be between 18 and 80.'})
+    if age_from is not None and age_to is not None and age_from > age_to:
+        raise serializers.ValidationError({'partner_age_to': 'Age to must be greater than or equal to age from.'})
+    attrs['partner_age_from'] = age_from
+    attrs['partner_age_to'] = age_to
+
     pref_type = attrs.get('partner_preference_type')
     if pref_type is None and existing_obj is not None:
         pref_type = existing_obj.partner_preference_type or UserReligion.PARTNER_PREFERENCE_ALL
@@ -805,6 +824,8 @@ class PartnerPreferencesReadSerializer(serializers.Serializer):
     """GET /api/v1/profile/partner-preferences/ response."""
     partner_preference_type = serializers.CharField()
     partner_religion_ids = serializers.ListField(child=serializers.IntegerField())
+    partner_age_from = serializers.IntegerField(allow_null=True)
+    partner_age_to = serializers.IntegerField(allow_null=True)
     partner_caste_preferences = serializers.SerializerMethodField()
 
     def get_partner_caste_preferences(self, obj):
@@ -828,6 +849,8 @@ class PartnerPreferencesUpdateSerializer(serializers.Serializer):
         required=False,
         allow_empty=True
     )
+    partner_age_from = serializers.IntegerField(required=False, allow_null=True, min_value=18, max_value=80)
+    partner_age_to = serializers.IntegerField(required=False, allow_null=True, min_value=18, max_value=80)
     partner_caste_preferences = serializers.DictField(required=False)
 
     def validate(self, attrs):

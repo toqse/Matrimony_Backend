@@ -1,7 +1,8 @@
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.utils import timezone
@@ -44,6 +45,14 @@ PLANET_CODES = {
 
 def _use_sidereal() -> bool:
     return bool(getattr(settings, 'ASTROLOGY_SIDEREAL', True))
+
+
+def _birth_timezone():
+    tz_name = str(getattr(settings, 'ASTROLOGY_BIRTH_TIMEZONE', 'Asia/Kolkata') or 'Asia/Kolkata')
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return ZoneInfo('Asia/Kolkata')
 
 def _swe_flag(name: str, default: int = 0) -> int:
     if swe is None:
@@ -121,8 +130,8 @@ def _geocode_place(place_of_birth: str):
 def _julian_day_utc(date_of_birth, time_of_birth):
     dt = datetime.combine(date_of_birth, time_of_birth)
     if timezone.is_naive(dt):
-        # Interpret naive birth times in the project's configured timezone (Asia/Kolkata by default).
-        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+        # Birth time is local civil time in astrology timezone (IST default).
+        dt = timezone.make_aware(dt, _birth_timezone())
     utc_dt = dt.astimezone(dt_timezone.utc)
     return swe.julday(
         utc_dt.year,
@@ -130,6 +139,101 @@ def _julian_day_utc(date_of_birth, time_of_birth):
         utc_dt.day,
         utc_dt.hour + (utc_dt.minute / 60.0) + (utc_dt.second / 3600.0),
     )
+
+
+def _julian_day_from_aware(dt_value: datetime) -> float:
+    utc_dt = dt_value.astimezone(dt_timezone.utc)
+    return swe.julday(
+        utc_dt.year,
+        utc_dt.month,
+        utc_dt.day,
+        utc_dt.hour + (utc_dt.minute / 60.0) + (utc_dt.second / 3600.0),
+    )
+
+
+def _sun_event_jd(local_date, latitude: float, longitude: float, event: str) -> float | None:
+    """
+    Return UTC Julian Day for sunrise/sunset at location on a local civil date.
+    Uses Swiss Ephemeris rise_trans with compatibility fallbacks across bindings.
+    """
+    tz = _birth_timezone()
+    local_noon = timezone.make_aware(datetime.combine(local_date, datetime.min.time().replace(hour=12)), tz)
+    jd_ref = _julian_day_from_aware(local_noon)
+    rsmi = _swe_flag('CALC_RISE' if event == 'rise' else 'CALC_SET')
+    geopos = (float(longitude), float(latitude), 0.0)
+    flags = _calc_flags(_use_sidereal())
+
+    attempts = (
+        lambda: swe.rise_trans(jd_ref, swe.SUN, rsmi, geopos, 0.0, 0.0, flags),
+        lambda: swe.rise_trans(jd_ref, swe.SUN, rsmi, geopos),
+        lambda: swe.rise_trans(jd_ref, swe.SUN, float(longitude), float(latitude), rsmi),
+    )
+    for call in attempts:
+        try:
+            result = call()
+        except Exception:
+            continue
+        if not result:
+            continue
+        times = result[1] if isinstance(result, (tuple, list)) and len(result) > 1 else None
+        if isinstance(times, (tuple, list)) and times:
+            return float(times[0])
+    return None
+
+
+def _gulika_segment_index(weekday_idx: int, is_daytime: bool) -> int:
+    # Segment index is zero-based over the 8 equal divisions.
+    day_segments = (6, 5, 4, 3, 2, 1, 0)   # Sun..Sat -> 7th..1st
+    night_segments = (5, 4, 3, 2, 1, 0, 6)  # Sun..Sat -> 6th..7th
+    return (day_segments if is_daytime else night_segments)[weekday_idx % 7]
+
+
+def _gulika_longitude(
+    date_of_birth,
+    time_of_birth,
+    latitude: float,
+    longitude: float,
+    use_sidereal: bool,
+) -> float | None:
+    tz = _birth_timezone()
+    birth_local = timezone.make_aware(datetime.combine(date_of_birth, time_of_birth), tz)
+    birth_jd = _julian_day_from_aware(birth_local)
+
+    sunrise_today = _sun_event_jd(date_of_birth, latitude, longitude, event='rise')
+    sunset_today = _sun_event_jd(date_of_birth, latitude, longitude, event='set')
+    if sunrise_today is None or sunset_today is None:
+        return None
+
+    if sunrise_today <= birth_jd < sunset_today:
+        segment_start = sunrise_today
+        segment_end = sunset_today
+        weekday_idx = date_of_birth.weekday()
+        is_daytime = True
+    else:
+        is_daytime = False
+        if birth_jd < sunrise_today:
+            prev_date = date_of_birth - timedelta(days=1)
+            prev_sunset = _sun_event_jd(prev_date, latitude, longitude, event='set')
+            if prev_sunset is None:
+                return None
+            segment_start = prev_sunset
+            segment_end = sunrise_today
+            weekday_idx = prev_date.weekday()
+        else:
+            next_date = date_of_birth + timedelta(days=1)
+            next_sunrise = _sun_event_jd(next_date, latitude, longitude, event='rise')
+            if next_sunrise is None:
+                return None
+            segment_start = sunset_today
+            segment_end = next_sunrise
+            weekday_idx = date_of_birth.weekday()
+
+    duration = segment_end - segment_start
+    if duration <= 0:
+        return None
+    seg = _gulika_segment_index(weekday_idx, is_daytime)
+    segment_mid_jd = segment_start + ((seg + 0.5) * (duration / 8.0))
+    return _lagna_longitude(segment_mid_jd, latitude, longitude, use_sidereal)
 
 
 def _planetary_positions(jd_ut, use_sidereal: bool):
@@ -186,6 +290,20 @@ def generate_horoscope_payload(date_of_birth, time_of_birth, place_of_birth):
     jd_ut = _julian_day_utc(date_of_birth, time_of_birth)
 
     positions, moon_longitude = _planetary_positions(jd_ut, use_sidereal)
+    gulika_longitude = _gulika_longitude(
+        date_of_birth,
+        time_of_birth,
+        latitude,
+        longitude,
+        use_sidereal,
+    )
+    if gulika_longitude is not None:
+        positions['gulika'] = {
+            'longitude': gulika_longitude,
+            'rasi': rasi_name_from_longitude(gulika_longitude),
+            'short_name': PLANET_NAME_MAP['gulika'],
+            'full_name': PLANET_FULL_NAMES['gulika'],
+        }
     lagna_longitude = _lagna_longitude(jd_ut, latitude, longitude, use_sidereal)
     lagna = rasi_name_from_longitude(lagna_longitude)
 
@@ -275,6 +393,7 @@ class HoroscopeService:
         'saturn',
         'rahu',
         'ketu',
+        'gulika',
     )
 
     def __init__(self, horoscope):

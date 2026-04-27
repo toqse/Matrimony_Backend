@@ -4102,7 +4102,9 @@ PATCH /api/v1/admin/profiles/{matri_id}/
         "partner_religion_preference": "",
         "partner_preference_type": "own_religion_only | open_to_all | specific_religions",
         "partner_religion_ids": [1, 2],
-        "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] }
+        "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] },
+        "partner_age_from": 24,
+        "partner_age_to": 30
       },
       "personal_details": {
         "marital_status": "Never Married",
@@ -4419,7 +4421,7 @@ Upload Photos: POST /api/v1/profile/photos/
   Body (form): profile_photo, full_photo, selfie_photo, family_photo (each optional file)
 
 Set Partner Preferences: POST /api/v1/profile/partner-preference/ or PATCH /api/v1/profile/partner-preferences/
-  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] } }
+  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] }, "partner_age_from": int(18-80)|null, "partner_age_to": int(18-80)|null }
 
 --- Plan Upgrade ---
 GET /api/v1/plans/
@@ -4441,7 +4443,7 @@ Quick reference:
   DELETE /profile/photos/{photo_id}/  Delete one specific photo by id
   GET    /profile/religion/     Religion section
   PATCH  /profile/religion/     Update religion
-  GET    /profile/partner-preferences/   Partner religion/caste preference
+  GET    /profile/partner-preferences/   Partner religion/caste/age preference
   PATCH  /profile/partner-preferences/  Update partner preference
   GET    /profile/personal/     Personal section
   PATCH  /profile/personal/     Update personal
@@ -4655,6 +4657,8 @@ GET /api/v1/profile/partner-preferences/
         "partner_preference_type_label": "Specific religions",
         "partner_religion_ids": [1, 2],
         "partner_religion_names": ["Hindu", "Christian"],
+        "partner_age_from": 24,
+        "partner_age_to": 30,
         "partner_caste_preferences": {
           "1": [10, 12],
           "2": [21]
@@ -4676,6 +4680,11 @@ GET /api/v1/profile/partner-preferences/
       - partner_religion_ids required and must contain valid active religion IDs.
       - partner_caste_preferences keys must be subset of partner_religion_ids.
       - each caste ID must be valid and belong to that religion key.
+  Age range rules:
+    - partner_age_from and partner_age_to are optional.
+    - allowed values are 18 to 80.
+    - when both are set: partner_age_from must be less than or equal to partner_age_to.
+    - stored range is applied automatically in match listing.
 
 PATCH /api/v1/profile/partner-preferences/
   Alias also supported: PATCH /api/v1/profile/partner-preference/
@@ -4684,6 +4693,8 @@ PATCH /api/v1/profile/partner-preferences/
     {
       "partner_preference_type": "specific_religions",
       "partner_religion_ids": [1, 2],
+      "partner_age_from": 24,
+      "partner_age_to": 30,
       "partner_caste_preferences": {
         "1": [10, 12],
         "2": [21]
@@ -4697,6 +4708,8 @@ PATCH /api/v1/profile/partner-preferences/
         "partner_preference_type_label": "Specific religions",
         "partner_religion_ids": [1, 2],
         "partner_religion_names": ["Hindu", "Christian"],
+        "partner_age_from": 24,
+        "partner_age_to": 30,
         "partner_caste_preferences": {
           "1": [10, 12],
           "2": [21]
@@ -4709,6 +4722,8 @@ PATCH /api/v1/profile/partner-preferences/
     - partner_religion_ids contains invalid/inactive religion ID.
     - partner_caste_preferences has invalid key/value shape.
     - caste does not belong to religion key or religion key not in selected partner_religion_ids.
+    - partner_age_from / partner_age_to out of allowed range (18-80).
+    - partner_age_to is less than partner_age_from.
 
 --- 4. Personal Details ---
 GET /api/v1/profile/personal/
@@ -4913,7 +4928,9 @@ POST /api/v1/profile/religion/
       "partner_religion_preference": "string (optional, legacy)",
       "partner_preference_type": "own_religion_only | open_to_all | specific_religions (optional)",
       "partner_religion_ids": [int, ...] (optional; required when partner_preference_type is specific_religions; valid active religion IDs)",
-      "partner_caste_preferences": "{ \"<religion_id>\": [<caste_id>, ...] } (optional)"
+      "partner_caste_preferences": "{ \"<religion_id>\": [<caste_id>, ...] } (optional)",
+      "partner_age_from": "int 18..80 (optional, nullable)",
+      "partner_age_to": "int 18..80 (optional, nullable)"
     }
   Response 200:
     {
@@ -4931,6 +4948,8 @@ POST /api/v1/profile/religion/
         "partner_preference_type_label": "Specific religions",
         "partner_religion_ids": [1, 2],
         "partner_religion_names": ["Hindu", "Christian"],
+        "partner_age_from": 24,
+        "partner_age_to": 30,
         "partner_caste_preferences": {
           "1": [10, 12],
           "2": [21]
@@ -5540,11 +5559,13 @@ Profile visibility: Male → Female only; Female → Male only; Other → both. 
 
 --- Match List API ---
 GET /api/v1/matches/
-  Matches are automatically filtered by the logged-in user's partner religion (and optionally caste) preference:
+  Matches are automatically filtered by the logged-in user's partner religion/caste preference and stored partner age range:
   - own_religion_only: same religion; if caste ids are configured in partner_caste_preferences for own religion, matches are restricted to those castes
   - open_to_all: no religion/caste filter from preference
   - specific_religions: profiles whose religion is in partner_religion_ids; for religions that have caste ids in partner_caste_preferences, caste filter is applied within that religion
+  - partner_age_from / partner_age_to: when set, profiles are filtered to the stored age range by DOB
   Query params religion_id and caste_id further narrow results (intersection with preference).
+  Query params age_min/age_max also further narrow results in addition to stored age preference.
 
   Query parameters (all optional):
     page          (default 1)

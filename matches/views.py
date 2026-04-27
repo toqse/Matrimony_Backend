@@ -99,6 +99,19 @@ def _apply_partner_preference(qs, viewer_rel):
     return qs
 
 
+def _apply_partner_age_preference(qs, viewer_rel):
+    age_min = getattr(viewer_rel, 'partner_age_from', None)
+    age_max = getattr(viewer_rel, 'partner_age_to', None)
+    if age_min is None and age_max is None:
+        return qs
+    dob_min, dob_max = dob_range_for_age(age_min, age_max)
+    if dob_min is not None:
+        qs = qs.filter(dob__gte=dob_min)
+    if dob_max is not None:
+        qs = qs.filter(dob__lte=dob_max)
+    return qs
+
+
 def _match_list_response(request, *, home_slider=False):
     """
     Shared match list payload. If home_slider is True: unviewed first, then viewed, then -created_at.
@@ -110,6 +123,7 @@ def _match_list_response(request, *, home_slider=False):
     viewer_rel = UserReligion.objects.filter(user=request.user).first()
     if viewer_rel:
         qs = _apply_partner_preference(qs, viewer_rel)
+        qs = _apply_partner_age_preference(qs, viewer_rel)
     # Profile visibility: hidden -> exclude; premium_only -> show only to viewers with active plan
     qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
     viewer_has_plan = _get_user_plan(request.user) is not None

@@ -117,7 +117,7 @@ def _build_cell_symbols(grahanila: dict | None) -> dict[tuple[int, int], list[st
 
     # Stable planet order for consistent layout
     planet_order = (
-        'sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu',
+        'sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu', 'gulika',
     )
     for key in planet_order:
         info = planets.get(key)

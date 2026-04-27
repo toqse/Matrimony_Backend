@@ -1,8 +1,10 @@
+from datetime import date
+
 from django.test import TestCase
 
 from accounts.models import User
 from master.models import Caste, Religion
-from matches.views import _apply_partner_preference
+from matches.views import _apply_partner_age_preference, _apply_partner_preference
 from profiles.models import UserReligion
 from profiles.serializers import PartnerPreferencesUpdateSerializer
 
@@ -43,6 +45,31 @@ class PartnerCastePreferenceSerializerTests(TestCase):
         )
         self.assertFalse(serializer.is_valid())
         self.assertIn('partner_caste_preferences', serializer.errors)
+
+    def test_rejects_invalid_age_range(self):
+        serializer = PartnerPreferencesUpdateSerializer(
+            data={
+                'partner_age_from': 33,
+                'partner_age_to': 28,
+            },
+            partial=True,
+            context={'user': self.user, 'existing_obj': self.user_rel},
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('partner_age_to', serializer.errors)
+
+    def test_accepts_valid_age_range(self):
+        serializer = PartnerPreferencesUpdateSerializer(
+            data={
+                'partner_age_from': 24,
+                'partner_age_to': 30,
+            },
+            partial=True,
+            context={'user': self.user, 'existing_obj': self.user_rel},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data['partner_age_from'], 24)
+        self.assertEqual(serializer.validated_data['partner_age_to'], 30)
 
 
 class PartnerCastePreferenceMatchFilterTests(TestCase):
@@ -101,4 +128,26 @@ class PartnerCastePreferenceMatchFilterTests(TestCase):
         self.assertSetEqual(
             set(filtered.values_list('pk', flat=True)),
             {self.match_hindu_brahmin.pk, self.match_christian.pk},
+        )
+
+    def test_partner_age_preference_filters_matches(self):
+        self.match_hindu_brahmin.dob = date(2004, 1, 1)  # younger
+        self.match_hindu_brahmin.save(update_fields=['dob'])
+        self.match_hindu_nair.dob = date(1995, 1, 1)  # within range
+        self.match_hindu_nair.save(update_fields=['dob'])
+        self.match_christian.dob = date(1988, 1, 1)  # older
+        self.match_christian.save(update_fields=['dob'])
+        self.viewer_rel.partner_age_from = 28
+        self.viewer_rel.partner_age_to = 35
+        self.viewer_rel.save(update_fields=['partner_age_from', 'partner_age_to'])
+
+        qs = User.objects.filter(pk__in=[
+            self.match_hindu_brahmin.pk,
+            self.match_hindu_nair.pk,
+            self.match_christian.pk,
+        ])
+        filtered = _apply_partner_age_preference(qs, self.viewer_rel)
+        self.assertSetEqual(
+            set(filtered.values_list('pk', flat=True)),
+            {self.match_hindu_nair.pk},
         )

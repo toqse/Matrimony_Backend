@@ -79,6 +79,7 @@ PLANET_LABEL_MALAYALAM = {
     'Saturn': 'ശ',
     'Rahu': 'ര',
     'Ketu': 'കേ',
+    'Gulika': 'ഗു',
 }
 
 
