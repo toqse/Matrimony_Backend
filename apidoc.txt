@@ -1094,15 +1094,17 @@ Template columns (exact order):
   26) About Me (optional, max 500 chars)
   27) Family Type (optional)
   28) Father's Name (optional)
-  29) Father's Occupation (optional)
-  30) Mother's Name (optional)
-  31) Mother's Occupation (optional)
-  32) Family Status (optional)
-  33) Number of Brothers (integer >= 0) (optional)
-  34) Number of Married Brothers (integer >= 0) (optional)
-  35) Number of Sisters (integer >= 0) (optional)
-  36) Number of Married Sisters (integer >= 0) (optional)
-  37) About My Family (optional)
+  29) Father's Status (optional: Alive or Late)
+  30) Father's Occupation (optional)
+  31) Mother's Name (optional)
+  32) Mother's Status (optional: Alive or Late)
+  33) Mother's Occupation (optional)
+  34) Family Status (optional)
+  35) Number of Brothers (integer >= 0) (optional)
+  36) Number of Married Brothers (integer >= 0) (optional)
+  37) Number of Sisters (integer >= 0) (optional)
+  38) Number of Married Sisters (integer >= 0) (optional)
+  39) About My Family (optional)
 
 Validation rules (errors format: { row, field, message }):
   - Name: required
@@ -1121,6 +1123,7 @@ Validation rules (errors format: { row, field, message }):
   - Number of Married Brothers must be integer >= 0 if provided
   - Number of Sisters must be integer >= 0 if provided
   - Number of Married Sisters must be integer >= 0 if provided
+  - Father's Status / Mother's Status: if provided, must be Alive or Late (case-insensitive)
   - Numeric family field error message: "Must be a non-negative integer." (row comes from errors[].row)
   - All new family fields are optional (no dependency rules)
 
@@ -4099,7 +4102,7 @@ PATCH /api/v1/admin/profiles/{matri_id}/
         "partner_religion_preference": "",
         "partner_preference_type": "own_religion_only | open_to_all | specific_religions",
         "partner_religion_ids": [1, 2],
-        "partner_caste_preference": "any | own_caste_only"
+        "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] }
       },
       "personal_details": {
         "marital_status": "Never Married",
@@ -4298,27 +4301,36 @@ GET /api/v1/dashboard/new-matches/
 --- Suggested Profiles ---
 GET /api/v1/dashboard/suggestions/
   Suggest profiles based on partner preference, location, age range, education.
-  Query params: limit (default 8, max 50)
+  Query params:
+    page      (default 1)
+    page_size (default 8, max 50)
+    limit     (deprecated alias for page_size; used when page_size is not sent)
   Response 200:
     {
       "success": true,
-      "data": [
-        {
-          "matri_id": "AM100021",
-          "name": "Sneha Patel",
-          "age": 27,
-          "location": "Ahmedabad",
-          "education": "B.Com",
-          "occupation": "CA",
-          "height": "5'6\"",
-          "religion": "Hindu",
-          "profile_photo": "https://cdn.site/p2.jpg",
-          "match_percentage": 92,
-          "is_online": true,
-          "is_verified": true,
-          "is_premium": true
-        }
-      ]
+      "data": {
+        "total": 24,
+        "page": 1,
+        "page_size": 8,
+        "limit": 8,
+        "results": [
+          {
+            "matri_id": "AM100021",
+            "name": "Sneha Patel",
+            "age": 27,
+            "location": "Ahmedabad",
+            "education": "B.Com",
+            "occupation": "CA",
+            "height": "5'6\"",
+            "religion": "Hindu",
+            "profile_photo": "https://cdn.site/p2.jpg",
+            "match_percentage": 92,
+            "is_online": true,
+            "is_verified": true,
+            "is_premium": true
+          }
+        ]
+      }
     }
 
 --- Today's Picks ---
@@ -4407,7 +4419,7 @@ Upload Photos: POST /api/v1/profile/photos/
   Body (form): profile_photo, full_photo, selfie_photo, family_photo (each optional file)
 
 Set Partner Preferences: POST /api/v1/profile/partner-preference/ or PATCH /api/v1/profile/partner-preferences/
-  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preference": "any"|"own_caste_only" }
+  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] } }
 
 --- Plan Upgrade ---
 GET /api/v1/plans/
@@ -4461,7 +4473,7 @@ all fields in the body are optional (partial update). Auth: JWT required for all
 
   3. Religion
      PATCH /api/v1/profile/religion/
-     Body (JSON): { "religion_id": int, "caste_id": int, "mother_tongue_id": int, "partner_religion_preference": string, "partner_preference_type", "partner_religion_ids", "partner_caste_preference" }
+     Body (JSON): { "religion_id": int, "caste_id": int, "mother_tongue_id": int, "partner_religion_preference": string, "partner_preference_type", "partner_religion_ids", "partner_caste_preferences" }
      Response 200: { "success": true, "data": { ... } }
      Partner preference also has dedicated GET/PATCH at /api/v1/profile/partner-preferences/
 
@@ -4500,7 +4512,7 @@ all fields in the body are optional (partial update). Auth: JWT required for all
      Error 400: Invalid photo_id.
      Error 404: No photos found for user OR image for that photo_id is already empty.
 
-(An additional section, Family, has PATCH /api/v1/profile/family/ with body: father_name, father_occupation, mother_name, mother_occupation, brothers, married_brothers, sisters, married_sisters, about_family — not part of the 7-step completion.)
+(An additional section, Family, has PATCH /api/v1/profile/family/ with JSON body including: father_name, father_status, father_occupation, mother_name, mother_status, mother_occupation, brothers, married_brothers, sisters, married_sisters, about_family, family_type, family_status — father_status and mother_status are Alive or Late; not part of the 7-step completion.)
 
 --- Base profile (full) ---
 GET /api/v1/profile/
@@ -4517,7 +4529,7 @@ GET /api/v1/profile/
         "religion_details": { "religion_id", "religion", "caste_id", "caste", "mother_tongue_id", "mother_tongue", "partner_religion_preference" },
         "personal_details": { "marital_status_id", "marital_status", "children_count", "height_cm", "weight_kg", "colour", "blood_group" },
         "location_details": { "country_id", "country", "state_id", "state", "district_id", "district", "city_id", "city", "address" },
-        "family_details": { "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers", "married_brothers", "sisters", "married_sisters", "about_family" },
+        "family_details": { "father_name", "father_status", "father_occupation", "mother_name", "mother_status", "mother_occupation", "brothers", "married_brothers", "sisters", "married_sisters", "about_family", "family_type", "family_status" },
         "education_details": { "highest_education_id", "highest_education", "education_subject_id", "education_subject", "employment_status", "occupation_id", "occupation", "annual_income_id", "annual_income" },
         "about_me": "string"
       }
@@ -4563,28 +4575,140 @@ DELETE /api/v1/profile/photos/{photo_id}/
 --- 3. Religion Details ---
 GET /api/v1/profile/religion/
   Auth: Required (JWT)
-  Response 200: { "success": true, "data": { "religion_id", "religion", "caste_id", "caste", "mother_tongue_id", "mother_tongue", "partner_religion_preference", "partner_preference_type", "partner_religion_ids", "partner_caste_preference" } }
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "religion_id": 1,
+        "religion": "Hindu",
+        "caste_id": 10,
+        "caste": "Nair",
+        "mother_tongue_id": 3,
+        "mother_tongue": "Malayalam",
+        "partner_religion_preference": "same_religion_only",
+        "partner_preference_type": "specific_religions",
+        "partner_preference_type_label": "Specific religions",
+        "partner_religion_ids": [1, 2],
+        "partner_religion_names": ["Hindu", "Christian"],
+        "partner_caste_preferences": {
+          "1": [10, 12],
+          "2": [21]
+        }
+      }
+    }
+  Notes:
+    - partner_preference_type values: own_religion_only | open_to_all | specific_religions
+    - partner_caste_preferences key is religion_id (string/int), value is array of caste IDs for that religion.
 
 PATCH /api/v1/profile/religion/
   Auth: Required (JWT)
-  Body (JSON): { "religion_id", "caste_id", "mother_tongue_id", "partner_religion_preference", "partner_preference_type", "partner_religion_ids", "partner_caste_preference" }
-  Response 200: { "success": true, "data": { ... } }
+  Body (JSON) (all fields optional, partial update):
+    {
+      "religion_id": 1,
+      "caste_id": 10,
+      "mother_tongue_id": 3,
+      "partner_religion_preference": "same_religion_only",
+      "partner_preference_type": "specific_religions",
+      "partner_religion_ids": [1, 2],
+      "partner_caste_preferences": {
+        "1": [10, 12],
+        "2": [21]
+      }
+    }
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "religion_id": 1,
+        "religion": "Hindu",
+        "caste_id": 10,
+        "caste": "Nair",
+        "mother_tongue_id": 3,
+        "mother_tongue": "Malayalam",
+        "partner_religion_preference": "same_religion_only",
+        "partner_preference_type": "specific_religions",
+        "partner_preference_type_label": "Specific religions",
+        "partner_religion_ids": [1, 2],
+        "partner_religion_names": ["Hindu", "Christian"],
+        "partner_caste_preferences": {
+          "1": [10, 12],
+          "2": [21]
+        }
+      }
+    }
+  Error 400 (examples):
+    - Invalid religion_id / caste_id / mother_tongue_id.
+    - partner_preference_type invalid.
+    - partner_religion_ids contains invalid/inactive religion IDs.
+    - partner_caste_preferences contains invalid caste IDs or caste not belonging to religion key.
 
 --- 3a. Partner Preferences (religion/caste for matches) ---
 GET /api/v1/profile/partner-preferences/
+  Alias also supported: GET /api/v1/profile/partner-preference/
   Auth: Required (JWT)
-  Returns structured partner preference used to filter matches. If user has no religion record, returns defaults.
-  Response 200: { "success": true, "data": { "partner_preference_type", "partner_religion_ids", "partner_caste_preference" } }
-  partner_preference_type: "own_religion_only" | "open_to_all" | "specific_religions"
-  partner_religion_ids: array of religion IDs (used when type is specific_religions)
-  partner_caste_preference: "any" | "own_caste_only"
+  Returns structured partner preference used by matching/filtering. If user has no religion row yet, defaults are returned.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "partner_preference_type": "specific_religions",
+        "partner_preference_type_label": "Specific religions",
+        "partner_religion_ids": [1, 2],
+        "partner_religion_names": ["Hindu", "Christian"],
+        "partner_caste_preferences": {
+          "1": [10, 12],
+          "2": [21]
+        }
+      }
+    }
+  partner_preference_type:
+    - own_religion_only
+    - open_to_all
+    - specific_religions
+  Mode rules:
+    - own_religion_only:
+      - partner_religion_ids ignored for filtering.
+      - system uses current user's religion as effective religion preference.
+      - caste map may contain only own religion key when provided.
+    - open_to_all:
+      - partner_religion_ids and partner_caste_preferences are cleared/ignored.
+    - specific_religions:
+      - partner_religion_ids required and must contain valid active religion IDs.
+      - partner_caste_preferences keys must be subset of partner_religion_ids.
+      - each caste ID must be valid and belong to that religion key.
 
 PATCH /api/v1/profile/partner-preferences/
+  Alias also supported: PATCH /api/v1/profile/partner-preference/
   Auth: Required (JWT)
-  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preference": "any"|"own_caste_only" }
-  All fields optional (partial update). When partner_preference_type is "specific_religions", partner_religion_ids must contain valid active religion IDs.
-  Response 200: { "success": true, "data": { "partner_preference_type", "partner_religion_ids", "partner_caste_preference" } }
-  Error 400: Invalid or inactive religion id(s) in partner_religion_ids.
+  Body (JSON) (all optional):
+    {
+      "partner_preference_type": "specific_religions",
+      "partner_religion_ids": [1, 2],
+      "partner_caste_preferences": {
+        "1": [10, 12],
+        "2": [21]
+      }
+    }
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "partner_preference_type": "specific_religions",
+        "partner_preference_type_label": "Specific religions",
+        "partner_religion_ids": [1, 2],
+        "partner_religion_names": ["Hindu", "Christian"],
+        "partner_caste_preferences": {
+          "1": [10, 12],
+          "2": [21]
+        }
+      }
+    }
+  Error 400 (examples):
+    - Invalid partner_preference_type.
+    - partner_religion_ids missing when type = specific_religions.
+    - partner_religion_ids contains invalid/inactive religion ID.
+    - partner_caste_preferences has invalid key/value shape.
+    - caste does not belong to religion key or religion key not in selected partner_religion_ids.
 
 --- 4. Personal Details ---
 GET /api/v1/profile/personal/
@@ -4613,13 +4737,69 @@ PATCH /api/v1/profile/location/
 --- 6. Family Details ---
 GET /api/v1/profile/family/
   Auth: Required (JWT)
-  Response 200: { "success": true, "data": { "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers", "married_brothers", "sisters", "married_sisters", "about_family" } }
-  Empty object {} if never updated.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "father_name": "Ravi Kumar",
+        "father_status": "Alive",
+        "father_occupation": "Business",
+        "mother_name": "Lakshmi Ravi",
+        "mother_status": "Late",
+        "mother_occupation": "Homemaker",
+        "brothers": 1,
+        "married_brothers": 0,
+        "sisters": 2,
+        "married_sisters": 1,
+        "about_family": "Traditional family with modern values.",
+        "family_type": "Nuclear",
+        "family_status": "Upper Middle Class"
+      }
+    }
+  father_status and mother_status are "" if unset, else "Alive" or "Late".
+  Empty defaults for all string fields if never updated.
 
 PATCH /api/v1/profile/family/
   Auth: Required (JWT)
-  Body (JSON): { "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers": int (≥0), "married_brothers": int (≥0), "sisters": int (≥0), "married_sisters": int (≥0), "about_family": string }
-  All optional. Response 200: { "success": true, "data": { ... } }
+  Body (JSON) (all optional, partial update):
+    {
+      "father_name": "Ravi Kumar",
+      "father_status": "Alive",
+      "father_occupation": "Business",
+      "mother_name": "Lakshmi Ravi",
+      "mother_status": "Late",
+      "mother_occupation": "Homemaker",
+      "brothers": 1,
+      "married_brothers": 0,
+      "sisters": 2,
+      "married_sisters": 1,
+      "about_family": "Traditional family with modern values.",
+      "family_type": "Nuclear",
+      "family_status": "Upper Middle Class"
+    }
+  father_status and mother_status: optional; if set, must be Alive or Late (case-insensitive accepted; stored as Alive or Late).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "father_name": "Ravi Kumar",
+        "father_status": "Alive",
+        "father_occupation": "Business",
+        "mother_name": "Lakshmi Ravi",
+        "mother_status": "Late",
+        "mother_occupation": "Homemaker",
+        "brothers": 1,
+        "married_brothers": 0,
+        "sisters": 2,
+        "married_sisters": 1,
+        "about_family": "Traditional family with modern values.",
+        "family_type": "Nuclear",
+        "family_status": "Upper Middle Class"
+      }
+    }
+  Error 400 (examples):
+    - father_status / mother_status must be Alive or Late.
+    - brothers / sisters / married_brothers / married_sisters must be non-negative integers.
 
 --- 7. Education & Occupation ---
 GET /api/v1/profile/education/
@@ -4733,9 +4913,30 @@ POST /api/v1/profile/religion/
       "partner_religion_preference": "string (optional, legacy)",
       "partner_preference_type": "own_religion_only | open_to_all | specific_religions (optional)",
       "partner_religion_ids": [int, ...] (optional; required when partner_preference_type is specific_religions; valid active religion IDs)",
-      "partner_caste_preference": "any | own_caste_only (optional)"
+      "partner_caste_preferences": "{ \"<religion_id>\": [<caste_id>, ...] } (optional)"
     }
-  Response 200: { "success": true, "message": "Religion saved." }
+  Response 200:
+    {
+      "success": true,
+      "message": "Religion saved.",
+      "data": {
+        "religion_id": 1,
+        "religion": "Hindu",
+        "caste_id": 10,
+        "caste": "Nair",
+        "mother_tongue_id": 3,
+        "mother_tongue": "Malayalam",
+        "partner_religion_preference": "same_religion_only",
+        "partner_preference_type": "specific_religions",
+        "partner_preference_type_label": "Specific religions",
+        "partner_religion_ids": [1, 2],
+        "partner_religion_names": ["Hindu", "Christian"],
+        "partner_caste_preferences": {
+          "1": [10, 12],
+          "2": [21]
+        }
+      }
+    }
   Error 400: Validation error if any ID does not exist or is inactive, or invalid partner_religion_ids.
 
 ---
@@ -5340,9 +5541,9 @@ Profile visibility: Male → Female only; Female → Male only; Other → both. 
 --- Match List API ---
 GET /api/v1/matches/
   Matches are automatically filtered by the logged-in user's partner religion (and optionally caste) preference:
-  - own_religion_only: only same religion (and same caste if partner_caste_preference is own_caste_only)
+  - own_religion_only: same religion; if caste ids are configured in partner_caste_preferences for own religion, matches are restricted to those castes
   - open_to_all: no religion/caste filter from preference
-  - specific_religions: only profiles whose religion is in partner_religion_ids
+  - specific_religions: profiles whose religion is in partner_religion_ids; for religions that have caste ids in partner_caste_preferences, caste filter is applied within that religion
   Query params religion_id and caste_id further narrow results (intersection with preference).
 
   Query parameters (all optional):
@@ -5360,6 +5561,13 @@ GET /api/v1/matches/
     marital_status (integer, marital_status id)
     profile_with_photo (1, true, yes = only profiles with photo)
     sort_by       (newest | most_relevant | best_match; default newest)
+
+  Ordering (after filters, before pagination; ProfileView is not used in SQL ORDER BY):
+    newest         — created_at descending (newest signups first)
+    best_match     — match score descending
+    most_relevant  — relevance score descending (same model as best_match in DB)
+    Unknown sort value falls back like newest: -created_at.
+  For a home/slider, use GET /api/v1/matches/home-slider/ (not a query param on this URL).
 
   Response 200:
     {
@@ -5392,11 +5600,23 @@ GET /api/v1/matches/
     }
 
   Per profile entry:
-    is_already_viewed — true if this member was already opened as a full profile before (ProfileView exists).
+    is_already_viewed — true if a ProfileView row exists for (viewer=you, profile=that member's UserProfile), e.g. after a full
+      profile open, contact unlock, or POST /api/v1/profiles/{matri_id}/view/.
     is_able_to_view — true if full profile can be opened: is_already_viewed OR plan has remaining profile views (or unlimited). Aligns with GET /api/v1/profiles/{matri_id}/.
     can_view_details — same boolean as is_able_to_view (per entry).
 
   Match list does NOT expose: phone, email, family details, contact number.
+
+--- Match Home Slider API ---
+GET /api/v1/matches/home-slider/
+  Auth: Required (JWT)
+  Same filters and same response 200 shape as GET /api/v1/matches/ (page, limit, search, age_*, height_*, optional FKs,
+  profile_with_photo, etc.), but sort_by is ignored.
+  Ordering: unviewed (no ProfileView) first. Among viewed, by ProfileView.last_viewed_at ascending (least recently
+    shown first; each POST /api/v1/profiles/{matri_id}/view/ or full profile open updates last_viewed_at, so a profile
+    re-shown in the slider moves to the end of the viewed list). Tertiary: member created_at desc; then user id.
+
+  Response 200: Same structure as GET /api/v1/matches/ (total_profiles, page, limit, profiles[] with the same per-profile fields).
 
 --- Filter Options API ---
 GET /api/v1/matches/filters/
@@ -5444,6 +5664,22 @@ GET /api/v1/profiles/{matri_id}/preview/
   Error 400: Cannot view own profile here.
   Error 404: Profile not found.
 
+--- Record profile view (analytics / match ordering) ---
+POST /api/v1/profiles/{matri_id}/view/
+  Auth: Required (JWT)
+  Purpose: Record that the current user opened this member's profile. One ProfileView row per (viewer, profile); each POST
+    updates last_viewed_at so GET /api/v1/matches/home-slider/ can re-order (re-touched profiles sink to the end among
+    already-viewed). Does not consume plan profile-view quota. Combine with full profile or preview as needed.
+  Repeat calls: Each successful POST updates last_viewed_at; safe to call many times for the same matri_id.
+  Path parameter: matri_id (string, e.g. AM100012)
+  Request body: none (no JSON body; send Content-Length: 0 or omit body).
+
+  Success 200:
+    { "success": true }
+
+  Error 400: Cannot view own profile.
+  Error 404: Profile not found (unknown matri_id, not visible, or target has no UserProfile row).
+
 --- Full Profile API (by matri_id) ---
 GET /api/v1/profiles/{matri_id}/full/
   Auth: Required (JWT)
@@ -5454,7 +5690,7 @@ GET /api/v1/profiles/{matri_id}/full/
     - If can_view:
         - Build full profile (includes contact and family).
         - Decrement profile view count via PlanLimitService.consume_profile_view(user).
-        - Create ProfileView record (viewer, viewed_user).
+        - Create or update ProfileView (viewer, profile) and set last_viewed_at (touch); consume on first create only.
         - Refresh plan info so profile_views_remaining reflects the decrement.
     - If cannot view:
         - Return restricted profile (no contact, no family_details).
@@ -5500,17 +5736,30 @@ POST /api/v1/interests/send/
 MY INTERESTS (COMBINED)
 GET /api/v1/interests/my/
   Auth: Required (JWT)
-  Description: Return both sent and received interests for current user (no pagination).
+  Description: Return both sent and received interests for current user (each section paginated separately).
+  Query params:
+    sent_page           (default 1)
+    sent_page_size      (default 10, max 50)
+    sent_limit          (deprecated alias for sent_page_size)
+    received_page       (default 1)
+    received_page_size  (default 10, max 50)
+    received_limit      (deprecated alias for received_page_size)
   Response 200:
     {
       "success": true,
       "data": {
         "sent": {
           "total": N,
+          "page": 1,
+          "page_size": 10,
+          "limit": 10,
           "results": [ <interest_card>, ... ]
         },
         "received": {
           "total": M,
+          "page": 1,
+          "page_size": 10,
+          "limit": 10,
           "results": [ <interest_card>, ... ]
         }
       }
@@ -5520,14 +5769,18 @@ SENT INTERESTS
 GET /api/v1/interests/sent/
   Auth: Required (JWT)
   Query params:
-    page  (default 1)
-    limit (default 10, max 50)
+    page      (default 1)
+    page_size (default 10, max 50)
+    limit     (deprecated alias for page_size; used when page_size is not sent)
   Returns only interests sent by current user, paginated.
   Response 200:
     {
       "success": true,
       "data": {
         "total": N,
+        "page": 1,
+        "page_size": 10,
+        "limit": 10,
         "results": [ <interest_card>, ... ]
       }
     }
@@ -5535,7 +5788,11 @@ GET /api/v1/interests/sent/
 RECEIVED INTERESTS
 GET /api/v1/interests/received/
   Auth: Required (JWT)
-  Same pagination and response format as /sent/, but for interests where current user is receiver.
+  Query params:
+    page      (default 1)
+    page_size (default 10, max 50)
+    limit     (deprecated alias for page_size; used when page_size is not sent)
+  Same response format as /sent/, but for interests where current user is receiver.
 
 RESPOND TO INTEREST
 POST /api/v1/interests/respond/
@@ -5586,10 +5843,18 @@ Interest card fields (for all list responses):
 GET /api/v1/chat/list/
   Auth: Required (JWT)
   Description: Returns all conversations for the current user (chat list for sidebar).
+  Query params:
+    page      (default 1)
+    page_size (default 20, max 100)
+    limit     (deprecated alias for page_size; used when page_size is not sent)
   Response 200:
     {
       "success": true,
       "data": {
+        "total": 12,
+        "page": 1,
+        "page_size": 20,
+        "limit": 20,
         "conversations": [
           {
             "conversation_id": 1,
@@ -5662,13 +5927,13 @@ POST /api/v1/contact/unlock/
   Logic:
     - If matri_id is missing: 400 "matri_id is required."
     - If plan expired or no active plan: 403 with standard "Your plan expired" response.
-    - If profile not found: 404 "Profile not found."
+    - If profile not found (unknown matri_id) or target has no UserProfile: 404 "Profile not found."
     - If user tries to unlock their own contact: 400 "Cannot view your own contact details."
     - Call PlanLimitService.can_view_contact(user):
         - If False: 403 "Upgrade plan to view contact".
         - If True:
-            - If there is no existing ProfileView for (viewer, target) and PlanLimitService.can_view_profile(user) is False: 403 "Upgrade plan to view profile" (first-time unlock requires a profile view credit; opening full profile first counts as viewed).
-            - Else, in one transaction: PlanLimitService.consume_contact_view(user). If no ProfileView row existed yet: ProfileView.get_or_create(viewer, viewed_user) and PlanLimitService.consume_profile_view(user) only when the row was newly created (same rules as GET full profile).
+            - If there is no existing ProfileView for (viewer, target's UserProfile) and PlanLimitService.can_view_profile(user) is False: 403 "Upgrade plan to view profile" (first-time unlock requires a profile view credit; opening full profile first counts as viewed).
+            - Else, in one transaction: PlanLimitService.consume_contact_view(user). If no ProfileView row existed yet: ProfileView.get_or_create for (viewer, profile = target's UserProfile) and PlanLimitService.consume_profile_view(user) only when the row was newly created (same rules as GET full profile).
     - Success response includes full profile payload and is_viewed_by_me: true so preview/full endpoints stay consistent.
   Success 200:
     {
@@ -5711,7 +5976,7 @@ POST /api/v1/chat/start/
 
 --- Plan limit logic ---
   PlanLimitService: can_view_profile, can_send_interest, can_chat, can_view_contact. Each action decrements the corresponding counter (profile_views_used, interests_used, chat_used, contact_views_used).
-  View full profile → decrement profile_views_used; create ProfileView record.
+  View full profile → decrement profile_views_used; create or attach ProfileView (viewer, UserProfile) record.
   Send interest → decrement interests_used.
   Chat (initiation) → decrement chat_used (call when user starts chat; not done by permission API).
   View contact → decrement contact_views_used.
@@ -5788,14 +6053,16 @@ POST /api/v1/wishlist/toggle/
 GET /api/v1/wishlist/
   Auth: Required (JWT)
   Query params:
-    page  (default 1)
-    limit (default 10, max 50)
+    page      (default 1)
+    page_size (default 10, max 50)
+    limit     (deprecated alias for page_size; used when page_size is not sent)
   Response 200:
     {
       "success": true,
       "data": {
         "total": 3,
         "page": 1,
+        "page_size": 10,
         "limit": 10,
         "profiles": [
           {
@@ -5992,6 +6259,45 @@ Validation rules/messages:
       "Story is already published"
   - Only one featured story is allowed at a time.
     When a story is featured, previous featured story is automatically unfeatured.
+
+--- PUBLIC SUCCESS STORIES (Website) ---
+GET /api/v1/website/success-stories/
+  Auth: None
+  Query params:
+    page (optional): page number (1-based; default 1)
+  Pagination: page size 20 (Django REST framework PageNumberPagination; same as other list APIs in this project).
+  Returns:
+    - status = published
+    - created_by = admin user (role admin), not staff/branch
+  Ordering: featured first, then newest first.
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "count": 45,
+        "next": "http://host/api/v1/website/success-stories/?page=2",
+        "previous": null,
+        "stories": [
+          {
+            "id": 7,
+            "couple_name_1": "Arun",
+            "couple_name_2": "Meera",
+            "couple_names": "Arun & Meera",
+            "wedding_date": "2026-01-15",
+            "location": "Kochi",
+            "couple_photo": "http://host/media/success_stories/arun_meera.jpg",
+            "description": "Their success story text...",
+            "status": "published",
+            "is_featured": true,
+            "views_count": 128,
+            "created_at": "2026-03-23T12:00:00Z"
+          }
+        ]
+      }
+    }
+  Notes:
+    - last page: "next" is null; first page: "previous" is null
+    - invalid/empty page may return 404 (DRF default)
 
 --- LIST SUCCESS STORIES ---
 GET /api/v1/admin/success-stories/

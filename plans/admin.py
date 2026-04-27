@@ -39,9 +39,9 @@ class UserPlanAdmin(admin.ModelAdmin):
 
 @admin.register(ProfileView)
 class ProfileViewAdmin(admin.ModelAdmin):
-    list_display = ('viewer', 'viewed_user', 'timestamp')
-    list_filter = ('timestamp',)
-    raw_id_fields = ('viewer', 'viewed_user')
+    list_display = ('viewer', 'profile', 'last_viewed_at', 'created_at')
+    list_filter = ('created_at', 'last_viewed_at')
+    raw_id_fields = ('viewer', 'profile')
 
 
 @admin.register(Interest)

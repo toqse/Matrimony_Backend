@@ -5,6 +5,8 @@ from django.db import models
 from django.conf import settings
 from core.models import TimeStampedModel
 
+from core.watermark import watermark_model_images
+
 __all__ = [
     'UserProfile',
     'UserLocation',
@@ -105,16 +107,9 @@ class UserReligion(TimeStampedModel):
         default=PARTNER_PREFERENCE_ALL, blank=True
     )
     partner_religion_ids = models.JSONField(default=list, blank=True)  # list of Religion IDs when type is specific_religions
-    PARTNER_CASTE_ANY = 'any'
-    PARTNER_CASTE_OWN = 'own_caste_only'
-    PARTNER_CASTE_CHOICES = [
-        (PARTNER_CASTE_ANY, 'Any'),
-        (PARTNER_CASTE_OWN, 'Own caste only'),
-    ]
-    partner_caste_preference = models.CharField(
-        max_length=20, choices=PARTNER_CASTE_CHOICES,
-        default=PARTNER_CASTE_ANY, blank=True
-    )
+    # Per-religion caste selection for partner preference:
+    # { "<religion_id>": [<caste_id>, ...], ... }
+    partner_caste_preferences = models.JSONField(default=dict, blank=True)
     gothram = models.CharField(max_length=150, blank=True)
 
     class Meta:
@@ -150,12 +145,22 @@ class UserPersonal(TimeStampedModel):
 
 
 class UserFamily(TimeStampedModel):
+    class ParentStatus(models.TextChoices):
+        ALIVE = 'Alive', 'Alive'
+        LATE = 'Late', 'Late'
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_family'
     )
     father_name = models.CharField(max_length=150, blank=True)
+    father_status = models.CharField(
+        max_length=20, choices=ParentStatus.choices, blank=True, default=''
+    )
     father_occupation = models.CharField(max_length=150, blank=True)
     mother_name = models.CharField(max_length=150, blank=True)
+    mother_status = models.CharField(
+        max_length=20, choices=ParentStatus.choices, blank=True, default=''
+    )
     mother_occupation = models.CharField(max_length=150, blank=True)
     brothers = models.PositiveSmallIntegerField(default=0)
     married_brothers = models.PositiveSmallIntegerField(default=0)
@@ -218,3 +223,11 @@ class UserPhotos(TimeStampedModel):
 
     def __str__(self):
         return f'Photos of {self.user.matri_id}'
+
+    def save(self, *args, **kwargs):
+        watermark_model_images(
+            self,
+            watermark_path=settings.BASE_DIR / 'WhatsApp Image 2026-04-24 at 4.40.09 PM.png',
+            exclude_fields=('aadhaar_front', 'aadhaar_back'),
+        )
+        super().save(*args, **kwargs)

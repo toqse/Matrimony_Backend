@@ -1,10 +1,11 @@
 """
 Match list: age from dob, height value, match percentage.
 """
-from datetime import date
-from django.db.models import Q
+from datetime import date, timedelta
+from django.db.models import Q, Value, IntegerField, Case, When
 
 from core.dob_utils import calculate_age
+from profiles.models import UserReligion, UserEducation, UserLocation
 
 
 def age_from_dob(dob):
@@ -56,3 +57,84 @@ def compute_match_percentage(viewer, profile_user, viewer_rel, viewer_pers, view
     # Base so we don't return 0 for everyone (30 base + up to 70 from above = 100)
     base = 30
     return min(100, base + score)
+
+
+def build_user_match_score_sql_expression(viewer):
+    """
+    DB expression aligned with compute_match_percentage (0–100) for SQL ordering.
+    """
+    viewer_rel = UserReligion.objects.filter(user=viewer).only('religion_id').first()
+    viewer_edu = UserEducation.objects.filter(user=viewer).only(
+        'highest_education_id', 'occupation_id',
+    ).first()
+    viewer_loc = UserLocation.objects.filter(user=viewer).only('state_id').first()
+
+    parts = [Value(30, output_field=IntegerField())]
+    v_rid = viewer_rel.religion_id if viewer_rel else None
+    if v_rid:
+        parts.append(
+            Case(
+                When(user_religion__religion_id=v_rid, then=Value(20)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+    else:
+        parts.append(Value(0, output_field=IntegerField()))
+    v_eid = viewer_edu.highest_education_id if viewer_edu else None
+    if v_eid:
+        parts.append(
+            Case(
+                When(user_education__highest_education_id=v_eid, then=Value(15)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+    else:
+        parts.append(Value(0, output_field=IntegerField()))
+    v_sid = viewer_loc.state_id if viewer_loc else None
+    if v_sid:
+        parts.append(
+            Case(
+                When(user_location__state_id=v_sid, then=Value(15)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+    else:
+        parts.append(Value(0, output_field=IntegerField()))
+    v_oid = viewer_edu.occupation_id if viewer_edu else None
+    if v_oid:
+        parts.append(
+            Case(
+                When(user_education__occupation_id=v_oid, then=Value(10)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+    else:
+        parts.append(Value(0, output_field=IntegerField()))
+    va = None
+    if getattr(viewer, 'dob', None):
+        va = age_from_dob(viewer.dob)
+    if va is not None:
+        today = date.today()
+        dob_lo = today - timedelta(days=int(365.25 * (va + 5)))
+        dob_hi = today - timedelta(days=int(365.25 * max(0, va - 5)))
+        if dob_lo <= dob_hi:
+            parts.append(
+                Case(
+                    When(dob__gte=dob_lo, dob__lte=dob_hi, then=Value(10)),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                )
+            )
+        else:
+            parts.append(Value(0, output_field=IntegerField()))
+    else:
+        parts.append(Value(0, output_field=IntegerField()))
+
+    total = parts[0]
+    for p in parts[1:]:
+        total = total + p
+    return total

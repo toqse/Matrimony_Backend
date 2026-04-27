@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 from django.db import IntegrityError
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from core.media import absolute_media_url
@@ -165,7 +166,12 @@ class ProfilePreviewByMatriIdView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        is_viewed_by_me = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
+        target_up = UserProfile.objects.filter(user=profile_user).first()
+        is_viewed_by_me = (
+            ProfileViewModel.objects.filter(viewer=viewer, profile=target_up).exists()
+            if target_up
+            else False
+        )
         interest_status, is_interest_sent = get_interest_ui_state_for_viewer(viewer, profile_user)
         is_wishlisted = Wishlist.objects.filter(user=viewer, profile=profile_user).exists()
 
@@ -184,10 +190,9 @@ class ProfilePreviewByMatriIdView(APIView):
 
         city = location.get('city')
         state = location.get('state')
-        if city and state:
-            location_str = f'{city}, {state}'
-        else:
-            location_str = city or state or None
+        # Preview card expects the location field to carry city first.
+        # Keep state as a fallback when city is not available.
+        location_str = city or state or None
 
         height_val = personal.get('height_cm')
         height_str = None
@@ -211,6 +216,13 @@ class ProfilePreviewByMatriIdView(APIView):
             can_chat_flag and has_accepted_interest_between(viewer, profile_user)
         )
         is_able_to_view = bool(is_viewed_by_me or can_view_flag)
+        opposite_profile = getattr(profile_user, 'user_profile', None)
+        can_horoscope_match = bool(
+            getattr(profile_user, 'dob', None)
+            and opposite_profile
+            and getattr(opposite_profile, 'time_of_birth', None)
+            and (getattr(opposite_profile, 'place_of_birth', '') or '').strip()
+        )
 
         data = {
             'matri_id': profile_user.matri_id or '',
@@ -239,6 +251,7 @@ class ProfilePreviewByMatriIdView(APIView):
             'is_interest_sent': is_interest_sent,
             'interest_status': interest_status,
             'is_horoscope_sent': False,
+            'can_horoscope_match': can_horoscope_match,
         }
 
         out = {'success': True, 'data': {**data, 'is_viewed_by_me': is_viewed_by_me}}
@@ -289,7 +302,12 @@ class PublicProfileByMatriIdView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        already_viewed = ProfileViewModel.objects.filter(viewer=viewer, viewed_user=profile_user).exists()
+        target_up = UserProfile.objects.filter(user=profile_user).first()
+        already_viewed = (
+            ProfileViewModel.objects.filter(viewer=viewer, profile=target_up).exists()
+            if target_up
+            else False
+        )
         can_view, remaining = PlanLimitService.can_view_profile(viewer)
         plan_info = get_plan_info_for_response(viewer)
         # Build plan block for "view details" UI so frontend can display plan
@@ -302,15 +320,20 @@ class PublicProfileByMatriIdView(APIView):
         }
 
         if already_viewed:
-            # Already unlocked earlier; do not decrement again.
+            # Already unlocked earlier; do not decrement again. Bump last_viewed_at for home-slider ordering.
             data = _build_profile_data_for_user(profile_user, request=request, include_contact=True, include_family=True)
+            if target_up:
+                ProfileViewModel.objects.filter(viewer=viewer, profile=target_up).update(
+                    last_viewed_at=timezone.now()
+                )
         elif can_view:
-            # First-time full view: record view and consume once (idempotent with get_or_create).
+            # First-time full view: record view and consume once. touch() updates last_viewed_at on every repeat.
             data = _build_profile_data_for_user(profile_user, request=request, include_contact=True, include_family=True)
             with transaction.atomic():
-                _, created = ProfileViewModel.objects.get_or_create(viewer=viewer, viewed_user=profile_user)
-                if created:
-                    PlanLimitService.consume_profile_view(viewer)
+                if target_up:
+                    _, created = ProfileViewModel.touch(viewer, target_up)
+                    if created:
+                        PlanLimitService.consume_profile_view(viewer)
             # Refresh plan_block after potential decrement
             plan_info = get_plan_info_for_response(viewer)
             plan_block['profile_views_remaining'] = plan_info.get('profile_views_remaining')
@@ -325,6 +348,50 @@ class PublicProfileByMatriIdView(APIView):
                 'plan': plan_block,
             }
         }, status=status.HTTP_200_OK)
+
+
+class ProfileViewRecordView(APIView):
+    """
+    POST /api/v1/profiles/{matri_id}/view/
+    Idempotently records that the logged-in user viewed this profile (match ordering & analytics).
+    Call as many times as needed for the same matri_id; each call updates last_viewed_at for home-slider reordering.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, matri_id):
+        from accounts.models import User
+        from plans.models import ProfileView
+
+        try:
+            profile_user = User.objects.get(matri_id=matri_id, is_active=True)
+        except User.DoesNotExist:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if profile_user.pk == request.user.pk:
+            return Response(
+                {'success': False, 'error': {'code': 400, 'message': 'Cannot view own profile.'}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not is_profile_visible_to_others(profile_user):
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        up = UserProfile.objects.filter(user=profile_user).first()
+        if not up:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            ProfileView.touch(request.user, up)
+        except IntegrityError:
+            ProfileView.objects.filter(viewer=request.user, profile=up).update(
+                last_viewed_at=timezone.now()
+            )
+        return Response({'success': True}, status=status.HTTP_200_OK)
 
 
 class ProfileCompletionView(APIView):
@@ -387,7 +454,7 @@ class ProfileViewsView(APIView):
 
     def get(self, request):
         from plans.models import ProfileView
-        total = ProfileView.objects.filter(viewed_user=request.user).count()
+        total = ProfileView.objects.filter(profile__user=request.user).count()
         return Response({
             'success': True,
             'data': {'total_views': total},
@@ -479,7 +546,7 @@ class ProfileReligionView(APIView):
         return Response({'success': True, 'data': ReligionDetailsReadSerializer(rel).data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
-        ser = ReligionDetailsUpdateSerializer(data=request.data, partial=True)
+        ser = ReligionDetailsUpdateSerializer(data=request.data, partial=True, context={'request': request})
         ser.is_valid(raise_exception=True)
         defaults = {'partner_religion_preference': ser.validated_data.get('partner_religion_preference', '')}
         if ser.validated_data.get('religion_id') is not None:
@@ -492,8 +559,8 @@ class ProfileReligionView(APIView):
             defaults['partner_preference_type'] = ser.validated_data['partner_preference_type']
         if 'partner_religion_ids' in ser.validated_data:
             defaults['partner_religion_ids'] = ser.validated_data['partner_religion_ids']
-        if 'partner_caste_preference' in ser.validated_data:
-            defaults['partner_caste_preference'] = ser.validated_data['partner_caste_preference']
+        if 'partner_caste_preferences' in ser.validated_data:
+            defaults['partner_caste_preferences'] = ser.validated_data['partner_caste_preferences']
         UserReligion.objects.update_or_create(user=request.user, defaults=defaults)
         mark_profile_step_completed(request.user, 'religion')
         rel = UserReligion.objects.filter(user=request.user).select_related(
@@ -524,7 +591,7 @@ class PartnerPreferencesView(APIView):
             data = {
                 'partner_preference_type': UserReligion.PARTNER_PREFERENCE_ALL,
                 'partner_religion_ids': [],
-                'partner_caste_preference': UserReligion.PARTNER_CASTE_ANY,
+                'partner_caste_preferences': {},
             }
             return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
         data = PartnerPreferencesReadSerializer(rel).data
@@ -538,10 +605,14 @@ class PartnerPreferencesView(APIView):
         return self._update_preferences(request)
 
     def _update_preferences(self, request):
-        ser = PartnerPreferencesUpdateSerializer(data=request.data, partial=True)
-        ser.is_valid(raise_exception=True)
         rel, _ = UserReligion.objects.get_or_create(user=request.user, defaults={})
-        for key in ('partner_preference_type', 'partner_religion_ids', 'partner_caste_preference'):
+        ser = PartnerPreferencesUpdateSerializer(
+            data=request.data,
+            partial=True,
+            context={'request': request, 'existing_obj': rel, 'user': request.user},
+        )
+        ser.is_valid(raise_exception=True)
+        for key in ('partner_preference_type', 'partner_religion_ids', 'partner_caste_preferences'):
             if key in ser.validated_data:
                 setattr(rel, key, ser.validated_data[key])
         rel.save()

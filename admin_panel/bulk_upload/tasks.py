@@ -114,8 +114,10 @@ def _import_single_row(payload: dict, branch_id: int | None):
         defaults={
             "family_type": payload.get("family_type") or "",
             "father_name": payload.get("father_name") or "",
+            "father_status": payload.get("father_status") or "",
             "father_occupation": payload.get("father_occupation") or "",
             "mother_name": payload.get("mother_name") or "",
+            "mother_status": payload.get("mother_status") or "",
             "mother_occupation": payload.get("mother_occupation") or "",
             "family_status": payload.get("family_status") or "",
             "brothers": int(payload.get("num_brothers") or 0),

@@ -38,7 +38,15 @@ def apply_location(user, payload: dict):
 
 
 def apply_religion(user, payload: dict):
-    ser = ReligionDetailsUpdateSerializer(data=payload, partial=True)
+    class _DummyReq:
+        def __init__(self, req_user):
+            self.user = req_user
+
+    ser = ReligionDetailsUpdateSerializer(
+        data=payload,
+        partial=True,
+        context={'request': _DummyReq(user)},
+    )
     ser.is_valid(raise_exception=True)
     vd = ser.validated_data
     defaults = {"partner_religion_preference": vd.get("partner_religion_preference", "")}
@@ -52,8 +60,8 @@ def apply_religion(user, payload: dict):
         defaults["partner_preference_type"] = vd["partner_preference_type"]
     if "partner_religion_ids" in vd:
         defaults["partner_religion_ids"] = vd["partner_religion_ids"]
-    if "partner_caste_preference" in vd:
-        defaults["partner_caste_preference"] = vd["partner_caste_preference"]
+    if "partner_caste_preferences" in vd:
+        defaults["partner_caste_preferences"] = vd["partner_caste_preferences"]
     UserReligion.objects.update_or_create(user=user, defaults=defaults)
     sync_profile_completion_flags(user)
 

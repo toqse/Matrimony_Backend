@@ -10,7 +10,9 @@ from profiles.views import (
     PublicProfileByMatriIdView,
     ProfilePreviewByMatriIdView,
     ProfileRegistrationCompletedView,
+    ProfileViewRecordView,
 )
+from admin_panel.success_stories.views import PublicSuccessStoryListAPIView
 from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
 
 urlpatterns = [
@@ -67,6 +69,7 @@ urlpatterns = [
     path('api/v1/astrology/', include('astrology.urls')),
     path('api/v1/dashboard/', include('dashboard.urls')),
     path('api/v1/profiles/<str:matri_id>/preview/', ProfilePreviewByMatriIdView.as_view()),
+    path('api/v1/profiles/<str:matri_id>/view/', ProfileViewRecordView.as_view()),
     path('api/v1/profiles/<str:matri_id>/full/', PublicProfileByMatriIdView.as_view()),
     path('api/v1/profiles/<str:matri_id>/', PublicProfileByMatriIdView.as_view()),
     path('api/v1/master/', include('master.urls')),
@@ -75,6 +78,7 @@ urlpatterns = [
     path('api/v1/wishlist/', include('wishlist.urls')),
     path('api/v1/plans/', include('plans.urls_plans')),
     path('api/v1/website/plans/', WebsitePlanListView.as_view()),
+    path('api/v1/website/success-stories/', PublicSuccessStoryListAPIView.as_view()),
     path('api/v1/admin/plans/', include('admin_panel.plans.urls')),
     path('api/v1/chat/', include('chat.urls')),
     path('api/v1/settings/', include('user_settings.urls')),

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+/wait-for-redis.sh
+
 echo "Waiting for database (retrying migrate until ready)..."
 until python manage.py migrate --noinput; do
   echo "Database not ready, retrying in 2s..."
