@@ -1,4 +1,4 @@
 #!/bin/bash
 set -e
-/wait-for-docker-dns.sh
+/wait-for-redis.sh
 exec celery "$@"

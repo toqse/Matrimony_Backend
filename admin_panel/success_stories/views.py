@@ -2,7 +2,7 @@ from django.db import transaction
 from django.db.models import Sum
 from rest_framework import serializers
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -22,6 +22,64 @@ def _permission_denied_response():
         {"success": False, "error": {"code": 403, "message": "Insufficient permissions"}},
         status=status.HTTP_403_FORBIDDEN,
     )
+
+
+class PublicSuccessStoryListAPIView(APIView):
+    """
+    GET /api/v1/website/success-stories/
+    Public list: published stories created by an admin (no JWT). Paginated (same defaults as DRF, page size 20).
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @property
+    def paginator(self):
+        if not hasattr(self, "_paginator"):
+            from rest_framework.settings import api_settings
+
+            pagination_class = api_settings.DEFAULT_PAGINATION_CLASS
+            self._paginator = pagination_class() if pagination_class else None
+        return self._paginator
+
+    def paginate_queryset(self, queryset):
+        if self.paginator is None:
+            return None
+        return self.paginator.paginate_queryset(queryset, self.request, view=self)
+
+    def get_paginated_response(self, data):
+        return self.paginator.get_paginated_response(data)
+
+    def get(self, request):
+        qs = (
+            SuccessStory.objects.filter(
+                status=SuccessStory.STATUS_PUBLISHED,
+                created_by__isnull=False,
+                created_by__role=AdminUser.ROLE_ADMIN,
+            )
+            .select_related("created_by")
+            .order_by("-is_featured", "-created_at", "-id")
+        )
+        page = self.paginate_queryset(qs)
+        ser = SuccessStoryListSerializer(
+            page if page is not None else qs, many=True, context={"request": request}
+        )
+        if page is not None:
+            paged = self.get_paginated_response(ser.data)
+            d = paged.data
+            return Response(
+                {
+                    "success": True,
+                    "data": {
+                        "count": d["count"],
+                        "next": d.get("next"),
+                        "previous": d.get("previous"),
+                        "stories": d["results"],
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response({"success": True, "data": {"stories": ser.data}}, status=status.HTTP_200_OK)
 
 
 class SuccessStoryListCreateAPIView(APIView):

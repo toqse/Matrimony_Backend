@@ -10,6 +10,7 @@ from django.core.validators import validate_email
 from django.db.models import Q
 
 from accounts.models import User
+from profiles.parent_status import normalize_parent_status
 from master.models import (
     Caste,
     City,
@@ -348,6 +349,31 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 }
             )
 
+        father_status_norm = normalize_parent_status(r.get("father_status"))
+        if (
+            father_status_norm is None
+            and (r.get("father_status") is not None and str(r.get("father_status")).strip())
+        ):
+            row_err.append(
+                {
+                    "row": row,
+                    "field": "father_status",
+                    "message": "Father's Status must be Alive or Late.",
+                }
+            )
+        mother_status_norm = normalize_parent_status(r.get("mother_status"))
+        if (
+            mother_status_norm is None
+            and (r.get("mother_status") is not None and str(r.get("mother_status")).strip())
+        ):
+            row_err.append(
+                {
+                    "row": row,
+                    "field": "mother_status",
+                    "message": "Mother's Status must be Alive or Late.",
+                }
+            )
+
         c, s, d, ci = _resolve_location(r.get("country"), r.get("state"), r.get("district"), r.get("city"))
         country_raw = (r.get("country") or "").strip()
         if country_raw and not c:
@@ -440,8 +466,10 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 "about_me": about_me,
                 "family_type": (r.get("family_type") or "").strip(),
                 "father_name": (r.get("father_name") or "").strip(),
+                "father_status": (father_status_norm or ""),
                 "father_occupation": (r.get("father_occupation") or "").strip(),
                 "mother_name": (r.get("mother_name") or "").strip(),
+                "mother_status": (mother_status_norm or ""),
                 "mother_occupation": (r.get("mother_occupation") or "").strip(),
                 "family_status": (r.get("family_status") or "").strip(),
                 "num_brothers": int(num_brothers or 0),

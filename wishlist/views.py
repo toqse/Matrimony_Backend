@@ -12,6 +12,22 @@ from .models import Wishlist
 from .serializers import WishlistProfileSerializer, _build_wishlist_profile_dict
 
 
+def _parse_page_params(request, default_page_size=10, max_page_size=50):
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    raw_page_size = request.query_params.get('page_size')
+    if raw_page_size is None:
+        raw_page_size = request.query_params.get('limit', default_page_size)
+    try:
+        page_size = int(raw_page_size)
+    except (TypeError, ValueError):
+        page_size = default_page_size
+    page_size = max(1, min(max_page_size, page_size))
+    return page, page_size
+
+
 class WishlistToggleView(APIView):
     """
     POST /api/v1/wishlist/toggle/
@@ -63,25 +79,18 @@ class WishlistToggleView(APIView):
 class WishlistListView(APIView):
     """
     GET /api/v1/wishlist/
-    Query params: page (default 1), limit (default 10)
+    Query params: page (default 1), page_size (default 10), limit alias supported
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        try:
-            page = max(1, int(request.query_params.get('page', 1)))
-        except (TypeError, ValueError):
-            page = 1
-        try:
-            limit = max(1, min(50, int(request.query_params.get('limit', 10))))
-        except (TypeError, ValueError):
-            limit = 10
+        page, page_size = _parse_page_params(request, default_page_size=10, max_page_size=50)
 
         qs = Wishlist.objects.filter(user=request.user).select_related('profile').order_by('-created_at')
         total = qs.count()
-        start = (page - 1) * limit
-        page_qs = qs[start:start + limit]
+        start = (page - 1) * page_size
+        page_qs = qs[start:start + page_size]
 
         # Preload viewer profile objects for match percentage computation
         viewer = request.user
@@ -131,7 +140,8 @@ class WishlistListView(APIView):
             'data': {
                 'total': total,
                 'page': page,
-                'limit': limit,
+                'page_size': page_size,
+                'limit': page_size,
                 'profiles': ser.data,
             },
         }, status=status.HTTP_200_OK)

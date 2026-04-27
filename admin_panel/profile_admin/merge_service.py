@@ -70,9 +70,12 @@ def merge_user_accounts(primary: "User", duplicate: "User") -> None:
         Interest.objects.filter(sender=primary, receiver=primary).delete()
         _dedupe_interests(primary)
 
+        primary_prof = UserProfile.objects.filter(user=primary).first()
+        duplicate_prof = UserProfile.objects.filter(user=duplicate).first()
+        if primary_prof and duplicate_prof:
+            ProfileView.objects.filter(profile=duplicate_prof).update(profile=primary_prof)
         ProfileView.objects.filter(viewer=duplicate).update(viewer=primary)
-        ProfileView.objects.filter(viewed_user=duplicate).update(viewed_user=primary)
-        ProfileView.objects.filter(viewer=primary, viewed_user=primary).delete()
+        ProfileView.objects.filter(viewer=primary, profile__user=primary).delete()
         _dedupe_profile_views(primary)
 
         Wishlist.objects.filter(user=duplicate).update(user=primary)
@@ -135,8 +138,8 @@ def _dedupe_profile_views(primary):
     from plans.models import ProfileView
 
     seen = set()
-    for row in ProfileView.objects.filter(Q(viewer=primary) | Q(viewed_user=primary)).order_by("id"):
-        key = (row.viewer_id, row.viewed_user_id)
+    for row in ProfileView.objects.filter(Q(viewer=primary) | Q(profile__user=primary)).order_by("id"):
+        key = (row.viewer_id, row.profile_id)
         if key in seen:
             row.delete()
         else:

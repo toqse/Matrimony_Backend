@@ -199,33 +199,45 @@ class Transaction(TimeStampedModel):
         return f'{self.user.matri_id} - {plan_name} - {self.total_amount}'
 
 
-class ProfileView(TimeStampedModel):
-    """Track when a user views another user's full profile."""
+class ProfileView(models.Model):
+    """Track when a user views another member's profile (UserProfile)."""
     viewer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='profile_views_made'
+        related_name='profile_views_made',
     )
-    viewed_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    profile = models.ForeignKey(
+        'profiles.UserProfile',
         on_delete=models.CASCADE,
-        related_name='profile_views_received'
+        related_name='profile_views',
     )
-    timestamp = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_viewed_at = models.DateTimeField(
+        default=timezone.now,
+        help_text='Updated on every profile view; used for home-slider ordering among already-viewed profiles.',
+    )
 
     class Meta:
         db_table = 'plans_profile_view'
-        ordering = ['-timestamp']
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['viewer', 'viewed_user']),
-            models.Index(fields=['viewer', 'timestamp']),
+            models.Index(fields=['viewer', 'profile']),
         ]
         constraints = [
-            models.UniqueConstraint(fields=['viewer', 'viewed_user'], name='uniq_profile_view_pair'),
+            models.UniqueConstraint(fields=['viewer', 'profile'], name='uniq_profile_view_pair'),
         ]
 
+    @classmethod
+    def touch(cls, viewer, user_profile):
+        """Create or update last_viewed_at (one row per viewer+profile). Returns (instance, created)."""
+        return cls.objects.update_or_create(
+            viewer=viewer,
+            profile=user_profile,
+            defaults={'last_viewed_at': timezone.now()},
+        )
+
     def __str__(self):
-        return f'{self.viewer.matri_id} viewed {self.viewed_user.matri_id}'
+        return f'{self.viewer.matri_id} viewed profile {self.profile_id}'
 
 
 class Conversation(TimeStampedModel):

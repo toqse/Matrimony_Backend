@@ -20,6 +20,22 @@ from matches.utils import age_from_dob, compute_match_percentage
 from core.media import absolute_media_url
 
 
+def _parse_page_params(request, default_page_size=8, max_page_size=50):
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    raw_page_size = request.query_params.get('page_size')
+    if raw_page_size is None:
+        raw_page_size = request.query_params.get('limit', default_page_size)
+    try:
+        page_size = int(raw_page_size)
+    except (TypeError, ValueError):
+        page_size = default_page_size
+    page_size = max(1, min(max_page_size, page_size))
+    return page, page_size
+
+
 def _match_queryset(user):
     """Base queryset: opposite gender, exclude self, active users."""
     qs = User.objects.filter(is_active=True).exclude(pk=user.pk)
@@ -37,15 +53,36 @@ def _apply_partner_preference(qs, user):
     viewer_rel = UserReligion.objects.filter(user=user).first()
     if viewer_rel:
         pref_type = getattr(viewer_rel, 'partner_preference_type', None) or UserReligion.PARTNER_PREFERENCE_ALL
+        caste_map = getattr(viewer_rel, 'partner_caste_preferences', None) or {}
+        normalized_caste_map = {}
+        for key, value in caste_map.items():
+            try:
+                rid = int(str(key).strip())
+            except (TypeError, ValueError):
+                continue
+            if isinstance(value, list):
+                normalized_caste_map[rid] = [int(cid) for cid in value if str(cid).strip().isdigit()]
         if pref_type == UserReligion.PARTNER_PREFERENCE_OWN:
-            if viewer_rel.religion_id:
-                qs = qs.filter(user_religion__religion_id=viewer_rel.religion_id)
-                if getattr(viewer_rel, 'partner_caste_preference', None) == UserReligion.PARTNER_CASTE_OWN and viewer_rel.caste_fk_id:
-                    qs = qs.filter(user_religion__caste_fk_id=viewer_rel.caste_fk_id)
+            if not viewer_rel.religion_id:
+                return qs.none()
+            qs = qs.filter(user_religion__religion_id=viewer_rel.religion_id)
+            own_castes = normalized_caste_map.get(int(viewer_rel.religion_id), [])
+            if own_castes:
+                qs = qs.filter(user_religion__caste_fk_id__in=own_castes)
         elif pref_type == UserReligion.PARTNER_PREFERENCE_SPECIFIC:
-            religion_ids = getattr(viewer_rel, 'partner_religion_ids', None) or []
+            religion_ids = [int(x) for x in (getattr(viewer_rel, 'partner_religion_ids', None) or [])]
             if religion_ids:
-                qs = qs.filter(user_religion__religion_id__in=religion_ids)
+                religion_filter = Q()
+                for religion_id in religion_ids:
+                    caste_ids = normalized_caste_map.get(religion_id, [])
+                    if caste_ids:
+                        religion_filter |= Q(
+                            user_religion__religion_id=religion_id,
+                            user_religion__caste_fk_id__in=caste_ids,
+                        )
+                    else:
+                        religion_filter |= Q(user_religion__religion_id=religion_id)
+                qs = qs.filter(religion_filter)
             else:
                 qs = qs.none()
     return qs
@@ -65,6 +102,9 @@ def _build_profile_card(request, user, viewer, include_extended=False):
     profile_photo = None
     if photos and photos.profile_photo:
         profile_photo = absolute_media_url(request, photos.profile_photo)
+    full_photo = None
+    if photos and photos.full_photo:
+        full_photo = absolute_media_url(request, photos.full_photo)
 
     location_str = None
     if loc:
@@ -101,6 +141,7 @@ def _build_profile_card(request, user, viewer, include_extended=False):
         'age': age_from_dob(user.dob) if user.dob else None,
         'location': location_str,
         'profile_photo': profile_photo,
+        'full_photo': full_photo,
         'match_percentage': match_pct,
         'is_premium': is_premium,
         'is_new': is_new,
@@ -141,7 +182,7 @@ class DashboardSummaryView(APIView):
         elif loc and loc.state:
             location_str = loc.state.name
 
-        profile_views = ProfileView.objects.filter(viewed_user=user).count()
+        profile_views = ProfileView.objects.filter(profile__user=user).count()
         interests_received = Interest.objects.filter(receiver=user).count()
         interests_sent = Interest.objects.filter(sender=user).count()
 
@@ -202,16 +243,13 @@ class SuggestionsView(APIView):
     """
     GET /api/v1/dashboard/suggestions/
     Suggest profiles based on partner preference, location, age range, education.
-    Query params: limit (default 8)
+    Query params: page (default 1), page_size (default 8), limit alias supported
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
-        try:
-            limit = max(1, min(50, int(request.query_params.get('limit', 8))))
-        except (TypeError, ValueError):
-            limit = 8
+        page, page_size = _parse_page_params(request, default_page_size=8, max_page_size=50)
 
         qs = _match_queryset(user)
         qs = _apply_partner_preference(qs, user)
@@ -224,7 +262,16 @@ class SuggestionsView(APIView):
         # If viewer city is not set, return empty suggestions (city-only mode).
         viewer_loc = UserLocation.objects.filter(user=user).select_related('city').first()
         if not viewer_loc or not viewer_loc.city_id:
-            return Response({'success': True, 'data': []}, status=status.HTTP_200_OK)
+            return Response({
+                'success': True,
+                'data': {
+                    'total': 0,
+                    'page': page,
+                    'page_size': page_size,
+                    'limit': page_size,
+                    'results': [],
+                },
+            }, status=status.HTTP_200_OK)
         qs = qs.filter(user_location__city_id=viewer_loc.city_id)
 
         viewer_age = age_from_dob(user.dob) if user.dob else None
@@ -243,10 +290,22 @@ class SuggestionsView(APIView):
             'user_religion', 'user_religion__religion',
             'user_education', 'user_education__highest_education', 'user_education__occupation',
             'user_photos', 'user_location', 'user_location__state', 'user_location__city',
-        ).distinct().order_by('-created_at')[:limit]
+        ).distinct().order_by('-created_at')
+        total = qs.count()
+        start = (page - 1) * page_size
+        page_qs = qs[start:start + page_size]
 
-        data = [_build_profile_card(request, u, user, include_extended=True) for u in qs]
-        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
+        data = [_build_profile_card(request, u, user, include_extended=True) for u in page_qs]
+        return Response({
+            'success': True,
+            'data': {
+                'total': total,
+                'page': page,
+                'page_size': page_size,
+                'limit': page_size,
+                'results': data,
+            },
+        }, status=status.HTTP_200_OK)
 
 
 class TodayPicksView(APIView):

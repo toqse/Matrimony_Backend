@@ -1,9 +1,11 @@
 import re
 
 from django.db import models
+from django.conf import settings
 
 from admin_panel.auth.models import AdminUser
 from admin_panel.branches.models import Branch
+from core.watermark import watermark_model_images
 
 
 def _next_emp_code() -> str:
@@ -65,6 +67,10 @@ class StaffProfile(models.Model):
     def save(self, *args, **kwargs):
         if not self.emp_code:
             self.emp_code = _next_emp_code()
+        watermark_model_images(
+            self,
+            watermark_path=settings.BASE_DIR / "WhatsApp Image 2026-04-24 at 4.40.09 PM.png",
+        )
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:

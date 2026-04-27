@@ -24,7 +24,7 @@ class UserReligionAdmin(admin.ModelAdmin):
         'caste',
         'mother_tongue',
         'partner_preference_type',
-        'partner_caste_preference',
+        'partner_caste_preferences',
     ]
 
 
@@ -35,7 +35,9 @@ class UserPersonalAdmin(admin.ModelAdmin):
 
 @admin.register(UserFamily)
 class UserFamilyAdmin(admin.ModelAdmin):
-    list_display = ['user', 'father_name', 'mother_name', 'brothers', 'sisters']
+    list_display = [
+        'user', 'father_name', 'father_status', 'mother_name', 'mother_status', 'brothers', 'sisters',
+    ]
 
 
 @admin.register(UserEducation)

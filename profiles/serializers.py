@@ -9,6 +9,126 @@ from .models import (
     UserFamily, UserEducation, UserPhotos,
 )
 from core.media import absolute_media_url
+from .parent_status import normalize_parent_status
+
+
+def _normalize_partner_caste_preferences(raw_value):
+    if raw_value in (None, ''):
+        return {}
+    if not isinstance(raw_value, dict):
+        raise serializers.ValidationError(
+            {'partner_caste_preferences': 'Expected an object like {"<religion_id>": [<caste_id>, ...]}.'}
+        )
+    normalized = {}
+    for key, value in raw_value.items():
+        try:
+            religion_id = int(str(key).strip())
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {'partner_caste_preferences': f'Invalid religion key: {key}.'}
+            )
+        if not isinstance(value, list):
+            raise serializers.ValidationError(
+                {'partner_caste_preferences': f'Religion {religion_id} must map to a list of caste ids.'}
+            )
+        caste_ids = []
+        for caste_id in value:
+            try:
+                caste_ids.append(int(caste_id))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {'partner_caste_preferences': f'Invalid caste id "{caste_id}" for religion {religion_id}.'}
+                )
+        normalized[religion_id] = caste_ids
+    return normalized
+
+
+def _validate_partner_mode_rules(*, attrs, existing_obj=None, user=None):
+    from .models import UserReligion
+    from master.models import Caste, Religion
+
+    pref_type = attrs.get('partner_preference_type')
+    if pref_type is None and existing_obj is not None:
+        pref_type = existing_obj.partner_preference_type or UserReligion.PARTNER_PREFERENCE_ALL
+    pref_type = pref_type or UserReligion.PARTNER_PREFERENCE_ALL
+
+    religion_ids = attrs.get('partner_religion_ids')
+    if religion_ids is None:
+        religion_ids = list(existing_obj.partner_religion_ids or []) if existing_obj is not None else []
+    religion_ids = [int(x) for x in religion_ids]
+
+    caste_map = attrs.get('partner_caste_preferences')
+    if caste_map is None:
+        raw_existing = getattr(existing_obj, 'partner_caste_preferences', {}) if existing_obj is not None else {}
+        caste_map = _normalize_partner_caste_preferences(raw_existing)
+    else:
+        caste_map = _normalize_partner_caste_preferences(caste_map)
+
+    if pref_type == UserReligion.PARTNER_PREFERENCE_ALL:
+        attrs['partner_religion_ids'] = []
+        attrs['partner_caste_preferences'] = {}
+        return attrs
+
+    if pref_type == UserReligion.PARTNER_PREFERENCE_OWN:
+        own_religion_id = None
+        if attrs.get('religion_id') is not None:
+            own_religion_id = int(attrs['religion_id'])
+        elif existing_obj is not None and existing_obj.religion_id:
+            own_religion_id = int(existing_obj.religion_id)
+        elif user is not None:
+            user_rel = UserReligion.objects.filter(user=user).only('religion_id').first()
+            own_religion_id = int(user_rel.religion_id) if user_rel and user_rel.religion_id else None
+        if not own_religion_id:
+            raise serializers.ValidationError(
+                {'partner_caste_preferences': 'Set your religion first before choosing own-religion caste preferences.'}
+            )
+
+        allowed_keys = {own_religion_id}
+        invalid_keys = [rid for rid in caste_map.keys() if rid not in allowed_keys]
+        if invalid_keys:
+            raise serializers.ValidationError(
+                {'partner_caste_preferences': f'Only your own religion id {own_religion_id} is allowed. Invalid keys: {invalid_keys}.'}
+            )
+        attrs['partner_religion_ids'] = []
+        attrs['partner_caste_preferences'] = caste_map
+        target_religion_ids = list(allowed_keys)
+    elif pref_type == UserReligion.PARTNER_PREFERENCE_SPECIFIC:
+        if not religion_ids:
+            raise serializers.ValidationError(
+                {'partner_religion_ids': 'This field is required and cannot be empty for specific_religions.'}
+            )
+        existing_religions = set(
+            Religion.objects.filter(pk__in=religion_ids, is_active=True).values_list('pk', flat=True)
+        )
+        invalid = [rid for rid in religion_ids if rid not in existing_religions]
+        if invalid:
+            raise serializers.ValidationError(
+                {'partner_religion_ids': f'Invalid or inactive religion id(s): {invalid}.'}
+            )
+        invalid_keys = [rid for rid in caste_map.keys() if rid not in set(religion_ids)]
+        if invalid_keys:
+            raise serializers.ValidationError(
+                {'partner_caste_preferences': f'Caste map contains religion ids not selected in partner_religion_ids: {invalid_keys}.'}
+            )
+        attrs['partner_religion_ids'] = religion_ids
+        attrs['partner_caste_preferences'] = caste_map
+        target_religion_ids = religion_ids
+    else:
+        raise serializers.ValidationError({'partner_preference_type': 'Invalid partner_preference_type.'})
+
+    allowed_caste_rows = Caste.objects.filter(
+        religion_id__in=target_religion_ids,
+        pk__in=[cid for ids in caste_map.values() for cid in ids],
+        is_active=True,
+    ).values_list('id', 'religion_id')
+    caste_to_religion = {int(cid): int(rid) for cid, rid in allowed_caste_rows}
+    for rid, caste_ids in caste_map.items():
+        invalid_for_religion = [cid for cid in caste_ids if caste_to_religion.get(cid) != rid]
+        if invalid_for_religion:
+            raise serializers.ValidationError(
+                {'partner_caste_preferences': f'Invalid caste id(s) for religion {rid}: {invalid_for_religion}.'}
+            )
+    return attrs
 
 
 class UserLocationSerializer(serializers.Serializer):
@@ -79,10 +199,7 @@ class UserReligionSerializer(serializers.Serializer):
         required=False,
         allow_empty=True
     )
-    partner_caste_preference = serializers.ChoiceField(
-        choices=['any', 'own_caste_only'],
-        required=False
-    )
+    partner_caste_preferences = serializers.DictField(required=False)
 
     def validate_religion_id(self, value):
         if value is None:
@@ -109,19 +226,11 @@ class UserReligionSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        pref_type = attrs.get('partner_preference_type')
-        religion_ids = attrs.get('partner_religion_ids')
-        if pref_type == 'specific_religions' and religion_ids is not None:
-            from master.models import Religion
-            existing = set(
-                Religion.objects.filter(pk__in=religion_ids, is_active=True).values_list('pk', flat=True)
-            )
-            invalid = [i for i in religion_ids if i not in existing]
-            if invalid:
-                raise serializers.ValidationError({
-                    'partner_religion_ids': f'Invalid or inactive religion id(s): {invalid}.'
-                })
-        return attrs
+        return _validate_partner_mode_rules(
+            attrs=attrs,
+            existing_obj=None,
+            user=self.context['request'].user,
+        )
 
     def create(self, validated_data):
         user = self.context['request'].user
@@ -138,8 +247,8 @@ class UserReligionSerializer(serializers.Serializer):
             defaults['partner_preference_type'] = validated_data['partner_preference_type']
         if 'partner_religion_ids' in validated_data:
             defaults['partner_religion_ids'] = validated_data['partner_religion_ids']
-        if 'partner_caste_preference' in validated_data:
-            defaults['partner_caste_preference'] = validated_data['partner_caste_preference']
+        if 'partner_caste_preferences' in validated_data:
+            defaults['partner_caste_preferences'] = validated_data['partner_caste_preferences']
         obj, _ = UserReligion.objects.update_or_create(user=user, defaults=defaults)
         return obj
 
@@ -372,8 +481,7 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
     partner_preference_type_label = serializers.SerializerMethodField()
     partner_religion_ids = serializers.SerializerMethodField()
     partner_religion_names = serializers.SerializerMethodField()
-    partner_caste_preference = serializers.CharField(allow_blank=True)
-    partner_caste_preference_label = serializers.SerializerMethodField()
+    partner_caste_preferences = serializers.SerializerMethodField()
 
     def get_religion(self, obj):
         return obj.religion.name if obj.religion_id else None
@@ -392,13 +500,10 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
             (obj.partner_preference_type or '').strip(), ''
         )
 
-    def get_partner_caste_preference_label(self, obj):
-        if hasattr(obj, 'get_partner_caste_preference_display'):
-            return obj.get_partner_caste_preference_display()
-        from .models import UserReligion
-        return dict(UserReligion.PARTNER_CASTE_CHOICES).get(
-            (obj.partner_caste_preference or '').strip(), ''
-        )
+    def get_partner_caste_preferences(self, obj):
+        raw = getattr(obj, 'partner_caste_preferences', None) or {}
+        normalized = _normalize_partner_caste_preferences(raw)
+        return {str(rid): caste_ids for rid, caste_ids in normalized.items()}
 
     def get_partner_religion_ids(self, obj):
         ids = obj.partner_religion_ids or []
@@ -482,8 +587,10 @@ class LocationDetailsReadSerializer(serializers.Serializer):
 
 class FamilyDetailsReadSerializer(serializers.Serializer):
     father_name = serializers.CharField()
+    father_status = serializers.CharField(allow_blank=True)
     father_occupation = serializers.CharField()
     mother_name = serializers.CharField()
+    mother_status = serializers.CharField(allow_blank=True)
     mother_occupation = serializers.CharField()
     brothers = serializers.IntegerField()
     married_brothers = serializers.IntegerField()
@@ -567,10 +674,7 @@ def empty_religion_details_read_data():
         ),
         'partner_religion_ids': [],
         'partner_religion_names': [],
-        'partner_caste_preference': UserReligion.PARTNER_CASTE_ANY,
-        'partner_caste_preference_label': dict(UserReligion.PARTNER_CASTE_CHOICES).get(
-            UserReligion.PARTNER_CASTE_ANY, ''
-        ),
+        'partner_caste_preferences': {},
     }
 
 
@@ -618,8 +722,10 @@ def empty_education_details_read_data():
 def empty_family_details_read_data():
     return {
         'father_name': '',
+        'father_status': '',
         'father_occupation': '',
         'mother_name': '',
+        'mother_status': '',
         'mother_occupation': '',
         'brothers': 0,
         'married_brothers': 0,
@@ -699,7 +805,12 @@ class PartnerPreferencesReadSerializer(serializers.Serializer):
     """GET /api/v1/profile/partner-preferences/ response."""
     partner_preference_type = serializers.CharField()
     partner_religion_ids = serializers.ListField(child=serializers.IntegerField())
-    partner_caste_preference = serializers.CharField()
+    partner_caste_preferences = serializers.SerializerMethodField()
+
+    def get_partner_caste_preferences(self, obj):
+        raw = getattr(obj, 'partner_caste_preferences', None) or {}
+        normalized = _normalize_partner_caste_preferences(raw)
+        return {str(rid): caste_ids for rid, caste_ids in normalized.items()}
 
 
 class PartnerPreferencesUpdateSerializer(serializers.Serializer):
@@ -717,25 +828,15 @@ class PartnerPreferencesUpdateSerializer(serializers.Serializer):
         required=False,
         allow_empty=True
     )
-    partner_caste_preference = serializers.ChoiceField(
-        choices=['any', 'own_caste_only'],
-        required=False
-    )
+    partner_caste_preferences = serializers.DictField(required=False)
 
     def validate(self, attrs):
-        pref_type = attrs.get('partner_preference_type')
-        religion_ids = attrs.get('partner_religion_ids')
-        if pref_type == 'specific_religions' and religion_ids is not None:
-            from master.models import Religion
-            existing = set(
-                Religion.objects.filter(pk__in=religion_ids, is_active=True).values_list('pk', flat=True)
-            )
-            invalid = [i for i in religion_ids if i not in existing]
-            if invalid:
-                raise serializers.ValidationError({
-                    'partner_religion_ids': f'Invalid or inactive religion id(s): {invalid}.'
-                })
-        return attrs
+        existing_obj = self.context.get('existing_obj')
+        user = self.context.get('user')
+        if user is None:
+            request = self.context.get('request')
+            user = getattr(request, 'user', None) if request else None
+        return _validate_partner_mode_rules(attrs=attrs, existing_obj=existing_obj, user=user)
 
 
 class ReligionDetailsUpdateSerializer(serializers.Serializer):
@@ -751,7 +852,7 @@ class ReligionDetailsUpdateSerializer(serializers.Serializer):
         required=False
     )
     partner_religion_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=True)
-    partner_caste_preference = serializers.ChoiceField(choices=['any', 'own_caste_only'], required=False)
+    partner_caste_preferences = serializers.DictField(required=False)
 
     def validate(self, attrs):
         from master.models import Caste, MotherTongue, Religion
@@ -794,17 +895,10 @@ class ReligionDetailsUpdateSerializer(serializers.Serializer):
                 )
             attrs['mother_tongue_id'] = mt.id
 
-        pref_type = attrs.get('partner_preference_type')
-        religion_ids = attrs.get('partner_religion_ids')
-        if pref_type == 'specific_religions' and religion_ids is not None:
-            existing = set(
-                Religion.objects.filter(pk__in=religion_ids, is_active=True).values_list('pk', flat=True)
-            )
-            invalid = [i for i in religion_ids if i not in existing]
-            if invalid:
-                raise serializers.ValidationError({
-                    'partner_religion_ids': f'Invalid or inactive religion id(s): {invalid}.'
-                })
+        request = self.context.get('request')
+        user = getattr(request, 'user', None) if request else None
+        existing_obj = UserReligion.objects.filter(user=user).first() if user is not None else None
+        attrs = _validate_partner_mode_rules(attrs=attrs, existing_obj=existing_obj, user=user)
         final_rid = attrs.get('religion_id')
         final_cid = attrs.get('caste_id')
         if final_cid is not None and final_rid is not None:
@@ -1006,8 +1100,10 @@ class LocationDetailsUpdateSerializer(serializers.Serializer):
 
 class FamilyDetailsUpdateSerializer(serializers.Serializer):
     father_name = serializers.CharField(required=False, allow_blank=True)
+    father_status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     father_occupation = serializers.CharField(required=False, allow_blank=True)
     mother_name = serializers.CharField(required=False, allow_blank=True)
+    mother_status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     mother_occupation = serializers.CharField(required=False, allow_blank=True)
     brothers = serializers.IntegerField(required=False, min_value=0)
     married_brothers = serializers.IntegerField(required=False, min_value=0)
@@ -1016,6 +1112,18 @@ class FamilyDetailsUpdateSerializer(serializers.Serializer):
     about_family = serializers.CharField(required=False, allow_blank=True)
     family_type = serializers.CharField(required=False, allow_blank=True)
     family_status = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_father_status(self, value):
+        n = normalize_parent_status(value)
+        if n is None and (value is not None and str(value).strip()):
+            raise serializers.ValidationError('Must be Alive or Late.')
+        return n or ''
+
+    def validate_mother_status(self, value):
+        n = normalize_parent_status(value)
+        if n is None and (value is not None and str(value).strip()):
+            raise serializers.ValidationError('Must be Alive or Late.')
+        return n or ''
 
 
 class EducationDetailsUpdateSerializer(serializers.Serializer):

@@ -42,6 +42,7 @@ from profiles.models import (
     UserProfile,
     UserReligion,
 )
+from profiles.parent_status import normalize_parent_status
 from profiles.utils import get_profile_completion_data
 
 CACHE_PREFIX = "bulk_upload:"
@@ -123,8 +124,10 @@ _LABEL_TO_KEY: dict[str, str] = {
     "working location": "working_location",
     "about me": "about_me",
     "father name": "father_name",
+    "father status": "father_status",
     "father occupation": "father_occupation",
     "mother name": "mother_name",
+    "mother status": "mother_status",
     "mother occupation": "mother_occupation",
     "no. of brothers": "num_brothers",
     "no. of sisters": "num_sisters",
@@ -461,6 +464,31 @@ def validate_rows(
                     }
                 )
 
+        father_status_norm = normalize_parent_status(row.get("father_status"))
+        if (
+            father_status_norm is None
+            and (row.get("father_status") is not None and str(row.get("father_status")).strip())
+        ):
+            row_errors.append(
+                {
+                    "row": row_index,
+                    "field": "father_status",
+                    "message": "Father's Status must be Alive or Late.",
+                }
+            )
+        mother_status_norm = normalize_parent_status(row.get("mother_status"))
+        if (
+            mother_status_norm is None
+            and (row.get("mother_status") is not None and str(row.get("mother_status")).strip())
+        ):
+            row_errors.append(
+                {
+                    "row": row_index,
+                    "field": "mother_status",
+                    "message": "Mother's Status must be Alive or Late.",
+                }
+            )
+
         errors.extend(row_errors)
 
         if row_errors:
@@ -555,8 +583,10 @@ def validate_rows(
             "working_location": (row.get("working_location") or "").strip(),
             "about_me": (row.get("about_me") or "").strip(),
             "father_name": (row.get("father_name") or "").strip(),
+            "father_status": father_status_norm or "",
             "father_occupation": (row.get("father_occupation") or "").strip(),
             "mother_name": (row.get("mother_name") or "").strip(),
+            "mother_status": mother_status_norm or "",
             "mother_occupation": (row.get("mother_occupation") or "").strip(),
             "brothers": brothers,
             "sisters": sisters,
@@ -703,12 +733,16 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
     married_brothers = int(_first("married_brothers", "num_married_brothers", default=0) or 0)
     married_sisters = int(_first("married_sisters", "num_married_sisters", default=0) or 0)
 
+    fs = normalize_parent_status(payload.get("father_status"))
+    ms = normalize_parent_status(payload.get("mother_status"))
     UserFamily.objects.update_or_create(
         user=user,
         defaults={
             "father_name": payload.get("father_name") or "",
+            "father_status": (fs or ""),
             "father_occupation": payload.get("father_occupation") or "",
             "mother_name": payload.get("mother_name") or "",
+            "mother_status": (ms or ""),
             "mother_occupation": payload.get("mother_occupation") or "",
             "brothers": brothers,
             "sisters": sisters,

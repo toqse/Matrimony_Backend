@@ -16,6 +16,23 @@ from matches.serializers import format_last_seen
 from core.media import absolute_media_url
 
 
+def _parse_page_params(request, default_page_size=20, max_page_size=100):
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    raw_page_size = request.query_params.get('page_size')
+    if raw_page_size is None:
+        raw_page_size = request.query_params.get('limit', default_page_size)
+    try:
+        page_size = int(raw_page_size)
+    except (TypeError, ValueError):
+        page_size = default_page_size
+    page_size = max(1, min(max_page_size, page_size))
+    return page, page_size
+
+
 def _other_user(conv, current_user):
     return conv.user2 if current_user.pk == conv.user1_id else conv.user1
 
@@ -41,6 +58,7 @@ class ChatListView(APIView):
         user = request.user
         if get_user_plan_status(user) != 'active':
             return Response(plan_expired_response(user), status=status.HTTP_403_FORBIDDEN)
+        page, page_size = _parse_page_params(request, default_page_size=20, max_page_size=100)
         convs = (
             Conversation.objects.filter(
                 Q(user1=user) | Q(user2=user)
@@ -48,7 +66,7 @@ class ChatListView(APIView):
             .select_related('user1', 'user2')
             .order_by('-updated_at')
         )
-        out = []
+        conversations = []
         for conv in convs:
             other = _other_user(conv, user)
             # Hide conversations if interest was not accepted (defense-in-depth).
@@ -58,7 +76,7 @@ class ChatListView(APIView):
             unread = Message.objects.filter(
                 conversation=conv
             ).exclude(sender=user).filter(read_at__isnull=True).count()
-            out.append({
+            conversations.append({
                 'conversation_id': conv.id,
                 'other_user': {
                     'matri_id': other.matri_id or '',
@@ -73,10 +91,17 @@ class ChatListView(APIView):
                 'unread_count': unread,
                 'updated_at': conv.updated_at.isoformat() if conv.updated_at else None,
             })
+        total = len(conversations)
+        start = (page - 1) * page_size
+        page_items = conversations[start:start + page_size]
         return Response({
             'success': True,
             'data': {
-                'conversations': out,
+                'total': total,
+                'page': page,
+                'page_size': page_size,
+                'limit': page_size,
+                'conversations': page_items,
             },
         }, status=status.HTTP_200_OK)
 

@@ -11,6 +11,7 @@ from rest_framework.parsers import JSONParser
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.models import User
+from profiles.models import UserProfile
 from core.permissions import IsAdmin
 from user_settings.models import UserSettings
 from django.db import transaction
@@ -32,6 +33,32 @@ from .services import (
     get_user_plan_status,
     has_accepted_interest_between,
 )
+
+
+def _parse_page_params(
+    request,
+    page_param='page',
+    page_size_param='page_size',
+    limit_param='limit',
+    default_page_size=10,
+    max_page_size=50
+):
+    try:
+        page = int(request.query_params.get(page_param, 1) or 1)
+    except (TypeError, ValueError):
+        page = 1
+
+    raw_page_size = request.query_params.get(page_size_param)
+    if raw_page_size is None:
+        raw_page_size = request.query_params.get(limit_param, default_page_size)
+    try:
+        page_size = int(raw_page_size)
+    except (TypeError, ValueError):
+        page_size = default_page_size
+
+    page = max(1, page)
+    page_size = max(1, min(max_page_size, page_size))
+    return page, page_size
 
 
 # --- Admin Plan CRUD ---
@@ -474,25 +501,55 @@ class MyInterestsView(APIView):
 
     def get(self, request):
         user = request.user
+        sent_page, sent_page_size = _parse_page_params(
+            request,
+            page_param='sent_page',
+            page_size_param='sent_page_size',
+            limit_param='sent_limit',
+            default_page_size=10,
+            max_page_size=50,
+        )
+        received_page, received_page_size = _parse_page_params(
+            request,
+            page_param='received_page',
+            page_size_param='received_page_size',
+            limit_param='received_limit',
+            default_page_size=10,
+            max_page_size=50,
+        )
+
         sent_qs = Interest.objects.filter(sender=user).select_related('receiver').order_by('-created_at')
         received_qs = Interest.objects.filter(receiver=user).select_related('sender').order_by('-created_at')
+        sent_total = sent_qs.count()
+        received_total = received_qs.count()
+
+        sent_start = (sent_page - 1) * sent_page_size
+        received_start = (received_page - 1) * received_page_size
+        sent_page_qs = sent_qs[sent_start:sent_start + sent_page_size]
+        received_page_qs = received_qs[received_start:received_start + received_page_size]
 
         sent_ser = InterestListSerializer(
-            sent_qs, many=True, context={'direction': 'sent', 'request': request}
+            sent_page_qs, many=True, context={'direction': 'sent', 'request': request}
         )
         received_ser = InterestListSerializer(
-            received_qs, many=True, context={'direction': 'received', 'request': request}
+            received_page_qs, many=True, context={'direction': 'received', 'request': request}
         )
 
         return Response({
             'success': True,
             'data': {
                 'sent': {
-                    'total': sent_qs.count(),
+                    'total': sent_total,
+                    'page': sent_page,
+                    'page_size': sent_page_size,
+                    'limit': sent_page_size,
                     'results': sent_ser.data,
                 },
                 'received': {
-                    'total': received_qs.count(),
+                    'total': received_total,
+                    'page': received_page,
+                    'page_size': received_page_size,
+                    'limit': received_page_size,
                     'results': received_ser.data,
                 },
             },
@@ -508,21 +565,14 @@ class SentInterestsView(APIView):
 
     def get(self, request):
         user = request.user
-        try:
-            page = int(request.query_params.get('page', 1) or 1)
-        except ValueError:
-            page = 1
-        try:
-            limit = int(request.query_params.get('limit', 10) or 10)
-        except ValueError:
-            limit = 10
-        page = max(1, page)
-        limit = max(1, min(limit, 50))
+        page, page_size = _parse_page_params(
+            request, default_page_size=10, max_page_size=50
+        )
 
         qs = Interest.objects.filter(sender=user).select_related('receiver').order_by('-created_at')
         total = qs.count()
-        start = (page - 1) * limit
-        end = start + limit
+        start = (page - 1) * page_size
+        end = start + page_size
         page_qs = qs[start:end]
 
         ser = InterestListSerializer(
@@ -532,6 +582,9 @@ class SentInterestsView(APIView):
             'success': True,
             'data': {
                 'total': total,
+                'page': page,
+                'page_size': page_size,
+                'limit': page_size,
                 'results': ser.data,
             },
         }, status=status.HTTP_200_OK)
@@ -546,21 +599,14 @@ class ReceivedInterestsView(APIView):
 
     def get(self, request):
         user = request.user
-        try:
-            page = int(request.query_params.get('page', 1) or 1)
-        except ValueError:
-            page = 1
-        try:
-            limit = int(request.query_params.get('limit', 10) or 10)
-        except ValueError:
-            limit = 10
-        page = max(1, page)
-        limit = max(1, min(limit, 50))
+        page, page_size = _parse_page_params(
+            request, default_page_size=10, max_page_size=50
+        )
 
         qs = Interest.objects.filter(receiver=user).select_related('sender').order_by('-created_at')
         total = qs.count()
-        start = (page - 1) * limit
-        end = start + limit
+        start = (page - 1) * page_size
+        end = start + page_size
         page_qs = qs[start:end]
 
         ser = InterestListSerializer(
@@ -570,6 +616,9 @@ class ReceivedInterestsView(APIView):
             'success': True,
             'data': {
                 'total': total,
+                'page': page,
+                'page_size': page_size,
+                'limit': page_size,
                 'results': ser.data,
             },
         }, status=status.HTTP_200_OK)
@@ -759,8 +808,15 @@ class ContactUnlockView(APIView):
                 'error': {'code': 403, 'message': 'Upgrade plan to view contact'}
             }, status=status.HTTP_403_FORBIDDEN)
 
+        target_profile = UserProfile.objects.filter(user=target).first()
+        if not target_profile:
+            return Response({
+                'success': False,
+                'error': {'code': 404, 'message': 'Profile not found.'}
+            }, status=status.HTTP_404_NOT_FOUND)
+
         already_viewed = ProfileViewModel.objects.filter(
-            viewer=request.user, viewed_user=target
+            viewer=request.user, profile=target_profile
         ).exists()
         if not already_viewed:
             can_profile, _ = PlanLimitService.can_view_profile(request.user)
@@ -775,12 +831,9 @@ class ContactUnlockView(APIView):
 
         with transaction.atomic():
             PlanLimitService.consume_contact_view(request.user)
-            if not already_viewed:
-                _, created = ProfileViewModel.objects.get_or_create(
-                    viewer=request.user, viewed_user=target
-                )
-                if created:
-                    PlanLimitService.consume_profile_view(request.user)
+            _, created = ProfileViewModel.touch(request.user, target_profile)
+            if created:
+                PlanLimitService.consume_profile_view(request.user)
 
         profile = _build_profile_data_for_user(
             target, request=request, include_contact=True, include_family=True

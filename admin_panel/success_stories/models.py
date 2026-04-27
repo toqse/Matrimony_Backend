@@ -1,6 +1,8 @@
 from django.db import models
+from django.conf import settings
 
 from admin_panel.auth.models import AdminUser
+from core.watermark import watermark_model_images
 
 
 class SuccessStory(models.Model):
@@ -41,3 +43,10 @@ class SuccessStory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.couple_name_1} & {self.couple_name_2}"
+
+    def save(self, *args, **kwargs):
+        watermark_model_images(
+            self,
+            watermark_path=settings.BASE_DIR / "WhatsApp Image 2026-04-24 at 4.40.09 PM.png",
+        )
+        super().save(*args, **kwargs)

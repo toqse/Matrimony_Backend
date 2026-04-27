@@ -11,6 +11,7 @@ from uuid import UUID
 
 from django.db.models import Exists, OuterRef, Q, Sum
 from django.db.models.functions import Coalesce
+from django.utils import timezone as dj_tz
 
 from accounts.models import User
 from admin_panel.auth.models import AdminUser
@@ -21,9 +22,13 @@ from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.models import AstrologyPdfCredit, Horoscope
 from astrology.serializers import HoroscopeSerializer
 from astrology.services.chart_url import build_horoscope_chart_absolute_url
-from astrology.services.generate_ui_service import kuja_dosham_horoscope
+from astrology.services.generate_ui_service import (
+    kendra_malefic_count_horoscope,
+    kuja_dosham_horoscope,
+)
 from astrology.services.horoscope_runtime import create_or_update_horoscope
 from astrology.services.porutham_service import calculate_porutham
+from astrology.services.vimshottari_service import seconds_until_mahadasha_end
 from master.models import Branch as MasterBranch
 from plans.models import UserPlan
 from profiles.models import UserProfile
@@ -300,10 +305,38 @@ def panel_porutham(
     if not bride or not groom:
         return None, "Bride or groom horoscope not found. Regenerate birth charts first."
     porutham = calculate_porutham(bride, groom)
+    kuja_bride = kuja_dosham_horoscope(bride)
+    kuja_groom = kuja_dosham_horoscope(groom)
+    kuja_matched = kuja_bride == kuja_groom
+
+    bride_kendra_malefic = kendra_malefic_count_horoscope(bride)
+    groom_kendra_malefic = kendra_malefic_count_horoscope(groom)
+    papam_samyam_matched = abs(bride_kendra_malefic - groom_kendra_malefic) <= 1
+
+    ref = dj_tz.now()
+    bride_dasa_seconds = seconds_until_mahadasha_end(bride, ref)
+    groom_dasa_seconds = seconds_until_mahadasha_end(groom, ref)
+    dasa_sandhi = False
+    if bride_dasa_seconds is not None and groom_dasa_seconds is not None:
+        dasa_sandhi = bride_dasa_seconds < 90 * 86400 or groom_dasa_seconds < 90 * 86400
+
     # Horoscope payloads first so clients / DevTools show them without scrolling past score fields.
     payload = {
         "bride_horoscope": HoroscopeSerializer(bride).data,
         "groom_horoscope": HoroscopeSerializer(groom).data,
+        "flags": {
+            "kuja_dosham_bride": kuja_bride,
+            "kuja_dosham_groom": kuja_groom,
+            "dasa_sandhi": dasa_sandhi,
+            "papam_samyam_matched": papam_samyam_matched,
+            "kendra_malefic_bride": bride_kendra_malefic,
+            "kendra_malefic_groom": groom_kendra_malefic,
+        },
+        # Backward-safe aliases used by some admin clients.
+        "kujadhosham": kuja_matched,
+        "papam_samyam": papam_samyam_matched,
+        "papam_samaytam": papam_samyam_matched,
+        "dasa_sandhi": dasa_sandhi,
         **porutham,
     }
     if request is not None:

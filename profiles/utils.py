@@ -5,6 +5,7 @@ About Me generator: professional matrimony-style paragraph from profile data.
 import math
 from django.db.models import IntegerField, Value
 from django.db.models.functions import Cast, Coalesce
+from .parent_status import PARENT_STATUS_VALUES
 from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
     UserFamily, UserEducation, UserPhotos,
@@ -34,9 +35,9 @@ def _family_completion_ratio(user):
     if not fam:
         return 0.0
 
-    # Keep this aligned with editable family text fields to avoid counting
+    # Keep this aligned with editable family fields to avoid counting
     # model defaults (e.g. numeric 0) as completed input.
-    tracked_fields = (
+    tracked_text_fields = (
         'father_name',
         'father_occupation',
         'mother_name',
@@ -45,13 +46,19 @@ def _family_completion_ratio(user):
         'family_type',
         'family_status',
     )
+    tracked_status_fields = ('father_status', 'mother_status')
     filled = 0
-    for field in tracked_fields:
+    for field in tracked_text_fields:
         value = getattr(fam, field, '')
         if isinstance(value, str) and value.strip():
             filled += 1
+    for field in tracked_status_fields:
+        value = getattr(fam, field, '') or ''
+        if value in PARENT_STATUS_VALUES:
+            filled += 1
 
-    return filled / len(tracked_fields)
+    total = len(tracked_text_fields) + len(tracked_status_fields)
+    return filled / total
 
 
 def _compute_step_completion(user):
