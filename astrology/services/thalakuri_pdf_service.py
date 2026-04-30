@@ -33,7 +33,18 @@ def build_thalakuri_pdf(horoscope, user, _profile) -> bytes:
     c.setFont('Helvetica', 9)
     grahanila = horoscope.grahanila or {}
     planets = grahanila.get('planets') or {}
-    order = ('sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu', 'gulika')
+    order = (
+        'sun',
+        'moon',
+        'mars',
+        'mercury',
+        'jupiter',
+        'venus',
+        'saturn',
+        'rahu',
+        'ketu',
+        'gulika',
+    )
     for key in order:
         if key not in planets:
             continue

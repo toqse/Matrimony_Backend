@@ -238,7 +238,11 @@ def get_verify_otp_response_data(user, tokens, request=None):
     Includes tokens, matri_id, registration flags, profile completion fields,
     and all previously saved profile data in detail.
     """
-    from profiles.utils import get_profile_completion_data, get_full_profile_data
+    from profiles.utils import (
+        get_profile_completion_data,
+        get_full_profile_data,
+        has_partner_preferences_filled,
+    )
     completion = get_profile_completion_data(user)
     profile_data = get_full_profile_data(user, request=request)
     return {
@@ -249,6 +253,7 @@ def get_verify_otp_response_data(user, tokens, request=None):
         'is_registration_profile_completed': getattr(
             user, 'is_registration_profile_completed', False
         ),
+        'profile_preferences': has_partner_preferences_filled(user),
         'profile_status': completion['profile_status'],
         'profile_steps': completion['profile_steps'],
         'profile_completion_percentage': completion['profile_completion_percentage'],

@@ -148,6 +148,7 @@ POST /api/v1/auth/verify-otp/
         "matri_id": "AM100001",
         "is_registered": true,
         "is_registration_profile_completed": false,
+        "profile_preferences": false,
         "profile_status": "incomplete",
         "profile_steps": {
           "location": false,
@@ -180,6 +181,9 @@ POST /api/v1/auth/verify-otp/
     matri_id           — Unique profile ID (e.g. AM100001)
     is_registered      — Always true on successful verify
     is_registration_profile_completed — True when user has called POST /profile/complete/
+    profile_preferences — True when partner matching preference is meaningfully set (age range, own_religion_only,
+      specific_religions with religion ids, or non-empty partner_caste_preferences). False for untouched default
+      open_to_all with no ages and no narrowing.
     profile_status     — "completed" if all 7 steps done, else "incomplete"
     profile_steps      — Per-step completion: location, religion, personal, family, education, about, photos
     profile_completion_percentage — 0–100 (completed_steps / 7 * 100)
@@ -4097,12 +4101,17 @@ PATCH /api/v1/admin/profiles/{matri_id}/
       },
       "religion_details": {
         "religion_id": 1,
+        "religion": "Hindu",
         "caste_id": 2,
+        "caste": "Nair",
         "mother_tongue_id": 1,
+        "mother_tongue": "Malayalam",
         "partner_religion_preference": "",
         "partner_preference_type": "own_religion_only | open_to_all | specific_religions",
+        "partner_preference_type_label": "Specific religions",
         "partner_religion_ids": [1, 2],
-        "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] },
+        "partner_religion_names": ["Hindu", "Christian"],
+        "partner_caste_preferences": { "<religion_id string>": [<caste_id>, ...] },
         "partner_age_from": 24,
         "partner_age_to": 30
       },
@@ -4139,6 +4148,7 @@ PATCH /api/v1/admin/profiles/{matri_id}/
       },
       "about_me": "Short paragraph text"
     }
+    Note: religion_details above matches GET /api/v1/profile/religion/ (includes partner_age_from/partner_age_to alongside partner prefs).
     Note: Send either marital_status (master name) or marital_status_id, not both.
 
   B) multipart/form-data — same nested JSON in one form field named profile (or data, payload, registration), plus file
@@ -4421,7 +4431,8 @@ Upload Photos: POST /api/v1/profile/photos/
   Body (form): profile_photo, full_photo, selfie_photo, family_photo (each optional file)
 
 Set Partner Preferences: POST /api/v1/profile/partner-preference/ or PATCH /api/v1/profile/partner-preferences/
-  Body (JSON): { "partner_preference_type": "own_religion_only"|"open_to_all"|"specific_religions", "partner_religion_ids": [int, ...], "partner_caste_preferences": { "<religion_id>": [<caste_id>, ...] }, "partner_age_from": int(18-80)|null, "partner_age_to": int(18-80)|null }
+  Request body (JSON): uses master ids — partner_religion_ids, partner_caste_preferences { "<religion_id>": [<caste_id>, ...] }, partner_age_from, partner_age_to (see section 3a).
+  GET same path: response uses display names (partner_religion_names; partner_caste_preferences keyed by religion name → caste name lists), not ids.
 
 --- Plan Upgrade ---
 GET /api/v1/plans/
@@ -4443,7 +4454,7 @@ Quick reference:
   DELETE /profile/photos/{photo_id}/  Delete one specific photo by id
   GET    /profile/religion/     Religion section
   PATCH  /profile/religion/     Update religion
-  GET    /profile/partner-preferences/   Partner religion/caste/age preference
+  GET    /profile/partner-preferences/   Partner pref. (read: religion & caste names; write: ids in PATCH)
   PATCH  /profile/partner-preferences/  Update partner preference
   GET    /profile/personal/     Personal section
   PATCH  /profile/personal/     Update personal
@@ -4475,9 +4486,9 @@ all fields in the body are optional (partial update). Auth: JWT required for all
 
   3. Religion
      PATCH /api/v1/profile/religion/
-     Body (JSON): { "religion_id": int, "caste_id": int, "mother_tongue_id": int, "partner_religion_preference": string, "partner_preference_type", "partner_religion_ids", "partner_caste_preferences" }
-     Response 200: { "success": true, "data": { ... } }
-     Partner preference also has dedicated GET/PATCH at /api/v1/profile/partner-preferences/
+     Body (JSON): Same partner fields as 3a (ids): partner_preference_type, partner_religion_ids, partner_caste_preferences, partner_age_from, partner_age_to, plus religion_id, caste_id, mother_tongue_id, legacy partner_religion_preference.
+     Response 200: { "success": true, "data": { ... } } including partner_age_* on GET.
+     Dedicated partner prefs: PATCH|POST /api/v1/profile/partner-preferences/ (alias partner-preference/) remains available for editing only partner prefs; GET returns display names there (section 3a).
 
   4. Personal
      PATCH /api/v1/profile/personal/
@@ -4595,12 +4606,16 @@ GET /api/v1/profile/religion/
         "partner_caste_preferences": {
           "1": [10, 12],
           "2": [21]
-        }
+        },
+        "partner_age_from": 24,
+        "partner_age_to": 30
       }
     }
   Notes:
     - partner_preference_type values: own_religion_only | open_to_all | specific_religions
-    - partner_caste_preferences key is religion_id (string/int), value is array of caste IDs for that religion.
+    - partner_religion_ids (read) and partner_religion_names (read) are both returned; PATCH body uses ids for partner_religion_ids / partner_caste_preferences (same ids as PATCH /partner-preferences/).
+    - partner_caste_preferences (read): keys are religion_id as string; values are arrays of caste IDs (use GET /profile/partner-preferences/ for religion/caste name-only display).
+    - partner_age_from / partner_age_to optional (nullable, 18–80); validated like section 3a.
 
 PATCH /api/v1/profile/religion/
   Auth: Required (JWT)
@@ -4615,7 +4630,9 @@ PATCH /api/v1/profile/religion/
       "partner_caste_preferences": {
         "1": [10, 12],
         "2": [21]
-      }
+      },
+      "partner_age_from": 24,
+      "partner_age_to": 30
     }
   Response 200:
     {
@@ -4635,7 +4652,9 @@ PATCH /api/v1/profile/religion/
         "partner_caste_preferences": {
           "1": [10, 12],
           "2": [21]
-        }
+        },
+        "partner_age_from": 24,
+        "partner_age_to": 30
       }
     }
   Error 400 (examples):
@@ -4643,87 +4662,144 @@ PATCH /api/v1/profile/religion/
     - partner_preference_type invalid.
     - partner_religion_ids contains invalid/inactive religion IDs.
     - partner_caste_preferences contains invalid caste IDs or caste not belonging to religion key.
+    - partner_age_from/partner_age_to out of range or invalid pair (same rules as 3a).
 
---- 3a. Partner Preferences (religion/caste for matches) ---
+--- 3a. Partner Preferences (religion/caste/age for matches) ---
+Content-Type for write: application/json.
+
+  vs GET /api/v1/profile/religion/ (section 3): religion endpoint returns partner preference fields plus own religion/caste; partner_religion_ids are ids; partner_caste_preferences keys are religion ids → caste id lists.
+  This subsection is only partner preference; GET response omits religion ids for partner religions (partner_religion_names only; partner_caste_preferences uses religion name → caste name lists).
+  partner_age_from / partner_age_to are also returned under GET /profile/religion/ (same underlying UserReligion row).
+
 GET /api/v1/profile/partner-preferences/
   Alias also supported: GET /api/v1/profile/partner-preference/
   Auth: Required (JWT)
-  Returns structured partner preference used by matching/filtering. If user has no religion row yet, defaults are returned.
-  Response 200:
+  Returns structured partner preference used by matching/filtering.
+  If the user has no UserReligion row yet, defaults are returned (open_to_all, empty arrays, age null):
+    {
+      "success": true,
+      "data": {
+        "partner_preference_type": "open_to_all",
+        "partner_preference_type_label": "Open to all religions",
+        "partner_religion_names": [],
+        "partner_caste_preferences": {},
+        "partner_age_from": null,
+        "partner_age_to": null
+      }
+    }
+
+
+  Response 200 (GET returns display names; PATCH/POST body still uses religion and caste ids):
     {
       "success": true,
       "data": {
         "partner_preference_type": "specific_religions",
         "partner_preference_type_label": "Specific religions",
-        "partner_religion_ids": [1, 2],
         "partner_religion_names": ["Hindu", "Christian"],
         "partner_age_from": 24,
         "partner_age_to": 30,
         "partner_caste_preferences": {
-          "1": [10, 12],
-          "2": [21]
+          "Hindu": ["Nair", "Brahmin"],
+          "Christian": ["Roman Catholic"]
         }
       }
     }
-  partner_preference_type:
+
+  Fields (read):
+    partner_preference_type_label — human-readable label for partner_preference_type.
+    partner_religion_names — ordered list of religion names (same order as stored partner_religion_ids).
+    partner_caste_preferences — object: keys are religion names; values are lists of caste names for that religion.
+      If an id no longer resolves (inactive/deleted), the raw id may appear as string key or caste fallback.
+
+  partner_preference_type (string):
     - own_religion_only
     - open_to_all
     - specific_religions
-  Mode rules:
+
+  Mode rules (religion/caste):
     - own_religion_only:
-      - partner_religion_ids ignored for filtering.
-      - system uses current user's religion as effective religion preference.
-      - caste map may contain only own religion key when provided.
+      - Matching uses the user's own religion from their profile.
+      - partner_religion_ids is ignored/cleared for filtering.
+      - partner_caste_preferences may contain only the key for own religion id (if castes provided).
+      - Own religion must be set before own-religion-only caste rules apply.
     - open_to_all:
-      - partner_religion_ids and partner_caste_preferences are cleared/ignored.
+      - Server clears partner_religion_ids and partner_caste_preferences (they do not constrain matches).
+      - Age fields are not cleared by this mode unless explicitly sent null in PATCH.
     - specific_religions:
-      - partner_religion_ids required and must contain valid active religion IDs.
-      - partner_caste_preferences keys must be subset of partner_religion_ids.
-      - each caste ID must be valid and belong to that religion key.
-  Age range rules:
-    - partner_age_from and partner_age_to are optional.
-    - allowed values are 18 to 80.
-    - when both are set: partner_age_from must be less than or equal to partner_age_to.
-    - stored range is applied automatically in match listing.
+      - partner_religion_ids must be non-empty and only active master religion IDs.
+      - Keys in partner_caste_preferences must be a subset of partner_religion_ids.
+      - Each caste id must be active and belong to that religion key.
+
+  Age rules (stored; applied automatically on GET /api/v1/matches/):
+    - partner_age_from and partner_age_to are optional (nullable integers).
+    - Allowed range each: 18 to 80 inclusive.
+    - On PATCH, partial update merges with existing values from DB; validation requires
+      partner_age_from <= partner_age_to when both end up non-null after merge.
+    - To clear a bound: send explicit null for that field in the request body.
 
 PATCH /api/v1/profile/partner-preferences/
-  Alias also supported: PATCH /api/v1/profile/partner-preference/
+POST /api/v1/profile/partner-preferences/
+  Alias also supported: PATCH|POST /api/v1/profile/partner-preference/
   Auth: Required (JWT)
-  Body (JSON) (all optional):
+  Same handler for PATCH and POST ("Set partner preferences").
+  Partial update: all top-level body keys optional; omit a key to leave it unchanged (except cleared by mode).
+
+  Detailed body fields:
+    partner_preference_type (string, optional):
+      - "own_religion_only" | "open_to_all" | "specific_religions"
+
+    partner_religion_ids (array of integers, optional):
+      - Used when partner_preference_type is specific_religions (required non-empty list in that case).
+      - Ignored/cleared server-side when type is open_to_all or own_religion_only for filtering semantics.
+
+    partner_caste_preferences (object, optional):
+      - Keys: religion id as string or number matching master (normalized internally); values: arrays of caste ids.
+      - Example: { "1": [10, 12], "2": [21] }
+
+    partner_age_from (integer or null, optional):
+      - Preferred minimum partner age: 18-80 inclusive, or null to clear stored minimum.
+
+    partner_age_to (integer or null, optional):
+      - Preferred maximum partner age: 18-80 inclusive, or null to clear stored maximum.
+
+  Example: specific religions + caste + age
     {
       "partner_preference_type": "specific_religions",
       "partner_religion_ids": [1, 2],
-      "partner_age_from": 24,
-      "partner_age_to": 30,
       "partner_caste_preferences": {
         "1": [10, 12],
         "2": [21]
-      }
+      },
+      "partner_age_from": 24,
+      "partner_age_to": 30
     }
-  Response 200:
+
+  Example: open_to_all religions + age only
     {
-      "success": true,
-      "data": {
-        "partner_preference_type": "specific_religions",
-        "partner_preference_type_label": "Specific religions",
-        "partner_religion_ids": [1, 2],
-        "partner_religion_names": ["Hindu", "Christian"],
-        "partner_age_from": 24,
-        "partner_age_to": 30,
-        "partner_caste_preferences": {
-          "1": [10, 12],
-          "2": [21]
-        }
+      "partner_preference_type": "open_to_all",
+      "partner_age_from": 25,
+      "partner_age_to": 35
+    }
+
+  Example: own religion only + castes for own religion id (replace 1 with actual religion id)
+    {
+      "partner_preference_type": "own_religion_only",
+      "partner_caste_preferences": {
+        "1": [10, 11]
       }
     }
+
+  Response 200:
+    Same read shape as GET partner-preferences (success + data with display-name fields described under GET; not ids).
+
   Error 400 (examples):
     - Invalid partner_preference_type.
-    - partner_religion_ids missing when type = specific_religions.
+    - partner_religion_ids missing/empty when type = specific_religions.
     - partner_religion_ids contains invalid/inactive religion ID.
-    - partner_caste_preferences has invalid key/value shape.
-    - caste does not belong to religion key or religion key not in selected partner_religion_ids.
-    - partner_age_from / partner_age_to out of allowed range (18-80).
-    - partner_age_to is less than partner_age_from.
+    - partner_caste_preferences has invalid key/value shape or key not in partner_religion_ids.
+    - caste does not belong to religion key or is inactive.
+    - partner_age_from / partner_age_to outside 18-80.
+    - partner_age_to less than partner_age_from after merging with saved values on partial PATCH.
 
 --- 4. Personal Details ---
 GET /api/v1/profile/personal/
@@ -4920,43 +4996,22 @@ POST /api/v1/profile/location/
 
 POST /api/v1/profile/religion/
   Auth: Required (JWT)
-  Body (JSON): Religion step and partner preference in one request. Matches are filtered using partner preference.
+  Body (JSON): Religion step and partner preference in one request (onboarding). Matches use stored partner preference fields.
     {
       "religion_id": "int (optional, must exist in master_religion)",
       "caste_id": "int (optional, must exist in master_caste)",
       "mother_tongue_id": "int (optional, must exist in master_mother_tongue)",
       "partner_religion_preference": "string (optional, legacy)",
       "partner_preference_type": "own_religion_only | open_to_all | specific_religions (optional)",
-      "partner_religion_ids": [int, ...] (optional; required when partner_preference_type is specific_religions; valid active religion IDs)",
+      "partner_religion_ids": [int, ...] (optional; required when partner_preference_type is specific_religions; valid active religion IDs),
       "partner_caste_preferences": "{ \"<religion_id>\": [<caste_id>, ...] } (optional)",
       "partner_age_from": "int 18..80 (optional, nullable)",
       "partner_age_to": "int 18..80 (optional, nullable)"
     }
   Response 200:
-    {
-      "success": true,
-      "message": "Religion saved.",
-      "data": {
-        "religion_id": 1,
-        "religion": "Hindu",
-        "caste_id": 10,
-        "caste": "Nair",
-        "mother_tongue_id": 3,
-        "mother_tongue": "Malayalam",
-        "partner_religion_preference": "same_religion_only",
-        "partner_preference_type": "specific_religions",
-        "partner_preference_type_label": "Specific religions",
-        "partner_religion_ids": [1, 2],
-        "partner_religion_names": ["Hindu", "Christian"],
-        "partner_age_from": 24,
-        "partner_age_to": 30,
-        "partner_caste_preferences": {
-          "1": [10, 12],
-          "2": [21]
-        }
-      }
-    }
-  Error 400: Validation error if any ID does not exist or is inactive, or invalid partner_religion_ids.
+    { "success": true, "message": "Religion saved." }
+  To read back the saved religion + partner fields (ids and names), call GET /api/v1/profile/religion/.
+  Error 400: Validation error if any ID does not exist or is inactive, or invalid partner_religion_ids / partner_caste_preferences.
 
 ---
 

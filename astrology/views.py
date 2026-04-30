@@ -7,6 +7,7 @@ from django.db.models import Exists, OuterRef, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -70,16 +71,17 @@ from .services.public_url_signing import (
 
 PLANET_LABEL_MALAYALAM = {
     'Lagna': 'ല',
-    'Sun': 'സൂ',
+    'Sun': 'ര',
     'Moon': 'ച',
-    'Mars': 'മ',
+    'Mars': 'കു',
     'Mercury': 'ബു',
     'Jupiter': 'ഗു',
     'Venus': 'ശു',
-    'Saturn': 'ശ',
-    'Rahu': 'ര',
+    'Saturn': 'ശി',
+    'Rahu': 'രാ',
     'Ketu': 'കേ',
-    'Gulika': 'ഗു',
+    'Gulika': 'മം',
+    'Yamaghantaka': 'മം',
 }
 
 
@@ -286,6 +288,11 @@ class GenerateHoroscopeView(APIView):
                     )
                     consume_horoscope_match(request.user)
 
+        data['meta'] = {
+            'astrology_engine_version': str(
+                getattr(settings, 'ASTROLOGY_ENGINE_VERSION', '1')
+            ),
+        }
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
 
@@ -478,7 +485,7 @@ class HoroscopeChartView(APIView):
             )
         # Include lang + renderer version to avoid serving stale English chart PNGs.
         cache_key = (
-            f'astrology_chart:{profile_id}:{style}:{lang}:v2:'
+            f'astrology_chart:{profile_id}:{style}:{lang}:v7:'
             f'{horoscope.updated_at.isoformat()}'
         )
         png_bytes = cache.get(cache_key)
@@ -1076,7 +1083,7 @@ def get_chart_data(request, profile_id, chart_type):
         lang = 'ml'
 
     cache_key = (
-        f'astrology_chart_api:{horoscope.pk}:{chart_type}:{lang}:'
+        f'astrology_chart_api:ml-glyphs-v8:{horoscope.pk}:{chart_type}:{lang}:'
         f'{horoscope.updated_at.isoformat()}'
     )
     cached = cache.get(cache_key)
@@ -1142,7 +1149,7 @@ def get_match_chart_data(request, bride_id, groom_id, chart_type):
         lang = 'ml'
 
     cache_key = (
-        'astrology_match_chart_api:'
+        'astrology_match_chart_api:v8:'
         f'{bride_h.pk}:{groom_h.pk}:{chart_type}:{lang}:'
         f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
     )
@@ -1223,7 +1230,7 @@ def get_match_chart_data_partner(request, partner_matri_id, chart_type):
     )
 
     cache_key = (
-        'astrology_match_chart_partner_api:'
+        'astrology_match_chart_partner_api:v8:'
         f'{requester_profile.pk}:{partner_profile.pk}:{chart_type}:{lang}:'
         f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
     )

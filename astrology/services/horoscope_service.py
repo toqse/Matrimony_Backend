@@ -72,6 +72,48 @@ def _calc_flags(use_sidereal: bool) -> int:
     return int(base)
 
 
+def _rise_trans_flags() -> int:
+    """Tropical ephemeris flags for rise/set only (do not use FLG_SIDEREAL here)."""
+    return int(_swe_flag('FLG_SWIEPH', 2) | _swe_flag('FLG_SPEED', 256))
+
+
+def _normalize_place_key(place: str) -> str:
+    s = (place or '').strip().lower()
+    for ch in ',.;':
+        s = s.replace(ch, ' ')
+    return ' '.join(s.split())
+
+
+def _fallback_lat_lon(place: str) -> tuple[float, float] | None:
+    """Stable coordinates for common Kerala place strings (reduces Nominatim variance vs desktop apps)."""
+    n = _normalize_place_key(place)
+    overrides = getattr(settings, 'ASTROLOGY_PLACE_COORDINATES', None) or {}
+    if isinstance(overrides, dict):
+        for key, pair in overrides.items():
+            nk = _normalize_place_key(str(key))
+            if not nk:
+                continue
+            if nk == n or nk in n or n in nk:
+                try:
+                    lat, lon = pair[0], pair[1]
+                    return float(lat), float(lon)
+                except (IndexError, TypeError, ValueError):
+                    continue
+    # Built-ins: substring match on normalized place_of_birth
+    if 'ernakulam' in n or 'kochi' in n or 'cochin' in n:
+        return 9.9816, 76.267304
+    if 'alappuzha' in n or 'alleppey' in n:
+        return 9.4981, 76.338848
+    return None
+
+
+def _resolve_lat_lon(place_of_birth: str) -> tuple[float, float]:
+    fb = _fallback_lat_lon(place_of_birth)
+    if fb is not None:
+        return fb
+    return _geocode_place(place_of_birth)
+
+
 def _lahiri_mode_constant():
     return getattr(swe, 'SIDM_LAHIRI', getattr(swe, 'SE_SIDM_LAHIRI', 1))
 
@@ -161,7 +203,7 @@ def _sun_event_jd(local_date, latitude: float, longitude: float, event: str) -> 
     jd_ref = _julian_day_from_aware(local_noon)
     rsmi = _swe_flag('CALC_RISE' if event == 'rise' else 'CALC_SET')
     geopos = (float(longitude), float(latitude), 0.0)
-    flags = _calc_flags(_use_sidereal())
+    flags = _rise_trans_flags()
 
     attempts = (
         lambda: swe.rise_trans(jd_ref, swe.SUN, rsmi, geopos, 0.0, 0.0, flags),
@@ -181,20 +223,38 @@ def _sun_event_jd(local_date, latitude: float, longitude: float, event: str) -> 
     return None
 
 
-def _gulika_segment_index(weekday_idx: int, is_daytime: bool) -> int:
+def _vedic_weekday(d) -> int:
+    """Sunday=0 … Saturday=6 (Python weekday is Mon=0; convert for traditional tables)."""
+    return int((d.weekday() + 1) % 7)
+
+
+def _gulika_segment_index(vedic_weekday: int, is_daytime: bool) -> int:
     # Segment index is zero-based over the 8 equal divisions.
-    day_segments = (6, 5, 4, 3, 2, 1, 0)   # Sun..Sat -> 7th..1st
-    night_segments = (5, 4, 3, 2, 1, 0, 6)  # Sun..Sat -> 6th..7th
-    return (day_segments if is_daytime else night_segments)[weekday_idx % 7]
+    day_segments = (6, 5, 4, 3, 2, 1, 0)   # Sun..Sat -> Gulika daytime parts (7th .. 1st)
+    night_segments = (5, 4, 3, 2, 1, 0, 6)  # Gulika nighttime parts
+    return (day_segments if is_daytime else night_segments)[vedic_weekday % 7]
 
 
-def _gulika_longitude(
+def _yamaghanta_segment_index(vedic_weekday: int, is_daytime: bool) -> int:
+    """
+    Yamaghantaka (Yamaganda kāla midpoint): Jupiter's ⅛ daytime / night arcs.
+    Daytime indices from common Panchang tables (Sunday = 5th division → segment 4 …).
+    """
+    day_segments = (4, 3, 2, 1, 0, 6, 5)    # Sun..Sat Yamaganda day
+    night_segments = (3, 2, 1, 0, 7, 5, 4)  # Night arc (paired to day block)
+    return (day_segments if is_daytime else night_segments)[vedic_weekday % 7]
+
+
+def _birth_kala_arc(
     date_of_birth,
     time_of_birth,
     latitude: float,
     longitude: float,
-    use_sidereal: bool,
-) -> float | None:
+) -> tuple[float, float, int, bool] | None:
+    """
+    Return (segment_start_jd, segment_end_jd, vedic_weekday_for_arc, is_daytime)
+    covering the sunrise–sunset or sunset–sunrise arc applicable to kāla subdivision.
+    """
     tz = _birth_timezone()
     birth_local = timezone.make_aware(datetime.combine(date_of_birth, time_of_birth), tz)
     birth_jd = _julian_day_from_aware(birth_local)
@@ -205,35 +265,95 @@ def _gulika_longitude(
         return None
 
     if sunrise_today <= birth_jd < sunset_today:
-        segment_start = sunrise_today
-        segment_end = sunset_today
-        weekday_idx = date_of_birth.weekday()
-        is_daytime = True
-    else:
-        is_daytime = False
-        if birth_jd < sunrise_today:
-            prev_date = date_of_birth - timedelta(days=1)
-            prev_sunset = _sun_event_jd(prev_date, latitude, longitude, event='set')
-            if prev_sunset is None:
-                return None
-            segment_start = prev_sunset
-            segment_end = sunrise_today
-            weekday_idx = prev_date.weekday()
-        else:
-            next_date = date_of_birth + timedelta(days=1)
-            next_sunrise = _sun_event_jd(next_date, latitude, longitude, event='rise')
-            if next_sunrise is None:
-                return None
-            segment_start = sunset_today
-            segment_end = next_sunrise
-            weekday_idx = date_of_birth.weekday()
+        return (
+            sunrise_today,
+            sunset_today,
+            _vedic_weekday(date_of_birth),
+            True,
+        )
 
+    if birth_jd < sunrise_today:
+        prev_date = date_of_birth - timedelta(days=1)
+        prev_sunset = _sun_event_jd(prev_date, latitude, longitude, event='set')
+        if prev_sunset is None:
+            return None
+        segment_start = prev_sunset
+        segment_end = sunrise_today
+        vwd = _vedic_weekday(prev_date)
+        return segment_start, segment_end, vwd, False
+
+    next_date = date_of_birth + timedelta(days=1)
+    next_sunrise = _sun_event_jd(next_date, latitude, longitude, event='rise')
+    if next_sunrise is None:
+        return None
+    segment_start = sunset_today
+    segment_end = next_sunrise
+    vwd = _vedic_weekday(date_of_birth)
+    return segment_start, segment_end, vwd, False
+
+
+def _kala_arc_midpoint_longitude(
+    date_of_birth,
+    time_of_birth,
+    latitude: float,
+    longitude: float,
+    use_sidereal: bool,
+    segment_resolver,
+) -> float | None:
+    arc = _birth_kala_arc(date_of_birth, time_of_birth, latitude, longitude)
+    if arc is None:
+        return None
+    segment_start, segment_end, vwd, is_daytime = arc
     duration = segment_end - segment_start
     if duration <= 0:
         return None
-    seg = _gulika_segment_index(weekday_idx, is_daytime)
+    seg = segment_resolver(vwd, is_daytime)
     segment_mid_jd = segment_start + ((seg + 0.5) * (duration / 8.0))
     return _lagna_longitude(segment_mid_jd, latitude, longitude, use_sidereal)
+
+
+def _gulika_longitude(
+    date_of_birth,
+    time_of_birth,
+    latitude: float,
+    longitude: float,
+    use_sidereal: bool,
+) -> float | None:
+    """Gulika (Mandi): midpoint of Saturn's ⅛ day / night kāla."""
+
+    def _resolver(vwd: int, is_daytime: bool) -> int:
+        return _gulika_segment_index(vwd, is_daytime)
+
+    return _kala_arc_midpoint_longitude(
+        date_of_birth,
+        time_of_birth,
+        latitude,
+        longitude,
+        use_sidereal,
+        _resolver,
+    )
+
+
+def _yamaghanta_longitude(
+    date_of_birth,
+    time_of_birth,
+    latitude: float,
+    longitude: float,
+    use_sidereal: bool,
+) -> float | None:
+    """Yamaghantaka: midpoint of Jupiter's ⅛ day / night kāla (yamaganda)."""
+
+    def _resolver(vwd: int, is_daytime: bool) -> int:
+        return _yamaghanta_segment_index(vwd, is_daytime)
+
+    return _kala_arc_midpoint_longitude(
+        date_of_birth,
+        time_of_birth,
+        latitude,
+        longitude,
+        use_sidereal,
+        _resolver,
+    )
 
 
 def _planetary_positions(jd_ut, use_sidereal: bool):
@@ -286,7 +406,7 @@ def generate_horoscope_payload(date_of_birth, time_of_birth, place_of_birth):
         raise RuntimeError('pyswisseph is not installed or failed to import.')
 
     use_sidereal = _use_sidereal()
-    latitude, longitude = _geocode_place(place_of_birth)
+    latitude, longitude = _resolve_lat_lon(place_of_birth)
     jd_ut = _julian_day_utc(date_of_birth, time_of_birth)
 
     positions, moon_longitude = _planetary_positions(jd_ut, use_sidereal)
@@ -304,6 +424,20 @@ def generate_horoscope_payload(date_of_birth, time_of_birth, place_of_birth):
             'short_name': PLANET_NAME_MAP['gulika'],
             'full_name': PLANET_FULL_NAMES['gulika'],
         }
+    yamaghanta_longitude = _yamaghanta_longitude(
+        date_of_birth,
+        time_of_birth,
+        latitude,
+        longitude,
+        use_sidereal,
+    )
+    if yamaghanta_longitude is not None:
+        positions['yamaghanta'] = {
+            'longitude': yamaghanta_longitude,
+            'rasi': rasi_name_from_longitude(yamaghanta_longitude),
+            'short_name': PLANET_NAME_MAP['yamaghanta'],
+            'full_name': PLANET_FULL_NAMES['yamaghanta'],
+        }
     lagna_longitude = _lagna_longitude(jd_ut, latitude, longitude, use_sidereal)
     lagna = rasi_name_from_longitude(lagna_longitude)
 
@@ -311,10 +445,11 @@ def generate_horoscope_payload(date_of_birth, time_of_birth, place_of_birth):
     nakshatra = NAKSHATRA_DATA[nakshatra_index]
     nakshatra_pada = nakshatra_pada_from_longitude(moon_longitude)
 
+    _eng = str(getattr(settings, 'ASTROLOGY_ENGINE_VERSION', '1'))
     chart_basis = (
-        {'zodiac': 'sidereal', 'ayanamsa': 'lahiri'}
+        {'zodiac': 'sidereal', 'ayanamsa': 'lahiri', 'engine_version': _eng}
         if use_sidereal
-        else {'zodiac': 'tropical', 'ayanamsa': None}
+        else {'zodiac': 'tropical', 'ayanamsa': None, 'engine_version': _eng}
     )
 
     payload = {
@@ -383,6 +518,7 @@ class HoroscopeService:
         11: 3,
     }
 
+    # Rasi charts: show 11 markers = Lagna + navagrahas + Gulika.
     _PLANET_ORDER = (
         'sun',
         'moon',
@@ -472,7 +608,6 @@ class HoroscopeService:
         lagna_long = self.get_lagna_longitude()
         if lagna_long is None:
             return {}
-
         lagna_rasi_index = int(lagna_long / 30.0) % 12
         result[RASI_NAMES[lagna_rasi_index]].insert(0, 'Lagna')
 

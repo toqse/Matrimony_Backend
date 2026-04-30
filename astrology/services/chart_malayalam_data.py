@@ -35,7 +35,10 @@ RASI_LABEL_MLY = {
     'Kumbha': 'കുംഭം',
 }
 
-# Graha keys match grahanila JSON planet keys
+# Graha keys match grahanila JSON planet keys.
+# Malayalam abbreviations match standard curriculum table (ചുരുക്കെഴുത്ത് → ഗ്രഹം):
+#   രവി=ര ചന്ദ്രൻ=ച കുജൻ=കു ബുധൻ=ബു ഗുരു=ഗു ശുക്രൻ=ശു ശനി=ശി രാഹു=രാ കേതു=കേ ലഗ്നം=ല
+#   മാന്ദി മം (Gulikan / Mandi abbreviated forms used for gulika + yamaghanta on chart).
 PLANET_MLY = {
     'sun': 'ര',
     'moon': 'ച',
@@ -43,13 +46,14 @@ PLANET_MLY = {
     'mercury': 'ബു',
     'jupiter': 'ഗു',
     'venus': 'ശു',
-    'saturn': 'ശ',
-    'rahu': 'റാ',
+    'saturn': 'ശി',
+    'rahu': 'രാ',
     'ketu': 'കേ',
-    'gulika': 'ഗു',
+    'gulika': 'മം',
+    'yamaghanta': 'മം',
 }
 
-LAGNA_MLY = 'ലഗ്നം'
+LAGNA_MLY = 'ല'
 TITLE_MLY = 'ഗ്രഹനില'
 
 GENDER_MLY = {

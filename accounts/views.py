@@ -196,8 +196,8 @@ class VerifyOTPView(APIView):
     POST /api/v1/auth/verify-otp/
     Body: phone_number, otp.
     Returns: access_token, refresh_token (and in cookie if configured), matri_id,
-             is_registered, is_registration_profile_completed, profile_status,
-             profile_steps, profile_completion_percentage, next_step.
+             is_registered, is_registration_profile_completed, profile_preferences,
+             profile_status, profile_steps, profile_completion_percentage, next_step.
     """
     permission_classes = [AllowAny]
 

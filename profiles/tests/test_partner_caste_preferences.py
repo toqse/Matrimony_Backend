@@ -6,7 +6,7 @@ from accounts.models import User
 from master.models import Caste, Religion
 from matches.views import _apply_partner_age_preference, _apply_partner_preference
 from profiles.models import UserReligion
-from profiles.serializers import PartnerPreferencesUpdateSerializer
+from profiles.serializers import PartnerPreferencesReadSerializer, PartnerPreferencesUpdateSerializer
 
 
 class PartnerCastePreferenceSerializerTests(TestCase):
@@ -70,6 +70,22 @@ class PartnerCastePreferenceSerializerTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         self.assertEqual(serializer.validated_data['partner_age_from'], 24)
         self.assertEqual(serializer.validated_data['partner_age_to'], 30)
+
+    def test_read_serializer_returns_religion_and_caste_names(self):
+        self.user_rel.partner_preference_type = UserReligion.PARTNER_PREFERENCE_SPECIFIC
+        self.user_rel.partner_religion_ids = [self.rel_hindu.id, self.rel_christian.id]
+        self.user_rel.partner_caste_preferences = {
+            str(self.rel_hindu.id): [self.caste_brahmin.id, self.caste_nair.id],
+            str(self.rel_christian.id): [self.caste_rc.id],
+        }
+        self.user_rel.save()
+        data = PartnerPreferencesReadSerializer(self.user_rel).data
+        self.assertEqual(data['partner_religion_names'], ['Hindu', 'Christian'])
+        self.assertEqual(
+            data['partner_caste_preferences'],
+            {'Hindu': ['Brahmin', 'Nair'], 'Christian': ['Roman Catholic']},
+        )
+        self.assertNotIn('partner_religion_ids', data)
 
 
 class PartnerCastePreferenceMatchFilterTests(TestCase):

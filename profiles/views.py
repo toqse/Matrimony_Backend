@@ -561,6 +561,10 @@ class ProfileReligionView(APIView):
             defaults['partner_religion_ids'] = ser.validated_data['partner_religion_ids']
         if 'partner_caste_preferences' in ser.validated_data:
             defaults['partner_caste_preferences'] = ser.validated_data['partner_caste_preferences']
+        if 'partner_age_from' in ser.validated_data:
+            defaults['partner_age_from'] = ser.validated_data['partner_age_from']
+        if 'partner_age_to' in ser.validated_data:
+            defaults['partner_age_to'] = ser.validated_data['partner_age_to']
         UserReligion.objects.update_or_create(user=request.user, defaults=defaults)
         mark_profile_step_completed(request.user, 'religion')
         rel = UserReligion.objects.filter(user=request.user).select_related(
@@ -590,7 +594,10 @@ class PartnerPreferencesView(APIView):
         if not rel:
             data = {
                 'partner_preference_type': UserReligion.PARTNER_PREFERENCE_ALL,
-                'partner_religion_ids': [],
+                'partner_preference_type_label': dict(UserReligion.PARTNER_PREFERENCE_TYPE_CHOICES).get(
+                    UserReligion.PARTNER_PREFERENCE_ALL, ''
+                ),
+                'partner_religion_names': [],
                 'partner_caste_preferences': {},
                 'partner_age_from': None,
                 'partner_age_to': None,

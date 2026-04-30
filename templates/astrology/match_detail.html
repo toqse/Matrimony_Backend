@@ -23,8 +23,9 @@
       margin-bottom: 10px; font-size: 14px;
     }
     .person-info { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-    .person-info.groom { justify-self: start; }
-    .person-info.bride { justify-self: end; text-align: right; }
+    /* Kerala convention: vadhu left, varan right */
+    .person-info.bride { justify-self: start; }
+    .person-info.groom { justify-self: end; text-align: right; }
     .person-id { color: #666; font-size: 12px; }
     .person-name { font-weight: 600; }
     .person-role { font-size: 12px; color: #7B1C2E; text-transform: uppercase; }
@@ -50,7 +51,11 @@
     }
     .si-cell {
       position: relative; border: 0.5px solid #999; box-sizing: border-box;
-      padding: 2px 3px 2px 2px; min-height: 0;
+      padding: 2px 3px 4px 2px;
+      /* Allow stacked graha glyphs to grow the row; avoid grid clipping narrow cells. */
+      min-height: min-content;
+      overflow: visible;
+      align-content: start;
     }
     .si-center { border: 0.5px solid #999; background: #F5F0EB; box-sizing: border-box; }
     .corner-tl::before, .corner-tr::before, .corner-bl::before, .corner-br::before {
@@ -61,18 +66,27 @@
     .corner-tr::before { top: 2px; right: 2px; border-width: 1px 1px 0 0; }
     .corner-bl::before { bottom: 2px; left: 2px; border-width: 0 0 1px 1px; }
     .corner-br::before { bottom: 2px; right: 2px; border-width: 0 1px 1px 0; }
-    .rasi-num {
-      position: absolute; top: 1px; right: 2px; font-size: 8px; color: #777;
-      line-height: 1; font-weight: 500;
-    }
+    .rasi-num { display: none; }
     .planets {
-      margin-top: 10px; display: flex; flex-wrap: wrap; gap: 3px 4px; align-content: flex-start;
-      align-items: flex-start;
+      position: absolute; inset: 14px 6px 6px 6px;
+      z-index: 1;
+      pointer-events: none;
     }
     .planet-label {
-      font-size: 11px; font-weight: 700; color: #c0392b;
+      position: absolute;
+      font-size: 9px; font-weight: 700; color: #b03a48; line-height: 1;
       font-family: 'Noto Sans Malayalam', 'Manjari', 'Meera', system-ui, sans-serif;
+      white-space: nowrap;
     }
+    .slot-tl { top: 0; left: 0; }
+    .slot-tc { top: 0; left: 50%; transform: translateX(-50%); }
+    .slot-tr { top: 0; right: 0; }
+    .slot-ml { top: 50%; left: 0; transform: translateY(-50%); }
+    .slot-mc { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+    .slot-mr { top: 50%; right: 0; transform: translateY(-50%); }
+    .slot-bl { bottom: 0; left: 0; }
+    .slot-bc { bottom: 0; left: 50%; transform: translateX(-50%); }
+    .slot-br { bottom: 0; right: 0; }
     .nakshatra-info { margin-top: 8px; font-size: 12px; line-height: 1.35; color: #333; }
     .nak-name { font-weight: 600; }
     .nak-sub { color: #555; }
@@ -101,23 +115,23 @@
 <body>
 <div class="match-container">
   <div class="match-header">
-    <div class="person-info groom">
-      <span class="person-id">{{ groom_matri_id|default:"—" }}</span>
-      <span class="person-name">{{ groom_name|default:"Groom" }}</span>
-      <span class="person-role">Groom</span>
-    </div>
-    <div class="page-nav">1 / {{ total_matches|default:"1" }}</div>
     <div class="person-info bride">
       <span class="person-id">{{ bride_matri_id|default:"—" }}</span>
       <span class="person-name">{{ bride_name|default:"Bride" }}</span>
       <span class="person-role">Bride</span>
     </div>
+    <div class="page-nav">1 / {{ total_matches|default:"1" }}</div>
+    <div class="person-info groom">
+      <span class="person-id">{{ groom_matri_id|default:"—" }}</span>
+      <span class="person-name">{{ groom_name|default:"Groom" }}</span>
+      <span class="person-role">Groom</span>
+    </div>
   </div>
 
   <div class="match-body">
-    <div class="chart-col" id="groom-col">
-      {% include "astrology/components/south_indian_chart.html" with chart_root_id="groom-chart" %}
-      <div class="nakshatra-info" id="groom-nakshatra-info"></div>
+    <div class="chart-col" id="bride-col">
+      {% include "astrology/components/south_indian_chart.html" with chart_root_id="bride-chart" %}
+      <div class="nakshatra-info" id="bride-nakshatra-info"></div>
     </div>
 
     <div class="compat-col">
@@ -139,9 +153,9 @@
       </div>
     </div>
 
-    <div class="chart-col" id="bride-col">
-      {% include "astrology/components/south_indian_chart.html" with chart_root_id="bride-chart" %}
-      <div class="nakshatra-info" id="bride-nakshatra-info"></div>
+    <div class="chart-col" id="groom-col">
+      {% include "astrology/components/south_indian_chart.html" with chart_root_id="groom-chart" %}
+      <div class="nakshatra-info" id="groom-nakshatra-info"></div>
     </div>
   </div>
 
@@ -165,41 +179,40 @@
 
   // Must match astrology/services/chart_malayalam_data.PLANET_MLY + LAGNA_MLY exactly.
   const PLANET_MLY = {
-    Lagna: 'ലഗ്നം',
+    Lagna: 'ല',
     Sun: 'ര',
     Moon: 'ച',
     Mars: 'കു',
     Mercury: 'ബു',
     Jupiter: 'ഗു',
     Venus: 'ശു',
-    Saturn: 'ശ',
-    Rahu: 'റാ',
+    Saturn: 'ശി',
+    Rahu: 'രാ',
     Ketu: 'കേ',
-    Gulika: 'ഗു',
+    Gulika: 'മം',
   };
   const PLANET_MLY_NORMALIZED = {
     lagna: 'ല',
     la: 'ല',
-    sun: 'സൂ',
-    su: 'സൂ',
+    sun: 'ര',
+    su: 'ര',
     moon: 'ച',
     mo: 'ച',
-    mars: 'മ',
-    ma: 'മ',
+    mars: 'കു',
+    ma: 'കു',
     mercury: 'ബു',
     me: 'ബു',
     jupiter: 'ഗു',
     ju: 'ഗു',
     venus: 'ശു',
     ve: 'ശു',
-    saturn: 'ശ',
-    sa: 'ശ',
-    rahu: 'ര',
-    ra: 'ര',
+    saturn: 'ശി',
+    sa: 'ശി',
+    shani: 'ശി',
+    rahu: 'രാ',
     ketu: 'കേ',
     ke: 'കേ',
-    gulika: 'ഗു',
-    gu: 'ഗു',
+    gulika: 'മം',
   };
   function authHeaders() {
     const headers = { 'Content-Type': 'application/json' };
@@ -226,7 +239,22 @@
 
   function planetLabel(name) {
     const raw = String(name || '').trim();
-    return PLANET_MLY[raw] || PLANET_MLY_NORMALIZED[raw.toLowerCase()] || raw;
+    if (!raw) return '';
+    // English / API-style names (HoroscopeService uses Title Case)
+    if (Object.prototype.hasOwnProperty.call(PLANET_MLY, raw)) {
+      return PLANET_MLY[raw];
+    }
+    // ASCII-only: allow short keys (su, mo, …). Do not toLowerCase() Malayalam — it can
+    // change cluster shapes and break labels that already match chart_malayalam_data.
+    if (/^[\x00-\x7F]+$/.test(raw)) {
+      const abbr = PLANET_MLY_NORMALIZED[raw.toLowerCase()];
+      if (abbr !== undefined) return abbr;
+    } else if (/[\u0D00-\u0D7F]/.test(raw)) {
+      /* Treat textbook alternate forms as same shani label used by reference image. */
+      if (raw === 'ശ') return 'ശി';
+      return raw;
+    }
+    return raw;
   }
 
   function renderChart(containerId, planetsData, personData) {
@@ -234,16 +262,33 @@
     if (!root) return;
     root.querySelectorAll('.planets').forEach((el) => { el.innerHTML = ''; });
 
-    for (const [rasi, planets] of Object.entries(planetsData || {})) {
-      const cell = root.querySelector('[data-rasi="' + rasi + '"] .planets');
-      if (!cell || !Array.isArray(planets)) continue;
+    /* Match by walking .si-cell[data-rasi] so every house is found (avoids querySelector
+       edge cases; crowded signs like Vrischika with Moon+Shukra+Shani all render). */
+    const pdata = planetsData || {};
+    root.querySelectorAll('.si-cell[data-rasi]').forEach((cellEl) => {
+      const rasi = cellEl.getAttribute('data-rasi');
+      if (!rasi) return;
+      const planets = pdata[rasi];
+      if (!Array.isArray(planets) || planets.length === 0) return;
+      const holder = cellEl.querySelector('.planets');
+      if (!holder) return;
+      const slotsByCount = {
+        1: ['slot-ml'],
+        2: ['slot-tl', 'slot-br'],
+        3: ['slot-tl', 'slot-ml', 'slot-br'],
+        4: ['slot-tl', 'slot-tr', 'slot-bl', 'slot-br'],
+        5: ['slot-tl', 'slot-tr', 'slot-mc', 'slot-bl', 'slot-br'],
+        6: ['slot-tl', 'slot-tr', 'slot-ml', 'slot-mr', 'slot-bl', 'slot-br'],
+      };
+      const slots = slotsByCount[Math.min(planets.length, 6)] || slotsByCount[6];
       planets.forEach((planet) => {
         const span = document.createElement('span');
-        span.className = 'planet-label';
+        const idx = Math.min(holder.children.length, slots.length - 1);
+        span.className = 'planet-label ' + slots[idx];
         span.textContent = planetLabel(planet);
-        cell.appendChild(span);
+        holder.appendChild(span);
       });
-    }
+    });
 
     const col = root.closest('.chart-col');
     const nakWrap = col ? col.querySelector('.nakshatra-info') : null;

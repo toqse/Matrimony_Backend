@@ -31,6 +31,7 @@ def _rasi_house_from_lagna(lagna_longitude: float, body_longitude: float) -> int
 
 
 def kuja_dosham_horoscope(horoscope) -> bool:
+    """Mars in problematic whole-sign houses from Lagna **or** from Moon (Kerala-style)."""
     grahanila = horoscope.grahanila or {}
     lag_lon = grahanila.get('lagna_longitude')
     if lag_lon is None:
@@ -40,8 +41,17 @@ def kuja_dosham_horoscope(horoscope) -> bool:
     mlon = mars.get('longitude')
     if mlon is None:
         return False
-    h = _rasi_house_from_lagna(float(lag_lon), float(mlon))
-    return h in {2, 4, 7, 8, 12}
+    mlon = float(mlon)
+    bad = {1, 2, 4, 7, 8, 12}
+    h_lag = _rasi_house_from_lagna(float(lag_lon), mlon)
+    if h_lag in bad:
+        return True
+    moon = planets.get('moon') or {}
+    moon_lon = moon.get('longitude')
+    if moon_lon is None:
+        return False
+    h_moon = _rasi_house_from_lagna(float(moon_lon), mlon)
+    return h_moon in bad
 
 
 def kendra_malefic_count_horoscope(horoscope) -> int:

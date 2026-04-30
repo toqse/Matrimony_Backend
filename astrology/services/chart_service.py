@@ -103,7 +103,7 @@ def _center_bbox(margin: float, cw: float, ch: float) -> tuple[float, float, flo
 
 
 def _build_cell_symbols(grahanila: dict | None) -> dict[tuple[int, int], list[str]]:
-    """Map grid cell -> ordered Malayalam symbols (ലഗ്നം first if present, then grahas)."""
+    """Map grid cell -> ordered Malayalam symbols (ല lagna + grahas)."""
     cells: dict[tuple[int, int], list[str]] = {}
     data = grahanila or {}
     lagna_lon = data.get('lagna_longitude')
@@ -117,7 +117,16 @@ def _build_cell_symbols(grahanila: dict | None) -> dict[tuple[int, int], list[st
 
     # Stable planet order for consistent layout
     planet_order = (
-        'sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu', 'gulika',
+        'sun',
+        'moon',
+        'mars',
+        'mercury',
+        'jupiter',
+        'venus',
+        'saturn',
+        'rahu',
+        'ketu',
+        'gulika',
     )
     for key in planet_order:
         info = planets.get(key)

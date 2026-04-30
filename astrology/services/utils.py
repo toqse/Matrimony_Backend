@@ -1,5 +1,7 @@
 import hashlib
 
+from django.conf import settings
+
 
 RASI_NAMES = [
     'Mesha', 'Vrishabha', 'Mithuna', 'Karka', 'Simha', 'Kanya',
@@ -17,6 +19,7 @@ PLANET_NAME_MAP = {
     'rahu': 'Ra',
     'ketu': 'Ke',
     'gulika': 'Gu',
+    'yamaghanta': 'Ym',
 }
 
 PLANET_FULL_NAMES = {
@@ -30,6 +33,7 @@ PLANET_FULL_NAMES = {
     'rahu': 'Rahu',
     'ketu': 'Ketu',
     'gulika': 'Gulika',
+    'yamaghanta': 'Yamaghantaka',
 }
 
 
@@ -78,5 +82,10 @@ def nakshatra_pada_from_longitude(longitude: float) -> int:
 
 
 def build_birth_input_hash(date_of_birth, time_of_birth, place_of_birth: str) -> str:
-    raw = f'{date_of_birth.isoformat()}|{time_of_birth.isoformat()}|{(place_of_birth or "").strip().lower()}'
+    """SHA-256 over birth tuple + astrology engine revision (invalidates caches on algo changes)."""
+    ver = str(getattr(settings, 'ASTROLOGY_ENGINE_VERSION', '1'))
+    raw = (
+        f'{date_of_birth.isoformat()}|{time_of_birth.isoformat()}'
+        f'|{(place_of_birth or "").strip().lower()}|{ver}'
+    )
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()

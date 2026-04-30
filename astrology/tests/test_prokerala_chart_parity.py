@@ -46,11 +46,17 @@ class ProkeralaChartParityTests(unittest.TestCase):
         for payload in (girl, boy):
             planets = ((payload.get('grahanila') or {}).get('planets') or {})
             self.assertIn('gulika', planets)
+            self.assertIn('yamaghanta', planets)
             gulika = planets.get('gulika') or {}
             self.assertIn('longitude', gulika)
             glon = float(gulika['longitude'])
             self.assertGreaterEqual(glon, 0.0)
             self.assertLess(glon, 360.0)
+            yamg = planets.get('yamaghanta') or {}
+            self.assertIn('longitude', yamg)
+            ylon = float(yamg['longitude'])
+            self.assertGreaterEqual(ylon, 0.0)
+            self.assertLess(ylon, 360.0)
 
 
 if __name__ == '__main__':

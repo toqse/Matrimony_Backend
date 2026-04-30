@@ -13,7 +13,7 @@ def custom_exception_handler(exc, context):
             'success': False,
             'error': {
                 'code': response.status_code,
-                'message': _get_error_message(response.data),
+                'message': _get_custom_message(response.data),
                 'details': response.data,
             },
         }
@@ -47,3 +47,31 @@ def _get_error_message(data):
     if isinstance(data, list):
         return data[0] if data else 'Error'
     return str(data)
+
+
+def _get_custom_message(data):
+    if _is_expired_access_token_error(data):
+        return 'Something went wrong'
+    return _get_error_message(data)
+
+
+def _is_expired_access_token_error(data):
+    if not isinstance(data, dict):
+        return False
+    if data.get('code') != 'token_not_valid':
+        return False
+
+    messages = data.get('messages')
+    if not isinstance(messages, list):
+        return False
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if (
+            message.get('token_class') == 'AccessToken'
+            and message.get('token_type') == 'access'
+            and message.get('message') == 'Token is expired'
+        ):
+            return True
+    return False

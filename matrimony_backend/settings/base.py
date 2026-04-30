@@ -250,8 +250,14 @@ OTP_RATE_LIMIT_WINDOW_MINUTES = 10
 ASTROLOGY_PUBLIC_URL_MAX_AGE = env.int('ASTROLOGY_PUBLIC_URL_MAX_AGE', default=60 * 60 * 24 * 30)
 # Swiss Ephemeris: True = Lahiri sidereal (Prokerala-style Vedic); False = legacy tropical positions
 ASTROLOGY_SIDEREAL = env.bool('ASTROLOGY_SIDEREAL', default=True)
+# Local civil birth time timezone (defaults to IST; matches common Kerala matrimony desktop software)
+ASTROLOGY_BIRTH_TIMEZONE = env('ASTROLOGY_BIRTH_TIMEZONE', default='Asia/Kolkata')
+# Optional JSON map: {"ernakulam kerala india": [9.9816, 76.2673]} — overrides Nominatim when matched
+ASTROLOGY_PLACE_COORDINATES = env.json('ASTROLOGY_PLACE_COORDINATES', default={})
 # Dev-only: include debug trace fields in horoscope output (JD UTC, ayanamsa, flags, lat/lon source)
 ASTROLOGY_DEBUG_TRACE = env.bool('ASTROLOGY_DEBUG_TRACE', default=False)
+# Persisted grahanila / hashing: bump when calculation or stored JSON shape changes (invalidates Horoscope rows)
+ASTROLOGY_ENGINE_VERSION = env('ASTROLOGY_ENGINE_VERSION', default='2')
 
 # Razorpay (Jathakam / Thalakuri PDF purchases)
 RAZORPAY_KEY_ID = env('RAZORPAY_KEY_ID', default='')

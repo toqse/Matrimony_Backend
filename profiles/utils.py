@@ -230,6 +230,35 @@ def get_profile_completion_data(user):
     }
 
 
+def has_partner_preferences_filled(user):
+    """
+    True if partner matching preference has been meaningfully configured.
+
+    Unconfigured: no UserReligion row, or only default open_to_all with no stored age range
+    and no per-religion caste narrowing and no explicit specific-religions list.
+
+    own_religion_only or specific_religions (with religion ids where required),
+    optional partner_caste_preferences map, or any partner_age_from/partner_age_to counts as filled.
+    """
+    rel = UserReligion.objects.filter(user=user).first()
+    if not rel:
+        return False
+    if rel.partner_age_from is not None or rel.partner_age_to is not None:
+        return True
+    ctype = (rel.partner_preference_type or '').strip()
+    if not ctype:
+        ctype = UserReligion.PARTNER_PREFERENCE_ALL
+    ids = list(rel.partner_religion_ids or [])
+    cmap = rel.partner_caste_preferences or {}
+    if isinstance(cmap, dict) and len(cmap) > 0:
+        return True
+    if ctype == UserReligion.PARTNER_PREFERENCE_SPECIFIC:
+        return len(ids) > 0
+    if ctype == UserReligion.PARTNER_PREFERENCE_OWN:
+        return True
+    return False
+
+
 def is_profile_registration_complete(user):
     """
     True when registration is effectively complete for onboarding:

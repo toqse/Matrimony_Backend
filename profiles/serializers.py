@@ -219,6 +219,8 @@ class UserReligionSerializer(serializers.Serializer):
         allow_empty=True
     )
     partner_caste_preferences = serializers.DictField(required=False)
+    partner_age_from = serializers.IntegerField(required=False, allow_null=True, min_value=18, max_value=80)
+    partner_age_to = serializers.IntegerField(required=False, allow_null=True, min_value=18, max_value=80)
 
     def validate_religion_id(self, value):
         if value is None:
@@ -268,6 +270,10 @@ class UserReligionSerializer(serializers.Serializer):
             defaults['partner_religion_ids'] = validated_data['partner_religion_ids']
         if 'partner_caste_preferences' in validated_data:
             defaults['partner_caste_preferences'] = validated_data['partner_caste_preferences']
+        if 'partner_age_from' in validated_data:
+            defaults['partner_age_from'] = validated_data['partner_age_from']
+        if 'partner_age_to' in validated_data:
+            defaults['partner_age_to'] = validated_data['partner_age_to']
         obj, _ = UserReligion.objects.update_or_create(user=user, defaults=defaults)
         return obj
 
@@ -501,6 +507,8 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
     partner_religion_ids = serializers.SerializerMethodField()
     partner_religion_names = serializers.SerializerMethodField()
     partner_caste_preferences = serializers.SerializerMethodField()
+    partner_age_from = serializers.IntegerField(allow_null=True)
+    partner_age_to = serializers.IntegerField(allow_null=True)
 
     def get_religion(self, obj):
         return obj.religion.name if obj.religion_id else None
@@ -522,7 +530,23 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
     def get_partner_caste_preferences(self, obj):
         raw = getattr(obj, 'partner_caste_preferences', None) or {}
         normalized = _normalize_partner_caste_preferences(raw)
-        return {str(rid): caste_ids for rid, caste_ids in normalized.items()}
+        if not normalized:
+            return {}
+
+        from master.models import Caste, Religion
+        rel_ids = list(normalized.keys())
+        all_caste_ids = [cid for caste_ids in normalized.values() for cid in caste_ids]
+        religion_names = {
+            r.id: r.name for r in Religion.objects.filter(pk__in=rel_ids, is_active=True)
+        }
+        caste_names = {
+            c.id: c.name for c in Caste.objects.filter(pk__in=all_caste_ids, is_active=True)
+        }
+        out = {}
+        for rid, caste_ids in normalized.items():
+            key = religion_names.get(rid, str(rid))
+            out[key] = [caste_names.get(cid, str(cid)) for cid in caste_ids]
+        return out
 
     def get_partner_religion_ids(self, obj):
         ids = obj.partner_religion_ids or []
@@ -694,6 +718,8 @@ def empty_religion_details_read_data():
         'partner_religion_ids': [],
         'partner_religion_names': [],
         'partner_caste_preferences': {},
+        'partner_age_from': None,
+        'partner_age_to': None,
     }
 
 
@@ -821,17 +847,55 @@ class BasicDetailsUpdateSerializer(serializers.Serializer):
 
 
 class PartnerPreferencesReadSerializer(serializers.Serializer):
-    """GET /api/v1/profile/partner-preferences/ response."""
+    """GET /api/v1/profile/partner-preferences/ response (names for display; PATCH still uses ids)."""
     partner_preference_type = serializers.CharField()
-    partner_religion_ids = serializers.ListField(child=serializers.IntegerField())
+    partner_preference_type_label = serializers.SerializerMethodField()
+    partner_religion_names = serializers.SerializerMethodField()
     partner_age_from = serializers.IntegerField(allow_null=True)
     partner_age_to = serializers.IntegerField(allow_null=True)
     partner_caste_preferences = serializers.SerializerMethodField()
 
+    def get_partner_preference_type_label(self, obj):
+        from .models import UserReligion
+        return dict(UserReligion.PARTNER_PREFERENCE_TYPE_CHOICES).get(
+            (getattr(obj, 'partner_preference_type', None) or '').strip(), ''
+        )
+
+    def get_partner_religion_names(self, obj):
+        ids = obj.partner_religion_ids or []
+        if not ids:
+            return []
+        from master.models import Religion
+        religion_map = {
+            rel.id: rel.name
+            for rel in Religion.objects.filter(pk__in=ids, is_active=True)
+        }
+        return [religion_map.get(int(rid), '') for rid in ids]
+
     def get_partner_caste_preferences(self, obj):
         raw = getattr(obj, 'partner_caste_preferences', None) or {}
         normalized = _normalize_partner_caste_preferences(raw)
-        return {str(rid): caste_ids for rid, caste_ids in normalized.items()}
+        if not normalized:
+            return {}
+        from master.models import Religion, Caste
+        rel_ids = list(normalized.keys())
+        all_caste_ids = [cid for ids in normalized.values() for cid in ids]
+        religions = {
+            r.id: r.name
+            for r in Religion.objects.filter(pk__in=rel_ids, is_active=True)
+        }
+        caste_names = {}
+        for c in Caste.objects.filter(pk__in=all_caste_ids, is_active=True):
+            caste_names[(c.religion_id, c.id)] = c.name
+        out = {}
+        for rid, caste_id_list in normalized.items():
+            rel_name = religions.get(rid)
+            if rel_name is None:
+                rel_name = str(rid)
+            out[rel_name] = [
+                caste_names.get((rid, cid), str(cid)) for cid in caste_id_list
+            ]
+        return out
 
 
 class PartnerPreferencesUpdateSerializer(serializers.Serializer):
@@ -876,6 +940,8 @@ class ReligionDetailsUpdateSerializer(serializers.Serializer):
     )
     partner_religion_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=True)
     partner_caste_preferences = serializers.DictField(required=False)
+    partner_age_from = serializers.IntegerField(required=False, allow_null=True, min_value=18, max_value=80)
+    partner_age_to = serializers.IntegerField(required=False, allow_null=True, min_value=18, max_value=80)
 
     def validate(self, attrs):
         from master.models import Caste, MotherTongue, Religion

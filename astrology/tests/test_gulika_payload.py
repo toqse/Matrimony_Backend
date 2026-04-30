@@ -22,6 +22,7 @@ class GulikaPayloadTests(unittest.TestCase):
 
         planets = ((payload.get('grahanila') or {}).get('planets') or {})
         self.assertIn('gulika', planets)
+        self.assertIn('yamaghanta', planets)
         gulika = planets.get('gulika') or {}
         self.assertEqual(gulika.get('full_name'), 'Gulika')
         self.assertEqual(gulika.get('short_name'), 'Gu')
@@ -29,6 +30,11 @@ class GulikaPayloadTests(unittest.TestCase):
         glon = float(gulika.get('longitude'))
         self.assertGreaterEqual(glon, 0.0)
         self.assertLess(glon, 360.0)
+        yamg = planets.get('yamaghanta') or {}
+        self.assertEqual(yamg.get('full_name'), 'Yamaghantaka')
+        ylon = float(yamg.get('longitude'))
+        self.assertGreaterEqual(ylon, 0.0)
+        self.assertLess(ylon, 360.0)
 
 
 if __name__ == '__main__':
