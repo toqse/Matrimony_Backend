@@ -6,3 +6,6 @@ class ProfilesConfig(AppConfig):
     name = 'profiles'
     label = 'profiles'
     verbose_name = 'User Profiles'
+
+    def ready(self):
+        from astrology import signals  # noqa: F401

@@ -1,5 +1,27 @@
 from django.contrib import admin
+from django import forms
 from .models import UserProfile, UserLocation, UserReligion, UserPersonal, UserFamily, UserEducation, UserPhotos
+
+
+class UserPersonalAdminForm(forms.ModelForm):
+    colour = forms.ChoiceField(choices=(), required=False)
+
+    class Meta:
+        model = UserPersonal
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from master.models import Complexion
+
+        choices = [("", "---------")]
+        choices.extend(
+            (name, name) for name in Complexion.objects.filter(is_active=True).values_list('name', flat=True)
+        )
+        current = (self.instance.colour or '').strip() if getattr(self, 'instance', None) else ''
+        if current and current not in {value for value, _ in choices}:
+            choices.append((current, f"{current} (inactive)"))
+        self.fields['colour'].choices = choices
 
 
 @admin.register(UserProfile)
@@ -30,6 +52,7 @@ class UserReligionAdmin(admin.ModelAdmin):
 
 @admin.register(UserPersonal)
 class UserPersonalAdmin(admin.ModelAdmin):
+    form = UserPersonalAdminForm
     list_display = ['user', 'marital_status', 'height_text', 'has_children', 'blood_group', 'number_of_children']
 
 

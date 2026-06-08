@@ -282,7 +282,15 @@ class MyProfilesListView(APIView):
 
         search = (request.query_params.get("search") or "").strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(matri_id__icontains=search))
+            search_filter = (
+                Q(name__icontains=search)
+                | Q(matri_id__icontains=search)
+                | Q(mobile__icontains=search)
+            )
+            digits_only = "".join(ch for ch in search if ch.isdigit())
+            if digits_only and digits_only != search:
+                search_filter |= Q(mobile__icontains=digits_only)
+            qs = qs.filter(search_filter)
 
         wishlist_actor = _wishlist_actor_for_panel_user(request.user)
         wishlist_user_ids = set()
@@ -644,6 +652,24 @@ class MyProfilesCreateView(APIView):
             except ValidationError:
                 errors["email"] = "Invalid email address."
 
+        from astrology.services.horoscope_profile_service import (
+            HoroscopeInputSerializer,
+            apply_profile_creation_horoscope,
+        )
+
+        horoscope_input = {}
+        horo_serializer = HoroscopeInputSerializer(
+            data=data, context={"date_of_birth": dob_iso}
+        )
+        if horo_serializer.is_valid():
+            horoscope_input = dict(horo_serializer.validated_data)
+        else:
+            for field, msgs in horo_serializer.errors.items():
+                if isinstance(msgs, (list, tuple)) and msgs:
+                    errors[field] = str(msgs[0])
+                else:
+                    errors[field] = str(msgs)
+
         if errors:
             first = next(iter(errors))
             return Response(
@@ -677,6 +703,25 @@ class MyProfilesCreateView(APIView):
                 {"success": False, "error": {"code": 500, "message": "Profile created but user not found"}},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        # Horoscope support: persist birth inputs and create the horoscope_profile
+        # bridge record when has_horoscope is set (no calculation here).
+        try:
+            with transaction.atomic():
+                profile, _ = UserProfile.objects.get_or_create(user=user, defaults={})
+                apply_profile_creation_horoscope(
+                    user=user,
+                    profile=profile,
+                    horoscope_input=horoscope_input,
+                    name=user.name,
+                    dob=user.dob,
+                )
+        except Exception as exc:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         actor_nm = (getattr(request.user, "name", "") or "").strip()
         create_audit_log(
             request,

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Country, State, District, City,
-    Religion, Caste, MotherTongue, Height, MaritalStatus, IncomeRange,
+    Religion, Caste, MotherTongue, Height, MaritalStatus, Complexion, IncomeRange,
     Education, EducationSubject, Occupation, EmploymentStatus, Branch,
 )
 
@@ -56,6 +56,13 @@ class HeightAdmin(admin.ModelAdmin):
 @admin.register(MaritalStatus)
 class MaritalStatusAdmin(admin.ModelAdmin):
     list_display = ['name', 'is_active']
+
+
+@admin.register(Complexion)
+class ComplexionAdmin(admin.ModelAdmin):
+    list_display = ['name', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['name']
 
 
 @admin.register(IncomeRange)

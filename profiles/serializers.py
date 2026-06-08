@@ -12,6 +12,29 @@ from core.media import absolute_media_url
 from .parent_status import normalize_parent_status
 
 
+def _active_complexion_values():
+    from master.models import Complexion
+    return list(
+        Complexion.objects.filter(is_active=True)
+        .values_list('name', flat=True)
+    )
+
+
+def _validate_complexion_choice(value, *, field_name='complexion'):
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return ''
+    allowed = _active_complexion_values()
+    if cleaned not in allowed:
+        preview = ', '.join(allowed[:10]) if allowed else 'no active complexion values configured'
+        raise serializers.ValidationError(
+            {field_name: f'Invalid {field_name}. Use one of: {preview}'}
+        )
+    return cleaned
+
+
 def _normalize_partner_caste_preferences(raw_value):
     if raw_value in (None, ''):
         return {}
@@ -284,11 +307,7 @@ class UserPersonalSerializer(serializers.Serializer):
     number_of_children = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     height = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     weight = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
-    complexion = serializers.ChoiceField(
-        choices=['Very Fair','Fair','Wheatish','Wheatish Brown','Dark','Other'],
-        required=False,
-        allow_null=True,
-    )
+    complexion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def to_internal_value(self, data):
         data = dict(data) if not isinstance(data, dict) else data.copy()
@@ -309,6 +328,9 @@ class UserPersonalSerializer(serializers.Serializer):
                 f'Marital status "{name}" not found. Use one of: {", ".join(valid)}'
             )
         return obj.id
+
+    def validate_complexion(self, value):
+        return _validate_complexion_choice(value, field_name='complexion')
 
     def validate(self, attrs):
         """
@@ -1035,11 +1057,7 @@ class PersonalDetailsUpdateSerializer(serializers.Serializer):
     height = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     weight_kg = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     weight = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
-    complexion = serializers.ChoiceField(
-        choices=['Very Fair','Fair','Wheatish','Wheatish Brown','Dark','Other'],
-        required=False,
-        allow_null=True,
-    )
+    complexion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     colour = serializers.CharField(required=False, allow_blank=True)
     blood_group = serializers.CharField(required=False, allow_blank=True)
 
@@ -1066,6 +1084,12 @@ class PersonalDetailsUpdateSerializer(serializers.Serializer):
                 f'Marital status "{name}" not found. Use one of: {", ".join(valid)}'
             )
         return obj.id
+
+    def validate_complexion(self, value):
+        return _validate_complexion_choice(value, field_name='complexion')
+
+    def validate_colour(self, value):
+        return _validate_complexion_choice(value, field_name='colour')
 
     def validate_marital_status_id(self, value):
         if value is None:

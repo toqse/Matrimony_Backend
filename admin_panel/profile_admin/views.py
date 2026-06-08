@@ -175,7 +175,15 @@ class AdminProfileListAPIView(APIView):
 
         search = (request.query_params.get("search") or "").strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(matri_id__icontains=search))
+            search_filter = (
+                Q(name__icontains=search)
+                | Q(matri_id__icontains=search)
+                | Q(mobile__icontains=search)
+            )
+            digits_only = "".join(ch for ch in search if ch.isdigit())
+            if digits_only and digits_only != search:
+                search_filter |= Q(mobile__icontains=digits_only)
+            qs = qs.filter(search_filter)
 
         gender = (request.query_params.get("gender") or "").strip().upper()
         if gender in {"M", "F", "O"}:

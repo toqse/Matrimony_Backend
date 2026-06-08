@@ -14,6 +14,7 @@ from profiles.parent_status import normalize_parent_status
 from master.models import (
     Caste,
     City,
+    Complexion,
     Country,
     District,
     Education,
@@ -29,7 +30,6 @@ from master.models import (
 CACHE_PREFIX = "bulk_upload:v2:"
 CACHE_TTL = 60 * 60
 ASYNC_ROW_THRESHOLD = 50
-VALID_COMPLEXIONS = {"Very Fair","Fair","Wheatish","Wheatish Brown","Dark","Other"}
 SPECIAL_MARITALS = {"divorced", "widowed", "separated"}
 MAX_AVAILABLE_VALUES_IN_ERROR = 20
 
@@ -44,6 +44,12 @@ def normalize_gender(raw: str) -> str:
     if s in {"O", "OTHER", "OTHERS"}:
         return "O"
     return s
+
+
+def _active_complexions() -> set[str]:
+    return set(
+        Complexion.objects.filter(is_active=True).values_list("name", flat=True)
+    )
 
 
 def normalize_phone(raw: str) -> str | None:
@@ -292,9 +298,11 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 row_err.append({"row": row, "field": "weight_kg", "message": "Weight must be numeric"})
 
         complexion = (r.get("complexion") or "").strip()
-        if complexion and complexion not in VALID_COMPLEXIONS:
+        valid_complexions = _active_complexions()
+        if complexion and complexion not in valid_complexions:
+            available = "/".join(sorted(valid_complexions)[:8]) if valid_complexions else "no active complexion configured"
             row_err.append(
-                {"row": row, "field": "complexion", "message": "Complexion must be Fair/Wheatish/Dark/Very Fair"}
+                {"row": row, "field": "complexion", "message": f"Complexion must be one of: {available}"}
             )
 
         about_me = (r.get("about_me") or "").strip()

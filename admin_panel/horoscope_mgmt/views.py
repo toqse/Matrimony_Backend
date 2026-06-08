@@ -130,37 +130,6 @@ class HoroscopePanelRecordByMatriView(APIView):
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 
 
-class HoroscopePanelRegenerateView(APIView):
-    authentication_classes = [AdminJWTAuthentication]
-    mount = "admin"
-
-    def get_permissions(self):
-        if self.mount == "admin":
-            return [IsAuthenticated(), IsAdminUser()]
-        if self.mount == "staff":
-            return [IsAuthenticated(), IsPanelStaff()]
-        return [IsAuthenticated(), IsBranchManagerOnly()]
-
-    def post(self, request, user_id):
-        qs, err = _resolve_qs(request, self.mount)
-        if err:
-            return err
-        try:
-            uid = UUID(str(user_id))
-        except (ValueError, TypeError):
-            return Response(
-                {"success": False, "error": {"code": 400, "message": "Invalid user id."}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        data, msg = horoscope_panel.regenerate_horoscope(qs, uid)
-        if msg:
-            return Response(
-                {"success": False, "error": {"code": 400, "message": msg}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
-
-
 class HoroscopePanelPoruthamView(APIView):
     authentication_classes = [AdminJWTAuthentication]
     mount = "admin"
@@ -213,6 +182,27 @@ class HoroscopePanelJathakamPdfsView(APIView):
         return Response({"success": True, "data": {"results": data}}, status=status.HTTP_200_OK)
 
 
+class HoroscopePanelSyncView(APIView):
+    """POST: fill derived horoscope fields for pending in-scope profiles."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    mount = "admin"
+
+    def get_permissions(self):
+        if self.mount == "admin":
+            return [IsAuthenticated(), IsAdminUser()]
+        if self.mount == "staff":
+            return [IsAuthenticated(), IsPanelStaff()]
+        return [IsAuthenticated(), IsBranchManagerOnly()]
+
+    def post(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        result = horoscope_panel.run_mark_horoscope_done(qs)
+        return Response({"success": True, "data": result}, status=status.HTTP_200_OK)
+
+
 def _clone_view_attrs(source, mount: str):
     """Copy DRF view class with a different ``mount`` (admin | staff | branch)."""
     return type(f"{source.__name__}_{mount}", (source,), {"mount": mount})
@@ -234,10 +224,6 @@ AdminHoroscopePanelRecordByMatriView = _clone_view_attrs(HoroscopePanelRecordByM
 StaffHoroscopePanelRecordByMatriView = _clone_view_attrs(HoroscopePanelRecordByMatriView, "staff")
 BranchHoroscopePanelRecordByMatriView = _clone_view_attrs(HoroscopePanelRecordByMatriView, "branch")
 
-AdminHoroscopePanelRegenerateView = _clone_view_attrs(HoroscopePanelRegenerateView, "admin")
-StaffHoroscopePanelRegenerateView = _clone_view_attrs(HoroscopePanelRegenerateView, "staff")
-BranchHoroscopePanelRegenerateView = _clone_view_attrs(HoroscopePanelRegenerateView, "branch")
-
 AdminHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView, "admin")
 StaffHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView, "staff")
 BranchHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView, "branch")
@@ -245,3 +231,7 @@ BranchHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView,
 AdminHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "admin")
 StaffHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "staff")
 BranchHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "branch")
+
+AdminHoroscopePanelSyncView = _clone_view_attrs(HoroscopePanelSyncView, "admin")
+StaffHoroscopePanelSyncView = _clone_view_attrs(HoroscopePanelSyncView, "staff")
+BranchHoroscopePanelSyncView = _clone_view_attrs(HoroscopePanelSyncView, "branch")

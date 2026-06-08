@@ -15,7 +15,7 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.payroll.models import SalaryRecord
-from admin_panel.payroll.views import _build_simple_pdf
+from admin_panel.payroll.views import build_salary_slip_pdf
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 
 from .pagination import StaffSalaryPagination
@@ -230,21 +230,7 @@ class StaffSalaryDownloadAPIView(StaffSalaryReadOnlyAPIView):
                 {"success": False, "error": {"code": 400, "message": SLIP_NOT_ALLOWED_MSG}},
                 status=400,
             )
-        month_label = obj.month.strftime("%B %Y") if obj.month else ""
-        lines = [
-            "Salary Slip",
-            f"Staff: {obj.staff.name} ({obj.staff.emp_code})",
-            f"Branch: {obj.branch.name}",
-            f"Month: {month_label}",
-            f"Basic: {obj.basic}",
-            f"Commission: {obj.commission}",
-            f"Allowances: {obj.allowances}",
-            f"Deductions: {obj.deductions}",
-            f"Gross: {obj.gross}",
-            f"Net: {obj.net}",
-            f"Status: {obj.status}",
-        ]
-        pdf = _build_simple_pdf(lines)
+        pdf = build_salary_slip_pdf(obj, request=request)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="salary_{obj.id}_slip.pdf"'
         return resp

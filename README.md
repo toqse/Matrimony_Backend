@@ -7,7 +7,7 @@ Production-ready monolithic Django backend for a Matrimony platform with JWT + O
 - Python 3.11+, Django 4.x, Django REST Framework
 - SimpleJWT (access 15 min, refresh 30 days)
 - Redis (OTP, cache), Celery + Celery Beat
-- SQLite (dev), MySQL (prod), Docker + Gunicorn
+- MariaDB / MySQL, Redis, Docker + Daphne
 
 ## Project structure
 
@@ -27,7 +27,7 @@ core/                  # Permissions, base models, utilities
 ## Setup (development)
 
 1. Copy `.env.example` to `.env` and set `SECRET_KEY`, etc.
-2. Use SQLite (default): leave `DATABASE_ENGINE` unset or set to `sqlite`.
+2. Ensure MariaDB is running on the host at `127.0.0.1:3308` with database `aiswaryamatrimony` and user/password matching `.env`.
 3. Install and run:
 
 ```bash
@@ -47,8 +47,7 @@ python manage.py runserver
 
 1. **Create `.env`** (copy from `.env.example`) and set at least:
    - `SECRET_KEY` (e.g. a long random string)
-   - `DATABASE_PASSWORD` (MySQL app user password)
-   - `MYSQL_ROOT_PASSWORD` (MySQL root password, e.g. `rootpass`)
+   - `DATABASE_USER`, `DATABASE_PASSWORD` for host-side commands. Docker Compose overrides these to use its internal MySQL service.
 
 2. **Start all services:**
    ```bash
@@ -60,11 +59,11 @@ python manage.py runserver
    - Plans (no auth): http://localhost:8000/api/v1/subscriptions/plans/
    - Admin: http://localhost:8000/admin/ — set `DJANGO_SUPERUSER_EMAIL` and `DJANGO_SUPERUSER_PASSWORD` in `.env` so the entrypoint creates/resets that superuser on startup, **or** run once: `docker compose exec django python manage.py set_admin_password admin@gmail.com 'YourPassword'`
 
-4. **MySQL** is mapped to host port **3307** (to avoid conflict with local MySQL on 3306). Connect with a DB client to `localhost:3307` if needed.
+4. **MariaDB / MySQL**: Docker Compose starts a MySQL container named `db`. Django and Celery connect to it through Docker's internal network at `db:3306`, so Windows/MySQL credentials on the host do not affect `docker compose up`. For host-side `manage.py` commands, use `127.0.0.1:3308` in `.env` with your local MySQL credentials.
 
 5. **Stop:** `Ctrl+C` then `docker-compose down`.
 
-**Services:** `django` (Gunicorn, entrypoint runs migrations then starts), `mysql`, `redis`, `celery_worker`, `celery_beat`. All use `restart: unless-stopped` and share the same Docker network so they resolve hostnames (`redis`, `mysql`) correctly.
+**Services:** `db` (MySQL), `django` (Daphne, entrypoint runs migrations then starts), `redis`, `celery_worker`, `celery_beat`. All use `restart: unless-stopped` and share the same Docker network so they resolve hostnames (`db`, `redis`) correctly.
 
 **If you run Celery on your host** (not in Docker), use `REDIS_URL=redis://localhost:6379/0` in `.env` so it can reach Redis; inside Docker use `redis://redis:6379/0`.
 

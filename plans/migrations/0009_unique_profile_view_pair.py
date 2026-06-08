@@ -12,8 +12,9 @@ def dedupe_profile_views(apps, schema_editor):
 
     # Use raw SQL for speed and minimal memory. This keeps the lowest id per pair.
     table = ProfileView._meta.db_table
+    vendor = schema_editor.connection.vendor
     with schema_editor.connection.cursor() as cursor:
-        if schema_editor.connection.vendor == "sqlite":
+        if vendor == "sqlite":
             cursor.execute(
                 f"""
                 DELETE FROM {table}
@@ -22,6 +23,20 @@ def dedupe_profile_views(apps, schema_editor):
                     FROM {table}
                     GROUP BY viewer_id, viewed_user_id
                 )
+                """
+            )
+        elif vendor == "mysql":
+            # MySQL/MariaDB: use multi-table DELETE with self-join. The
+            # PostgreSQL `DELETE ... USING` syntax is not supported here, and
+            # referencing the same table inside a subquery of a DELETE is also
+            # rejected, so a JOIN is the cleanest portable approach.
+            cursor.execute(
+                f"""
+                DELETE pv FROM {table} AS pv
+                JOIN {table} AS pv2
+                  ON pv.viewer_id = pv2.viewer_id
+                 AND pv.viewed_user_id = pv2.viewed_user_id
+                 AND pv.id > pv2.id
                 """
             )
         else:

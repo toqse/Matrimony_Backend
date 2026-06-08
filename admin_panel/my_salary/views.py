@@ -17,12 +17,11 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.commissions.models import Commission
 from admin_panel.commissions.views import (
     _branch_manager_code_or_error,
-    _build_simple_pdf,
     _staff_profile_for_admin_user,
 )
 from admin_panel.pagination import StandardPagination
 from admin_panel.payroll.models import SalaryRecord
-from admin_panel.payroll.views import month_paid_at_bounds
+from admin_panel.payroll.views import build_salary_slip_pdf, month_paid_at_bounds
 from admin_panel.permissions import IsBranchManagerOnly
 
 _READ_ONLY = Response(
@@ -270,21 +269,7 @@ class MySalaryDownloadView(MySalaryReadOnlyMixin, APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
-        month_label = obj.month.strftime("%B %Y") if obj.month else ""
-        lines = [
-            "Salary Slip",
-            f"Staff: {obj.staff.name} ({obj.staff.emp_code})",
-            f"Branch: {obj.branch.name}",
-            f"Month: {month_label}",
-            f"Basic: {obj.basic}",
-            f"Commission: {obj.commission}",
-            f"Allowances: {obj.allowances}",
-            f"Deductions: {obj.deductions}",
-            f"Gross: {obj.gross}",
-            f"Net: {obj.net}",
-            f"Status: {obj.status}",
-        ]
-        pdf = _build_simple_pdf(lines)
+        pdf = build_salary_slip_pdf(obj, request=request)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="salary_{obj.id}_slip.pdf"'
         return resp

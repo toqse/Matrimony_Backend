@@ -7,7 +7,7 @@ ENV DJANGO_SETTINGS_MODULE=matrimony_backend.settings
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev \
+    gcc libpq-dev default-libmysqlclient-dev pkg-config \
     libraqm0 \
     libharfbuzz0b \
     libfribidi0 \

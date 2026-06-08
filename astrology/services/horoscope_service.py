@@ -100,7 +100,9 @@ def _fallback_lat_lon(place: str) -> tuple[float, float] | None:
                 except (IndexError, TypeError, ValueError):
                     continue
     # Built-ins: substring match on normalized place_of_birth
-    if 'ernakulam' in n or 'kochi' in n or 'cochin' in n:
+    if 'kochi' in n or 'cochin' in n:
+        return 9.9312, 76.2673
+    if 'ernakulam' in n:
         return 9.9816, 76.267304
     if 'alappuzha' in n or 'alleppey' in n:
         return 9.4981, 76.338848

@@ -3,780 +3,351 @@ HOROSCOPE / ASTROLOGY API DOCUMENTATION
 ================================================================================
 Base URL: /api/v1
 Astrology Base: /api/v1/astrology/
-Profile Base (birth inputs): /api/v1/profile/
+Profile Base (birth text + coordinates): /api/v1/profile/  and  PATCH /api/v1/astrology/birth-coordinates/
+
+Architecture (current):
+- Horoscope **calculation** is performed by a **Windows desktop EXE** at the client office. The EXE reads
+  `horoscope_profile` input columns and writes output columns (`pr_rasi`, `pr_star`, etc.) directly to MySQL.
+- Django **stores and serves** that row via `HoroscopeProfile` and runs **porutham** in Python using EXE data
+  (`pr_star`, `pr_pada`, `pr_rasi`). There is **no** Swiss Ephemeris generation, **no** `grahanila` JSON, and **no**
+  server-side chart PNG or chart JSON from planet longitudes.
 
 Authentication:
-- All endpoints require: Authorization: Bearer <access_token>
-- Content-Type: application/json for POST APIs unless specified otherwise.
+- Member endpoints: `Authorization: Bearer <access_token>` unless noted.
+- `Content-Type: application/json` for POST/PATCH with JSON bodies.
 
-Response Envelope:
-- Success: { "success": true, "data": { ... } } or { "success": true, "message": "..." }
-- Error: { "success": false, "error": { "code": <http_code>, "message": "..." } }
+Response envelope (member JSON APIs):
+- Success: `{ "success": true, "data": { ... } }` or `{ "success": true, "message": "..." }`
+- Error: `{ "success": false, "error": { "code": <http_status_int>, "message": "..." } }`
 
 --------------------------------------------------------------------------------
 0) SUBSCRIPTION (ACTIVE PLAN) AND HOROSCOPE MATCH QUOTA
 --------------------------------------------------------------------------------
-"Active plan" means a non-expired UserPlan row as used elsewhere in the app (same rules as
-plans.services._get_user_plan: is_active, plan active, valid_until not in the past).
+"Active plan" follows the same rules as elsewhere (`plans.services` / `get_user_plan_status`).
 
 Without an active plan, a member may still:
-- GET/POST /api/v1/profile/birth-details/
-- GET /api/v1/astrology/horoscope/me/
-- POST /api/v1/astrology/generate/ with body matri_id equal to their own matri_id and with no partner_matri_id
-  (or only empty partner), to compute/refresh their own horoscope only.
-- GET /api/v1/astrology/horoscope/<profile_id>/ when profile_id is their own UserProfile id.
+- GET/PATCH profile birth-related APIs as documented in profiles (e.g. birth-details).
+- GET `/api/v1/astrology/horoscope/me/` — own `HoroscopeProfile` row (no plan gate).
+- PATCH `/api/v1/astrology/birth-coordinates/` — own profile coordinates.
 
-With an active plan, all astrology endpoints below are available subject to horoscope match quota,
-except **chart JSON** APIs in §4b (GET …/chart/… and …/match-chart/…): those require JWT only and do **not**
-consume horoscope match quota; they use ownership rules described in §4b instead of the plan gate.
+With an **active plan**, these additionally apply:
+- GET `/api/v1/astrology/horoscope/<user_uuid>/` — another member’s public horoscope summary (see §3).
+- POST `/api/v1/astrology/porutham/` — compatibility check (consumes quota on success).
 
-Horoscope match quota (Plan.horoscope_match_limit on the user's plan; 0 = unlimited):
-- Each successful compatibility action decrements one unit from horoscope_used on UserPlan:
-  - POST /api/v1/astrology/generate/ when the response includes a non-null **match** (partner horoscope
-    existed and compatibility was computed).
-  - POST /api/v1/astrology/porutham/ on each successful 200 (calling both generate-with-partner and porutham
-    for the same pair can consume two units; prefer generate with partner_matri_id for the main UI flow).
-- Remaining count is exposed in plan summary APIs as **horoscope_remaining** (see get_plan_info_for_response).
+Horoscope match quota (`Plan.horoscope_match_limit`; `0` = unlimited):
+- **POST `/api/v1/astrology/porutham/`** — each successful **200** consumes **one** unit on `UserPlan.horoscope_used`
+  (`consume_horoscope_match`).
+- There is **no** `POST /astrology/generate/` anymore; quota is **not** consumed by chart or PDF download stubs.
 
 HTTP 403:
-- **No/expired plan**: error message from plan_expired_response ("You do not have an active plan..." or
-  "Your plan expired").
-- **Quota exhausted**: "You have used all horoscope matches included in your plan..."
+- **No/expired plan** where required: `plan_expired_response`-style payload.
+- **Quota exhausted** on porutham: `horoscope_quota_exhausted_response`.
 
-Signed URLs (**sig** on chart PNG and match PDF): valid **sig** continues to allow access without re-checking
-plan (for shared links). JWT-only access to another user's chart or to the match PDF (without valid sig) requires
-an active plan.
+Remaining count: exposed in plan summary as **horoscope_remaining** (same as rest of app).
 
 --------------------------------------------------------------------------------
-1) BIRTH DETAILS API (INPUT SOURCE FOR HOROSCOPE)
+1) BIRTH DETAILS API (PROFILE — TEXT FIELDS)
 --------------------------------------------------------------------------------
-Horoscope generation uses:
-- accounts.User.dob (already present in registration profile basic details)
-- profiles.UserProfile.time_of_birth
-- profiles.UserProfile.place_of_birth
+Birth **time** and **place** (free text) continue to live on `UserProfile` and are updated via the **profiles**
+API (see main `apidoc.txt` — `GET/POST /api/v1/profile/birth-details/` or equivalent profile section).
 
-Endpoint: GET /api/v1/profile/birth-details/
-Auth: Required
-Description:
-- Returns stored birth input fields from UserProfile.
+Signals:
+- Saving `UserProfile` syncs **input** fields on `HoroscopeProfile` for the same user (`pr_tob`, `pr_lat`,
+  `pr_lon`, `pr_name`, `pr_dob` from user/profile). EXE output columns (`pr_rasi`, `pr_star`, …) are **not**
+  overwritten by that sync.
+- When birth inputs change, `HoroscopeProfile.is_calculated` may be cleared so admin workflows can re-run
+  `mark_horoscope_done` after EXE output is refreshed.
 
-Success 200:
+**Latitude / longitude** for EXE input are **not** parsed from `place_of_birth` text in Django. Use:
+
+--------------------------------------------------------------------------------
+1b) PATCH BIRTH COORDINATES (LAT / LON FOR EXE)
+--------------------------------------------------------------------------------
+Endpoint: `PATCH /api/v1/astrology/birth-coordinates/`
+Auth: Required (JWT).
+
+Request body:
+```json
 {
-  "success": true,
-  "data": {
-    "time_of_birth": "08:45:00",
-    "place_of_birth": "Kochi, Kerala"
-  }
+  "latitude": 9.9312,
+  "longitude": 76.2673
 }
-
-If UserProfile row is missing:
-{
-  "success": true,
-  "data": {}
-}
-
----
-
-Endpoint: POST /api/v1/profile/birth-details/
-Auth: Required
-Description:
-- Saves/updates birth fields in UserProfile.
-- Horoscope auto-generation signal runs after profile save if dob + time + place exist.
-
-Request Body:
-{
-  "time_of_birth": "08:45:00",
-  "place_of_birth": "Kochi, Kerala"
-}
+```
 
 Validation:
-- time_of_birth: required valid time format.
-- place_of_birth: required non-empty string, max length 255.
+- Both must be finite numbers.
+- Latitude in [-90, 90], longitude in [-180, 180].
 
 Success 200:
+```json
 {
   "success": true,
-  "message": "Birth details updated successfully.",
-  "data": {
-    "time_of_birth": "08:45:00",
-    "place_of_birth": "Kochi, Kerala"
-  }
+  "data": { "latitude": 9.9312, "longitude": 76.2673 }
 }
-
-Error 400 (example):
-{
-  "time_of_birth": ["Time has wrong format. Use one of these formats instead: HH:MM[:ss[.uuuuuu]]."]
-}
-
---------------------------------------------------------------------------------
-1b) LIST BIRTH-DETAIL CANDIDATES (FOR MATCHING)
---------------------------------------------------------------------------------
-Endpoint: GET /api/v1/astrology/birth-detail-candidates/
-Auth: Required, **active subscription required**
-Description:
-- Returns other active members whose birth inputs are complete for horoscope generation and porutham:
-  User.dob + UserProfile.time_of_birth + non-empty UserProfile.place_of_birth (same rule as generate/lazy GET).
-- Does not return other users' time_of_birth or place_of_birth.
-- Each row includes profile_id for use with POST /api/v1/astrology/porutham/ (bride_id / groom_id).
-- has_horoscope: true if an astrology.Horoscope row exists (porutham-ready); false if generate still needed.
-  (Not the same as UserProfile.has_horoscope, which is the document-upload flag.)
-
-Query params:
-- page (optional, default 1)
-- limit (optional, default 10, max 50)
-- search (optional): substring match on matri_id or name
-- all_genders (optional): if 1 / true / yes, do not restrict to opposite gender; otherwise viewers with
-  gender M see only F and vice versa (same idea as match list). Gender O -> no gender filter.
-
-Error 403: no active plan (same as other gated astrology APIs).
-
-Success 200:
-{
-  "success": true,
-  "data": {
-    "total": 42,
-    "page": 1,
-    "limit": 10,
-    "results": [
-      {
-        "profile_id": 205,
-        "matri_id": "AM100045",
-        "name": "Example User",
-        "gender": "F",
-        "has_horoscope": true
-      }
-    ]
-  }
-}
-
---------------------------------------------------------------------------------
-1c) GET MY HOROSCOPE + CHART URL (CURRENT USER)
---------------------------------------------------------------------------------
-Endpoint: GET /api/v1/astrology/horoscope/me/
-Auth: Required (no active plan required)
-Description:
-- Returns the logged-in member's full horoscope JSON (same fields as HoroscopeSerializer), including **grahanila**.
-- Adds **chart_url**: absolute URL to GET chart PNG with **sig** and **style** query params (same behavior as POST generate).
-- No profile_id or matri_id needed; always uses request.user's UserProfile.
-- Lazy-generates or refreshes horoscope when birth inputs allow (same rules as GET /horoscope/<profile_id>/).
-
-Query params:
-- style (optional, default south): south | north — forwarded into chart_url for the chart image API.
-
-Success 200:
-- Same shape as POST /api/v1/astrology/generate/ primary payload: serializer fields + chart_url only
-  (no partner_chart_url / match_report_pdf_url).
-
-Error 400:
-{
-  "success": false,
-  "error": {"code": 400, "message": "Birth details not available."}
-}
-
---------------------------------------------------------------------------------
-2) GENERATE HOROSCOPE
---------------------------------------------------------------------------------
-Endpoint: POST /api/v1/astrology/generate/
-Auth: Required
-Description:
-- Explicit generation API for horoscope.
-- Uses matri_id (member id, e.g. AM100001) and computes full grahanila + compatibility attributes.
-- Creates or updates the horoscope row.
-
-Request Body:
-{
-  "matri_id": "AM100001",
-  "partner_matri_id": "AM100002"
-}
-
-Fields:
-- matri_id (required): member whose horoscope is generated/updated.
-- partner_matri_id (optional): second member. If present and birth data allows, server tries to
-  generate/update partner horoscope too, then returns partner chart URL and match PDF URL.
-
-Subscription:
-- **Self-only** (no active plan): allowed when **matri_id** equals the caller's matri_id and **partner_matri_id**
-  is omitted or empty (refresh own chart data only).
-- **Any other case** (another member's matri_id and/or a non-empty **partner_matri_id**): **active plan required**;
-  otherwise HTTP 403 with plan_expired-style message.
-- When the response includes a non-null **match**, one **horoscope match** quota unit is consumed (see section 0).
-  If quota is exhausted before building **match**, HTTP 403 with horoscope quota message.
-
-Behavior:
-- Resolve User by matri_id (active users only), then UserProfile (created if missing).
-- Read DOB from linked user.
-- Read time/place from UserProfile.
-- If inputs missing: returns 400.
-- Otherwise computes and stores:
-  - lat/long
-  - lagna
-  - rasi
-  - nakshatra + pada
-  - gana/yoni/nadi/rajju
-  - grahanila planetary positions
-- **Important (storage):** Horoscope values are **persisted** in `astrology_horoscope`. If calculation logic changes
-  (e.g., Prokerala parity upgrades), existing rows will not automatically change unless the horoscope is re-generated
-  (birth inputs change, row is deleted, or lazy-generate runs and detects hash mismatch).
-- Response always includes chart_url (absolute URL to PNG chart API for matri_id user).
-- If partner_matri_id is sent and partner has a stored horoscope after generation attempt:
-  - partner_chart_url: absolute PNG chart URL for partner
-  - match_report_pdf_url: absolute URL to GET /api/v1/astrology/match-report/?bride_matri_id=...&groom_matri_id=...
-    Bride/groom query order follows genders when one is F and one is M (F = bride, M = groom); if genders are
-    missing or both the same, defaults to bride = primary matri_id, groom = partner_matri_id (same as porutham
-    ordering used in **match** when genders are ambiguous).
-- If partner omitted or partner horoscope cannot be built: partner_chart_url and match_report_pdf_url are null.
-- **primary**: UI card for the requested matri_id (name, role, **profile_id**, **horoscope_id**, chart_url,
-  center_panel with nakshatra labels, pada, Vimshottari dasa lord + remaining, kuja flag, etc.).
-- **partner**: same shape as primary when a partner horoscope exists; otherwise null.
-- **match**: when partner horoscope exists, porutham-based checklist (Rasi, Rasyadhip, Vasyam, Deergham, Dinam,
-  Mahendra, Ganam, Yoni, Rajju Dosham, Vedham) plus Kuja Dosham (matched when both have same kuja-dosham flag),
-  Dasa Sandhi (matched when neither side is within ~90 days of mahadasha change), Papam Samyom (matched when
-  kendra-malefic counts differ by at most 1), **compatibility_grade** (same as **summary.percentage**:
-  (score/max_score)*100), **matched_poruthams** (list of porutham keys that passed), **poruthams_detailed**
-  (each item includes **is_critical**: true only for rajju), and **flags** / **poruthams**; otherwise null.
-  (The older **criteria** array has been removed—use **poruthams_detailed** and **flags** for UI rows.)
-- **title**: `"Marriage Compatibility Report"` when **match** is present; `"Horoscope"` when there is no partner
-  match (single-profile response).
-- **subtitle**: `"<bride_matri_id> vs <groom_matri_id>"` when **match** is present; **null** otherwise (same
-  bride/groom order as **match**).
-- **ui_config**: static object for clients (version, porutham score grade bands with color_code, severity maps,
-  analysis key groupings). Same on every successful generate response.
-- **primary.chart_meta** / **partner.chart_meta** (when partner exists): `lagna_label`, `rasi_label`,
-  `nakshatra_label`, `display_title` (e.g. `"Pooyam (Pushya) - Pada 2"`).
-- When **match** is non-null, additional keys:
-  - **summary**: `score`, `max_score`, `percentage` (score/max_score*100), `result`, **grade** (`Poor` /
-    `Average` / `Good` for porutham score bands 0–3 / 4–6 / 7–10), **color_code** (`red` / `orange` / `green`).
-  - **analysis**: `critical_issues`, `moderate_issues`, `minor_issues` — arrays of `{key, label, reason}` for
-    failed poruthams (critical: rajju; moderate: gana, yoni; minor: dina, mahendra, sthree_deergha, vedha, vasya).
-  - **explanation**: `overall` narrative, `positives` (e.g. kuja aligned, rasi favorable, no dasa sandhi), `negatives`
-    (reasons for failed critical + moderate poruthams).
-  - **poruthams_detailed**: list of 10 objects `{key, label, matched, severity, description, points?}` —
-    **points** is the fractional Dashakoot score for that koota (0, 0.5, or 1); **matched** is true if points >= 0.5.
-  - **koota_points**: object of the same 10 keys with numeric points (sum equals **score**, max **max_score** 10).
-  - **insights**: short dynamic strings (e.g. rajju warning, gana/yoni notes, consultation suggestion).
-
-Note on URLs (browser-friendly):
-- chart_url / partner_chart_url / match_report_pdf_url include a time-limited query param **sig** (Django
-  TimestampSigner). Anyone with the full URL can open the PNG/PDF in a browser until **sig** expires.
-- Default expiry: 30 days (override with env **ASTROLOGY_PUBLIC_URL_MAX_AGE** in seconds).
-- Without **sig**, chart/PDF still work if the request sends **Authorization: Bearer** (JWT).
-- **Do not** log or share URLs if you treat horoscopes as private; treat **sig** like a secret link.
-- **grahanila.planets** (in any response using HoroscopeSerializer): each planet object includes **full_name**
-  (e.g. `"Sun"`) in addition to longitude, rasi, short_name. Stored rows without **full_name** are enriched on read.
-- **grahanila.chart_basis**: `{ "zodiac": "sidereal", "ayanamsa": "lahiri" }` when **ASTROLOGY_SIDEREAL** is true
-  (default; Prokerala-style Vedic positions via Swiss Ephemeris). Set env **ASTROLOGY_SIDEREAL=False** for legacy
-  tropical longitudes only.
-- Optional dev-only: set env **ASTROLOGY_DEBUG_TRACE=True** to include `grahanila.debug` in generated horoscope rows
-  (UTC Julian day, ayanamsa, and Swiss Ephemeris calc flags) for Prokerala parity debugging.
-- Place resolution:
-  - `place_of_birth` is stored as free text.
-  - Horoscope generation forward-geocodes it to (lat, lon) using Nominatim/OpenStreetMap; invalid or ambiguous strings
-    may fail generation or resolve to an unexpected location.
-
-Why partner_chart_url / match_report_pdf_url are null:
-- **partner_matri_id** was not sent in POST /astrology/generate/, or
-- partner user not found / inactive, or
-- partner missing DOB or time_of_birth / place_of_birth (horoscope could not be built).
-
-Example generate body for two people:
-{ "matri_id": "AM100001", "partner_matri_id": "AM100002" }
-
-Success 200:
-{
-  "success": true,
-  "data": {
-    "profile": 123,
-    "date_of_birth": "1995-02-10",
-    "time_of_birth": "08:45:00",
-    "place_of_birth": "Kochi, Kerala",
-    "latitude": 9.9312,
-    "longitude": 76.2673,
-    "lagna": "Mesha",
-    "rasi": "Karka",
-    "nakshatra": "Pushya",
-    "nakshatra_pada": 2,
-    "gana": "Deva",
-    "yoni": "Sheep",
-    "nadi": "Madhya",
-    "rajju": "Nabhi",
-    "grahanila": {
-      "chart_basis": {"zodiac": "sidereal", "ayanamsa": "lahiri"},
-      "lagna_longitude": 15.2,
-      "planets": {
-        "sun": {"longitude": 298.5, "rasi": "Makara", "short_name": "Su", "full_name": "Sun"},
-        "moon": {"longitude": 105.8, "rasi": "Karka", "short_name": "Mo"},
-        "mars": {"longitude": 252.1, "rasi": "Dhanus", "short_name": "Ma"},
-        "mercury": {"longitude": 310.9, "rasi": "Kumbha", "short_name": "Me"},
-        "jupiter": {"longitude": 33.2, "rasi": "Vrishabha", "short_name": "Ju"},
-        "venus": {"longitude": 287.3, "rasi": "Makara", "short_name": "Ve"},
-        "saturn": {"longitude": 340.7, "rasi": "Meena", "short_name": "Sa"},
-        "rahu": {"longitude": 14.1, "rasi": "Mesha", "short_name": "Ra"},
-        "ketu": {"longitude": 194.1, "rasi": "Tula", "short_name": "Ke"}
-      }
-    },
-    "created_at": "2026-03-24T12:34:56Z",
-    "updated_at": "2026-03-24T12:34:56Z",
-    "chart_url": "https://<host>/api/v1/astrology/horoscope/123/chart/?sig=...&style=south",
-    "partner_chart_url": "https://<host>/api/v1/astrology/horoscope/456/chart/?sig=...&style=south",
-    "match_report_pdf_url": "https://<host>/api/v1/astrology/match-report/?bride_matri_id=AM100001&groom_matri_id=AM100002&sig=...",
-    "title": "Marriage Compatibility Report",
-    "subtitle": "AM100001 vs AM100002",
-    "ui_config": {
-      "version": 1,
-      "summary_score_grades": [
-        {"min_score": 0, "max_score": 3, "grade": "Poor", "color_code": "red"},
-        {"min_score": 4, "max_score": 6, "grade": "Average", "color_code": "orange"},
-        {"min_score": 7, "max_score": 10, "grade": "Good", "color_code": "green"}
-      ],
-      "porutham_severity_map": { "...": "see live response" },
-      "analysis_category_keys": { "...": "see live response" }
-    },
-    "primary": {
-      "matri_id": "AM100001",
-      "name": "Example Bride",
-      "role": "Bride",
-      "profile_id": 123,
-      "horoscope_id": 9001,
-      "gender": "F",
-      "nakshatra": "Pushya",
-      "nakshatra_label": "Pooyam",
-      "nakshatra_malayalam": "...",
-      "nakshatra_pada": 2,
-      "rasi": "Karka",
-      "lagna": "Mesha",
-      "chart_url": "https://<host>/api/v1/astrology/horoscope/123/chart/?sig=...&style=south",
-      "chart_meta": {
-        "lagna_label": "Mesha",
-        "rasi_label": "Karka",
-        "nakshatra_label": "Pooyam",
-        "display_title": "Pooyam (Pushya) - Pada 2"
-      },
-      "center_panel": {
-        "nakshatra": "Pooyam",
-        "nakshatra_english": "Pushya",
-        "nakshatra_malayalam": "...",
-        "padam": 2,
-        "dasa": {
-          "lord": "SANI",
-          "lord_key": "SATURN",
-          "remaining": {"years": 4, "months": 0, "days": 11},
-          "remaining_label": "04y 00m 11d"
-        }
-      },
-      "kuja_dosham": false,
-      "kendra_malefic_count": 2
-    },
-    "partner": { "...": "same structure as primary for partner profile" },
-    "match": {
-      "bride_matri_id": "AM100001",
-      "groom_matri_id": "AM100002",
-      "bride_profile_id": 123,
-      "groom_profile_id": 456,
-      "bride_horoscope_id": 9001,
-      "groom_horoscope_id": 9002,
-      "poruthams": { "dina": true, "gana": true, "...": "..." },
-      "matched_poruthams": ["dina", "gana", "rasi", "..."],
-      "score": 8.0,
-      "max_score": 10.0,
-      "result": "Good Match",
-      "compatibility_grade": 80.0,
-      "summary": {
-        "score": 8.0,
-        "max_score": 10.0,
-        "percentage": 80.0,
-        "result": "Good Match",
-        "grade": "Good",
-        "color_code": "green"
-      },
-      "analysis": {
-        "critical_issues": [],
-        "moderate_issues": [],
-        "minor_issues": []
-      },
-      "explanation": {
-        "overall": "Generally favorable porutham score; remaining points are secondary",
-        "positives": ["..."],
-        "negatives": []
-      },
-      "poruthams_detailed": [
-        {"key": "dina", "label": "Dinam", "matched": true, "severity": "low", "is_critical": false, "description": "...", "points": 1},
-        {"key": "rajju", "label": "Rajju Dosham", "matched": true, "severity": "high", "is_critical": true, "description": "...", "points": 1}
-      ],
-      "koota_points": { "dina": 1, "gana": 1, "mahendra": 1, "sthree_deergha": 1, "yoni": 1, "rasi": 1, "rasi_adhipathi": 1, "vasya": 0, "rajju": 1, "vedha": 1 },
-      "insights": ["No major traditional alerts beyond the porutham checklist"],
-      "flags": {
-        "kuja_dosham_bride": false,
-        "kuja_dosham_groom": false,
-        "dasa_sandhi": false,
-        "papam_samyam_matched": false,
-        "kendra_malefic_bride": 2,
-        "kendra_malefic_groom": 3
-      }
-    }
-  }
-}
-
-Common Errors:
-- 400: Profile birth details are incomplete.
-- 403: No active plan (non-self generate) or horoscope match quota exhausted when **match** would be returned.
-- 404: No active user with the given matri_id.
-- 500: geopy / swisseph runtime dependency issue.
-
---------------------------------------------------------------------------------
-2b) MATCH REPORT PDF (Porutham)
---------------------------------------------------------------------------------
-Endpoint: GET /api/v1/astrology/match-report/
-Auth: JWT and/or valid **sig** (see below)
-Description:
-- Builds a PDF with bride/groom summary (rasi, nakshatra, gana) and all 10 poruthams, score, result.
-
-Query params (required):
-- bride_matri_id: string (e.g. AM100001)
-- groom_matri_id: string (e.g. AM100002)
-- sig: string (from match_report_pdf_url after generate, or omit if using JWT)
-
-Subscription:
-- Valid **sig** for the bride/groom pair: no plan check (shared link).
-- **JWT without valid sig**: **active plan required**; otherwise HTTP 403.
-
-Response:
-- HTTP 200
-- Content-Type: application/pdf
-- Content-Disposition: inline (open in browser / in-app viewer)
-- Body: raw PDF bytes
+```
 
 Errors:
-- 400: missing query params or horoscope missing for either side
-- 404: user or profile not found
+- **400** — invalid or out-of-range coordinates (envelope above).
+
+Side effect:
+- Updates `UserProfile.birth_latitude` / `birth_longitude` and triggers sync to `HoroscopeProfile.pr_lat` /
+  `pr_lon`.
 
 --------------------------------------------------------------------------------
-3) GET HOROSCOPE (LAZY GENERATE)
+2) GET MY HOROSCOPE PROFILE (CURRENT USER)
 --------------------------------------------------------------------------------
-Endpoint: GET /api/v1/astrology/horoscope/<profile_id>/
-Auth: Required
+Endpoint: `GET /api/v1/astrology/horoscope/me/`
+Auth: Required (JWT). **No active plan required.**
+
 Description:
-- Returns stored horoscope for profile.
-- **Own profile_id**: always allowed if authenticated as that user (no active plan required).
-- **Another user's profile_id**: **active plan required**; otherwise HTTP 403.
-- If missing and birth inputs are available: auto-generates and returns.
-- If existing horoscope is outdated due to birth input changes: re-generates.
+- Returns the logged-in user’s **`HoroscopeProfile`** row as JSON (EXE inputs + outputs + derived fields when
+  `mark_horoscope_done` has run).
 
-Path Params:
-- profile_id (int): UserProfile id
-
-Success 200:
+If no row exists yet:
+```json
 {
   "success": true,
   "data": {
-    "...": "same HoroscopeSerializer fields as generate API"
+    "exists": false,
+    "is_calculated": false
   }
 }
+```
 
-Error 400:
+If a row exists (typical success):
+```json
 {
-  "success": false,
-  "error": {"code": 400, "message": "Birth details not available."}
+  "success": true,
+  "data": {
+    "id": 1,
+    "pr_name": "...",
+    "pr_dob": "1995-02-10",
+    "pr_tob": "08:45:00",
+    "pr_lat": 9.9312,
+    "pr_lon": 76.2673,
+    "pr_tz": 5.5,
+    "pr_rasi": "ABCDEFGHIJK",
+    "pr_amsa": "",
+    "pr_bhav": "",
+    "pr_star": 5,
+    "pr_pada": 2,
+    "pr_dasabalance": null,
+    "lagnam": "Medam",
+    "rasi_sign": "Midhunam",
+    "star_name": "Mrigasira",
+    "nakshatra_pada": 2,
+    "gana": "M",
+    "yoni": "Pasu",
+    "rajju": "Kanda",
+    "is_calculated": true,
+    "calculated_at": "2026-05-14T10:00:00Z",
+    "created_at": "...",
+    "updated_at": "..."
+  }
 }
+```
 
-Error 404:
-- profile not found
+Field notes:
+- **`pr_rasi`**: 11 characters, each character **A–L** maps to zodiac sign **1–12** (EXE convention).
+- **`pr_star`**: nakshatra index **1–27** (see server `astrology.porutham.STAR_NAMES` order).
+- **`pr_pada`**: **1–4**.
+- **`pr_dasabalance`**: sishta dasa balance in **days** from EXE (optional).
+- Derived string fields (`lagnam`, `rasi_sign`, `star_name`, `gana`, `yoni`, `rajju`) are filled by management
+  command `mark_horoscope_done` after EXE has written outputs.
+
+**Removed:** `chart_url`, query param `style`, lazy server generation, and any `grahanila` payload.
+
+--------------------------------------------------------------------------------
+3) GET ANOTHER MEMBER’S HOROSCOPE SUMMARY (BY USER UUID)
+--------------------------------------------------------------------------------
+Endpoint: `GET /api/v1/astrology/horoscope/<user_uuid>/`
+Auth: Required (JWT). **Active plan required** (403 if expired/inactive).
+
+Path:
+- **`<user_uuid>`** — `accounts.User.id` (**UUID**), not `UserProfile.id`.
+
+Success 200:
+```json
+{
+  "success": true,
+  "data": {
+    "pr_rasi": "ABCDEFGHIJK",
+    "pr_star": 5,
+    "pr_pada": 2,
+    "pr_dasabalance": null,
+    "lagnam": "Medam",
+    "rasi_sign": "Midhunam",
+    "star_name": "Mrigasira",
+    "nakshatra_pada": 2,
+    "gana": "M",
+    "yoni": "Pasu",
+    "rajju": "Kanda",
+    "is_calculated": true,
+    "calculated_at": "2026-05-14T10:00:00Z"
+  }
+}
+```
+
+This is the **public** serializer: **no** `pr_lat`, `pr_lon`, `pr_tob`, `pr_dob`, or internal `id` / timestamps
+in the default field list (see `HoroscopeProfilePublicSerializer` in code).
+
+Errors:
+- **403** — plan not active.
+- **404** — `HoroscopeProfile` missing for that user id.
+
+**Removed:** `GET /api/v1/astrology/horoscope/<profile_id>/` (integer **UserProfile** pk).
 
 --------------------------------------------------------------------------------
 4) PORUTHAM CHECK API
 --------------------------------------------------------------------------------
-Endpoint: POST /api/v1/astrology/porutham/
-Auth: Required, **active plan required**
-Description:
-- Compares bride/groom horoscopes and returns Kerala **Dashakoot** scores: **koota_points** (0 / 0.5 / 1 per koota),
-  **poruthams** booleans (matched = points >= 0.5), **score** (sum of points, float), **max_score** 10.
-- Scoring is **table-driven** for all 10 kootas using Prokerala-parity fixtures (with pair-level overrides where
-  empirical Prokerala outputs differ from generic published formulas).
-- This is intentionally not a pure formula-only engine; priority is matching Prokerala Kerala Dashakoot outputs.
-- Notes on strictness:
-  - `koota_points` come from lookup matrices (0/0.5/1) per koota.
-  - `poruthams[key]` is derived from points (`true` when points >= 0.5).
-  - Existing request/response contract is unchanged; only scoring internals are upgraded.
-- Uses stored horoscope data only (no recalculation).
-- Each successful 200 consumes **one** horoscope match quota unit (see section 0). If quota is exhausted, HTTP 403.
+Endpoint: `POST /api/v1/astrology/porutham/`
+Auth: Required (JWT). **Active plan required.** Quota consumed on **200** only.
 
-Request Body:
+Description:
+- Loads `HoroscopeProfile` for the **user** linked to each **UserProfile** id.
+- Requires EXE to have written outputs: `pr_rasi` non-empty and `pr_star` set (`is_exe_done()` on both sides).
+- Computes Kerala Dashakoot using **`astrology.porutham.calculate_porutham`** (VB-ported logic).
+- Upserts **`PoruthamResult`** for the `(bride_user, groom_user)` pair (user FKs, not profile FKs).
+
+Request body:
+```json
 {
   "bride_id": 101,
   "groom_id": 205
 }
+```
 
-Note:
-- bride_id and groom_id are UserProfile IDs (not user UUIDs).
+- **`bride_id`** / **`groom_id`**: **`UserProfile`** primary keys (integers), unchanged from the previous API.
 
-Success 200:
-{
-  "success": true,
-  "data": {
-    "poruthams": {
-      "dina": true,
-      "gana": true,
-      "mahendra": false,
-      "sthree_deergha": true,
-      "yoni": true,
-      "rasi": true,
-      "rasi_adhipathi": true,
-      "vasya": false,
-      "rajju": true,
-      "vedha": true
-    },
-    "koota_points": {
-      "dina": 1,
-      "gana": 0.5,
-      "mahendra": 0,
-      "sthree_deergha": 1,
-      "yoni": 1,
-      "rasi": 1,
-      "rasi_adhipathi": 1,
-      "vasya": 0,
-      "rajju": 1,
-      "vedha": 1
-    },
-    "score": 7.5,
-    "max_score": 10.0,
-    "result": "Average"
-  }
-}
+Success 200 — **`data`** is a **single flat object** (not wrapped in `PoruthamResultSerializer` only):
 
-Error 400:
-{
-  "success": false,
-  "error": {"code": 400, "message": "Bride or groom horoscope not found."}
-}
+- **Grade integers** (1 = Uthamam, 2 = Madhyamam, 3 = Adhamam, 4 = Neecham) for:
+  `dinam`, `ganam`, `mahendra`, `sthree_deerga`, `yoni`, `rasi`, `rasyadhipam`, `vasyam`, `rajju_dosham`, `vedha_dosham`
+- **`chovva_dosham`**: boolean or `null` if charts insufficient.
+- **`bride_papatha`**, **`groom_papatha`**: floats.
+- **Counts:** `uthamam_count`, `madhyamam_count`, `adhamam_count`, `total_porutham_count`
+- **`has_dosha`**: boolean summary flag.
+- **`overall_result`**: string such as `Excellent` | `Good` | `Average` | `Not Recommended`
+- **Backward-compatible keys:**
+  - **`poruthams`**: object with the **10** keys above mapped to **boolean** (`true` = that koota is Uthamam only).
+  - **`score`**: float, equals **`uthamam_count`**
+  - **`max_score`**: `10.0`
+  - **`result`**: same as **`overall_result`**
 
-Error 403:
-- No active plan or horoscope match quota exhausted.
+**Removed from response:** `koota_points` (0 / 0.5 / 1 Prokerala-style table), old key names `dina` /
+`rasi_adhipathi` / `vedha` / `rajju` as separate float scores.
+
+Errors:
+- **400** — profile not found; missing `HoroscopeProfile`; EXE not done (`Horoscope not yet calculated…`).
+- **403** — no active plan or quota exhausted.
+- **404** — `UserProfile` row missing for an id.
 
 --------------------------------------------------------------------------------
-4b) CHART DATA JSON (SOUTH INDIAN RASI / NAVAMSA / BHAVA — MATCHING UI)
---------------------------------------------------------------------------------
-Purpose:
-- Returns planet placement per **Rasi name** for rendering a **fixed-layout South Indian** square chart in HTML/JS
-  (separate from the PNG chart in §5). Same sidereal **grahanila** as HoroscopeSerializer (Lahiri when sidereal).
-- **chart_type** `rasi` = D1 (longitude sign); `amsakom` = D9 Navamsa (Parashari-style navamsa from sign + ninth);
-  `bhavam` = whole-sign houses counted from Lagna (house 1 = Lagna rasi).
-
-Auth: **JWT required** (`Authorization: Bearer <access_token>`).
-
-Quota / plan:
-- Does **not** decrement **horoscope_used** (no horoscope match quota consumption).
-- Does **not** require an active subscription. Access is limited by **ownership** (and staff), see below.
-
-Identifiers (important):
-- **profile_id**, **bride_id**, and **groom_id** in these URLs are **UserProfile primary keys** — the same integers
-  as **bride_id** / **groom_id** in POST /api/v1/astrology/porutham/ and **profile_id** in birth-detail-candidates
-  results (not Horoscope row pk, not User pk).
-- **partner_matri_id** in JWT-driven match-chart URLs is **User.matri_id** (string, e.g. `AM100212`).
-
-Endpoints:
-
-1) GET /api/v1/astrology/chart/<profile_id>/<chart_type>/
-   - **chart_type**: `rasi` | `amsakom` | `bhavam`
-2) GET /api/v1/astrology/chart/<profile_id>/
-   - Same as (1) with **chart_type** defaulted to `rasi`.
-
-3) GET /api/v1/astrology/match-chart/<bride_id>/<groom_id>/<chart_type>/
-4) GET /api/v1/astrology/match-chart/<bride_id>/<groom_id>/
-   - **bride_id** / **groom_id**: UserProfile IDs for the pair (same convention as porutham POST body).
-5) GET /api/v1/astrology/match-chart/<partner_matri_id>/<chart_type>/
-6) GET /api/v1/astrology/match-chart/<partner_matri_id>/
-   - JWT-driven pair lookup: requester profile is derived from token, partner is resolved by **partner_matri_id**.
-   - Same response shape as (3) / (4): `{ chart_type, bride, groom }`.
-
-Authorization rules:
-- Single chart (1–2): allowed if the caller is **Django staff** OR the horoscope’s **profile.user** is the caller.
-- Match chart (3–4): allowed if the caller is **staff** OR the caller’s user owns **either** profile
-  (`Horoscope.profile.user_id == request.user.id` for bride or groom row).
-- Match chart (5–6): caller must be authenticated; requester is always `request.user` and partner is looked up by
-  `User.matri_id`.
-
-Caching:
-- Server caches JSON responses up to **24 hours**; cache keys include horoscope **updated_at** so regenerating
-  a horoscope invalidates cached chart data.
-
-Success 200 (single chart):
-- **Plain JSON** (not wrapped in `{ "success": true, "data": … }` — same style as simple DRF `@api_view` returns).
-{
-  "chart_type": "rasi",
-  "nakshatra": "Dhanishta",
-  "nakshatra_pada": 1,
-  "rasi": "Makara",
-  "lagna": "Kanya",
-  "dasa_lord": "SANI",
-  "dasa_balance": "03y 06m 01d",
-  "planets": {
-    "Mesha": ["Sun", "Mars"],
-    "Makara": ["Lagna", "Moon"],
-    "Tula": ["Venus"]
-  }
-}
-
-- **planets**: object keys are **Rasi** names (`Mesha`, `Vrishabha`, … `Meena`). Values are arrays of English
-  labels: **Sun**, **Moon**, **Mars**, **Mercury**, **Jupiter**, **Venus**, **Saturn**, **Rahu**, **Ketu**, **Lagna**.
-  Only signs that contain at least one body are present. **Lagna** is listed first inside its sign when present.
-- **dasa_lord** / **dasa_balance**: from Vimshottari mahadasha state (same source as **primary.center_panel.dasa**
-  on POST generate); empty strings if moon longitude is missing.
-
-Success 200 (match chart):
-{
-  "chart_type": "rasi",
-  "bride": {
-    "name": "Sisira",
-    "nakshatra": "Dhanishta",
-    "nakshatra_pada": 1,
-    "rasi": "Makara",
-    "lagna": "Kanya",
-    "dasa_lord": "SANI",
-    "dasa_balance": "03y 06m 01d",
-    "planets": { "Makara": ["Lagna", "Moon"], "Mesha": ["Sun"] }
-  },
-  "groom": {
-    "name": "Unnikrishnan",
-    "nakshatra": "Chitra",
-    "nakshatra_pada": 2,
-    "rasi": "Tula",
-    "lagna": "Mithuna",
-    "dasa_lord": "…",
-    "dasa_balance": "…",
-    "planets": { "Tula": ["Moon"], "…": ["…"] }
-  }
-}
-
-POST **generate** (when **match** is non-null) and **match** payload include IDs for these URLs:
-- **primary.horoscope_id**, **partner.horoscope_id** (Horoscope table pk — informational).
-- **match.bride_profile_id**, **match.groom_profile_id** — use with **match-chart** URLs above.
-- **match.bride_horoscope_id**, **match.groom_horoscope_id** — same Horoscope pks as the card fields (optional
-  for admin/debug; chart routes use **profile_id**).
-- For JWT-driven route (5–6), pass the opposite side as **partner_matri_id** from `User.matri_id`.
-
-Error 400:
-- Invalid **chart_type** (must be `rasi`, `amsakom`, or `bhavam`).
-
-Error 403:
-- `{"error": "Not authorized"}` — caller cannot view that horoscope / pair under the rules above.
-
-Error 404:
-- Horoscope row missing for the given **profile_id**, or (match-chart) missing for bride or groom profile.
-- `{"error": "Chart not available. Generate horoscope first."}` when **grahanila** is incomplete (e.g. missing
-  **lagna_longitude** or any of the nine graha longitudes).
-
---------------------------------------------------------------------------------
-5) HOROSCOPE CHART IMAGE API
---------------------------------------------------------------------------------
-Endpoint: GET /api/v1/astrology/horoscope/<profile_id>/chart/
-Auth: Optional if valid **sig** is present; otherwise JWT required.
-Description:
-- Generates PNG of a **South Indian (Kerala-style) fixed-Rasi square chart** (12 houses on the
-  perimeter, central panel for title / gender / birth star).
-- **Malayalam** labels: rasi names per box, graha symbols (ര ച കു ബു ഗു ശു ശി റാ കേ),
-  **ലഗ്നം** in the ascendant’s sign, centre **ഗ്രഹനില**, gender (**പുരുഷൻ** / **സ്ത്രീ**),
-  nakshatra name in Malayalam (e.g. **അവിട്ടം** for Dhanishta).
-- Font: `astrology/fonts/NotoSansMalayalam-Regular.ttf` (bundled). Override with env
-  **MALAYALAM_FONT_PATH** if needed (e.g. in minimal Docker images).
-- **Malayalam shaping:** Chart drawing uses Pillow with **libraqm** (HarfBuzz) and `language=ml`.
-  Without Raqm, vowel signs show as dotted circles or wrong positions. Docker image installs
-  `libraqm0`, `libharfbuzz0b`, `libfribidi0`. Current Pillow wheels from PyPI usually include
-  Raqm on Windows/macOS; check logs for a warning if shaping is disabled.
-- **style=south** uses this layout; **style=north** returns a simple English placeholder grid.
-
-Query Params:
-- sig: time-limited signature for profile_id (from chart_url in generate response)
-- style: south | north (optional, default: south)
-
-Subscription:
-- Valid **sig** for this **profile_id**: no plan check.
-- **JWT** without valid **sig**: if **profile_id** is not the caller's own UserProfile id, **active plan required**;
-  otherwise HTTP 403. Own chart without **sig** remains allowed without a plan.
-
-Response:
-- HTTP 200
-- Content-Type: image/png
-- Body: raw PNG bytes
-
-Error 404:
-{
-  "success": false,
-  "error": {"code": 404, "message": "Horoscope not found."}
-}
-
---------------------------------------------------------------------------------
-5b) PAID JATHAKAM / THALAKURI PDF (RAZORPAY)
+5) PAID JATHAKAM / THALAKURI PDF (RAZORPAY) — ORDER & VERIFY
 --------------------------------------------------------------------------------
 Env (server):
-- RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET — required for POST pdf/order and pdf/verify (503 if missing).
-- ASTROLOGY_JATHAKAM_PRICE_INR (default 175), ASTROLOGY_THALAKURI_PRICE_INR (default 20).
+- `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` — required for order/verify (503 if missing).
+- `ASTROLOGY_JATHAKAM_PRICE_INR` (default 175), `ASTROLOGY_THALAKURI_PRICE_INR` (default 20).
 
-Flow:
-1) POST /api/v1/astrology/pdf/order/  { "product": "jathakam" | "thalakuri" }
-   → Razorpay order: { order_id, amount (paise), currency, key_id } + price_inr + product.
-2) Client completes Razorpay Checkout; on success client receives razorpay_payment_id, razorpay_order_id, razorpay_signature.
-3) POST /api/v1/astrology/pdf/verify/
-   Body: {
+Flow (unchanged intent):
+1) **POST** `/api/v1/astrology/pdf/order/`  
+   Body: `{ "product": "jathakam" | "thalakuri" }`  
+   Success: Razorpay order fields + `price_inr`, `product`, etc.
+
+2) Client completes Razorpay Checkout; client receives `razorpay_payment_id`, `razorpay_order_id`, `razorpay_signature`.
+
+3) **POST** `/api/v1/astrology/pdf/verify/`  
+   Body:
+   ```json
+   {
      "product": "jathakam" | "thalakuri",
      "razorpay_order_id": "...",
      "razorpay_payment_id": "...",
      "razorpay_signature": "..."
    }
-   → Server verifies HMAC + fetches payment (must be captured, amount matches catalog). Creates plans.Transaction
-   (transaction_type jathakam_pdf | thalakuri_pdf) and one AstrologyPdfCredit (unused).
-   Success JSON includes credit_id, download_url (absolute URL with time-limited sig + credit_id query params).
-4) GET /api/v1/astrology/pdf/jathakam/  OR  GET /api/v1/astrology/pdf/thalakuri/
-   Option A — Public (no JWT): open download_url from step 3, or GET the same path with ?sig=...&credit_id=...
-   (signature from verify). Consumes that credit once; works in a browser tab without Authorization header.
-   Option B — JWT: Authorization: Bearer ... with no query params; consumes the caller's next unused credit for
-   that product (same as before).
-   403 if no unused credit (JWT path only). 400 if birth details incomplete. 410 if signed link already used.
-   Invalid/expired sig: 401.
+   ```  
+   Success: `credited`, `already_verified`, `product`, `credit_id`, **`download_url`** (absolute URL with
+   `sig` + `credit_id` query params for the product path).
 
-PDF content (MVP): English ReportLab text from stored Horoscope (grahanila table; Jathakam adds Vimshottari line).
-Public URL expiry: same as chart/match-report (env ASTROLOGY_PUBLIC_URL_MAX_AGE, default 30 days). Treat sig like a secret link.
+4) **GET** `/api/v1/astrology/pdf/jathakam/` or **`/api/v1/astrology/pdf/thalakuri/`**
 
---------------------------------------------------------------------------------
-6) SIGNAL-DRIVEN AUTO GENERATION RULES
---------------------------------------------------------------------------------
-Signal:
-- post_save(UserProfile) -> astrology.signals.auto_generate_horoscope
+**Current behavior (upgrade period):** both endpoints respond with **HTTP 503** and JSON (no PDF body), e.g.:
+```json
+{
+  "success": false,
+  "error": {
+    "code": 503,
+    "message": "Jathakam PDF temporarily unavailable during system upgrade."
+  }
+}
+```
+(Thalakuri uses an equivalent message naming that product.)
 
-Execution Logic:
-1. If DOB/time/place missing -> skip.
-2. Build input hash from date+time+place.
-3. If horoscope exists with same hash -> skip recompute.
-4. If no horoscope or hash changed -> generate and upsert.
-
-Guarantees:
-- No duplicate horoscope per profile (OneToOne + update_or_create).
-- Recompute only on birth input change.
+- Auth class: **`AllowAny`** (so old clients opening a bookmarked URL do not get 401), but the response is still
+  **503** until PDF generation is rebuilt for `HoroscopeProfile` / EXE data.
+- **Credits are not consumed** on 503 download — purchase/verify flow still creates `AstrologyPdfCredit` rows.
 
 --------------------------------------------------------------------------------
-7) DATA CONTRACT NOTES FOR INTEGRATORS
+6) REMOVED OR NOT IMPLEMENTED (DO NOT CALL FROM NEW CLIENTS)
 --------------------------------------------------------------------------------
-For profiles app:
-- Write birth inputs to /api/v1/profile/birth-details/
-- Do not call astrology internals directly from views.
+The following **no longer exist** under `/api/v1/astrology/`:
 
-For matching/matches app:
-- Reuse service: astrology.services.porutham_service.calculate_porutham
-- Use stored Horoscope model records; avoid recomputing grahanila during match list.
+- `POST /api/v1/astrology/generate/`
+- `GET /api/v1/astrology/birth-detail-candidates/`
+- `GET /api/v1/astrology/horoscope/<int:profile_id>/` (replaced by **UUID** user route above)
+- `GET /api/v1/astrology/horoscope/<profile_id>/chart/` (PNG chart)
+- `GET /api/v1/astrology/match-report/` (match PDF)
+- Chart JSON routes (`/chart/...`, `/match-chart/...`, partner variants) — removed.
 
-For frontend:
-- Use chart PNG endpoint (§5) directly as image source; cache by URL if profile data unchanged.
-- For **tabbed South Indian charts** (Rasi / Amsakom / Bhava) in HTML or native apps, call **§4b** JSON
-  (`GET …/chart/<profile_id>/<chart_type>/` or `GET …/match-chart/<bride_profile_id>/<groom_profile_id>/<chart_type>/`)
-  and map **planets** into the fixed 12-cell layout client-side. Planet labels for Malayalam UI should match
-  `astrology.services.chart_malayalam_data.PLANET_MLY` + **LAGNA_MLY** (same as PNG chart graha symbols).
+Admin horoscope panel **regenerate** route removed from all mounts:
+- ~~`POST .../records/<user_uuid>/regenerate/`~~
 
 --------------------------------------------------------------------------------
-8) DEPENDENCIES
+7) ADMIN / STAFF / BRANCH HOROSCOPE PANEL (JWT)
 --------------------------------------------------------------------------------
-requirements.txt additions:
-- geopy>=2.4
-- pyswisseph>=2.10
-- reportlab>=4.0 (match report PDF)
-- Pillow already present and required for chart generation.
+Bases (same relative paths; scope differs by role):
+- Admin: `/api/v1/admin/horoscope/`
+- Staff: `/api/v1/staff/horoscope/`
+- Branch: `/api/v1/branch/horoscope/`
+
+Endpoints:
+- **GET** `summary/` — KPI counts from `HoroscopeProfile` + `UserPlan.horoscope_used` (no mangal computation).
+- **GET** `records/?search=&branch_id=&page=&page_size=` — list rows (`jathagam`: `generated` | `pending` | `na`).
+- **GET** `records/<user_uuid>/` — detail: `{ "record": {...}, "horoscope": <HoroscopeProfileSerializer|null> }`
+- **GET** `records/by-matri/<matri_id>/` — same as detail, keyed by matri id.
+- **POST** `porutham/` — body: `{ "bride_profile_id": <int>, "groom_profile_id": <int> }`  
+  Success **`data`**: `bride_horoscope` and `groom_horoscope` are **full** `HoroscopeProfile` JSON objects
+  (admin serializer), plus the same flat porutham keys as member **§4** (`dinam`, `poruthams`, `score`, …).  
+  **Removed from panel porutham payload:** `bride_chart_url`, `groom_chart_url`, `flags`, `koota_points`, grahanila.
+- **GET** `jathakam-pdfs/` — recent Jathakam PDF credits list for users in scope.
+
+--------------------------------------------------------------------------------
+8) OPERATIONS (SERVER COMMANDS)
+--------------------------------------------------------------------------------
+After members have complete birth data and coordinates, and before/after EXE runs:
+
+- `python manage.py push_to_exe_bridge` — pushes `UserProfile` + `User` birth fields into `horoscope_profile`
+  for rows that have DOB, time, lat, lon.
+- `python manage.py mark_horoscope_done` — for rows with `pr_rasi` set and `is_calculated=false`, fills derived
+  labels and sets `is_calculated=true`.
+
+--------------------------------------------------------------------------------
+9) WINDOWS EXE ↔ DATABASE (CLIENT CONFIG SUMMARY)
+--------------------------------------------------------------------------------
+Table: **`horoscope_profile`** (flat; no join required for EXE).
+
+Typical column mapping: `id`, `pr_name`, `pr_dob`, `pr_tob`, `pr_lat`, `pr_lon`, `pr_tz`, and outputs
+`pr_rasi`, `pr_amsa`, `pr_bhav`, `pr_star`, `pr_pada`, `pr_dasabalance`.
+
+Use the **same** MySQL database name, host, and credentials as Django.
+
+--------------------------------------------------------------------------------
+10) DATA CONTRACT NOTES FOR INTEGRATORS
+--------------------------------------------------------------------------------
+- Prefer **`GET /horoscope/me/`** for the logged-in user’s full bridge row; use **`GET /horoscope/<user_uuid>/`**
+  for another member’s **redacted** summary when the viewer has an active plan.
+- Porutham UI should use **integer grades** and/or **`poruthams`** booleans; do not assume **`koota_points`**.
+- Chart PNG, chart JSON, match PDF, and server-side `generate` are **out of scope** until redesigned for EXE data.
 
 ================================================================================
 END OF HOROSCOPE API DOCUMENTATION

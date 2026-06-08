@@ -2,6 +2,7 @@
 Base Django settings for matrimony_backend.
 """
 import os
+import sys
 from decimal import Decimal
 from pathlib import Path
 import environ
@@ -9,7 +10,7 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
-    DATABASE_ENGINE=(str, 'sqlite'),
+    DATABASE_ENGINE=(str, 'mysql'),
     JWT_ACCESS_TOKEN_LIFETIME_MINUTES=(int, 180),
     JWT_REFRESH_TOKEN_LIFETIME_MINUTES=(int, 432000),  # 300 days; same unit as access (minutes)
 )
@@ -142,8 +143,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'accounts.User'
 
-# Database: PostgreSQL (production) or SQLite (dev)
-_db_engine = env('DATABASE_ENGINE', default='sqlite')
+# Database: PostgreSQL, MySQL, or SQLite (dev)
+_db_engine = env('DATABASE_ENGINE', default='mysql')
 if _db_engine == 'postgres':
     DATABASES = {
         'default': {
@@ -155,6 +156,21 @@ if _db_engine == 'postgres':
             'PORT': env('DATABASE_PORT', default='5432'),
         }
     }
+elif _db_engine == 'mysql':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': env('DATABASE_NAME', default='aiswaryamatrimony'),
+            'USER': env('DATABASE_USER', default='matrimony_user'),
+            'PASSWORD': env('DATABASE_PASSWORD', default=''),
+            'HOST': env('DATABASE_HOST', default='127.0.0.1'),
+            'PORT': env('DATABASE_PORT', default='3308'),
+            'OPTIONS': {
+                'charset': 'utf8mb4',
+                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            },
+        }
+    }
 else:
     DATABASES = {
         'default': {
@@ -162,6 +178,24 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
+
+def _mask_database_config(db_config):
+    return {
+        'ENGINE': db_config.get('ENGINE'),
+        'NAME': str(db_config.get('NAME', '')),
+        'USER': db_config.get('USER', ''),
+        'PASSWORD_SET': bool(db_config.get('PASSWORD')),
+        'HOST': db_config.get('HOST', ''),
+        'PORT': str(db_config.get('PORT', '')),
+    }
+
+
+if env.bool('LOG_DATABASE_CONFIG', default=True):
+    print(
+        f"Active database configuration: {_mask_database_config(DATABASES['default'])}",
+        file=sys.stderr,
+    )
 
 # Redis
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
@@ -279,6 +313,15 @@ STAFF_PAYMENT_IDENTICAL_DEDUP_SECONDS = env.int('STAFF_PAYMENT_IDENTICAL_DEDUP_S
 STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS = env.int(
     'STAFF_PAYMENT_SAME_CUSTOMER_COOLDOWN_SECONDS', default=900
 )
+
+# Salary slip / payslip header configuration. Override via .env to brand the
+# generated PDF with the correct organisation name, address, and logo.
+SALARY_SLIP_COMPANY_NAME = env('SALARY_SLIP_COMPANY_NAME', default='Aiswarya Matrimony')
+SALARY_SLIP_COMPANY_ADDRESS = env(
+    'SALARY_SLIP_COMPANY_ADDRESS',
+    default='',
+)
+SALARY_SLIP_LOGO_URL = env('SALARY_SLIP_LOGO_URL', default='')
 
 # AWS S3 / MinIO (optional; fallback to local MEDIA)
 USE_S3 = env.bool('USE_S3', default=False)

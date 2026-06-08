@@ -45,6 +45,13 @@ class UserProfile(TimeStampedModel):
     horoscope_data = models.JSONField(default=dict, blank=True)
     time_of_birth = models.TimeField(null=True, blank=True)
     place_of_birth = models.CharField(max_length=255, blank=True)
+    birth_latitude = models.FloatField(null=True, blank=True)
+    birth_longitude = models.FloatField(null=True, blank=True)
+    birth_timezone = models.FloatField(
+        null=True,
+        blank=True,
+        help_text='UTC offset in hours used for horoscope generation (e.g. 5.5 for IST).',
+    )
 
     class Meta:
         db_table = 'profiles_user_profile'

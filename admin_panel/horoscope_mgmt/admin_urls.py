@@ -6,8 +6,8 @@ from .views import (
     AdminHoroscopePanelRecordByMatriView,
     AdminHoroscopePanelRecordDetailView,
     AdminHoroscopePanelRecordsView,
-    AdminHoroscopePanelRegenerateView,
     AdminHoroscopePanelSummaryView,
+    AdminHoroscopePanelSyncView,
 )
 
 urlpatterns = [
@@ -15,11 +15,7 @@ urlpatterns = [
     path("records/", AdminHoroscopePanelRecordsView.as_view(), name="admin_horoscope_records"),
     path("records/by-matri/<str:matri_id>/", AdminHoroscopePanelRecordByMatriView.as_view(), name="admin_horoscope_by_matri"),
     path("records/<uuid:user_id>/", AdminHoroscopePanelRecordDetailView.as_view(), name="admin_horoscope_record_detail"),
-    path(
-        "records/<uuid:user_id>/regenerate/",
-        AdminHoroscopePanelRegenerateView.as_view(),
-        name="admin_horoscope_regenerate",
-    ),
     path("porutham/", AdminHoroscopePanelPoruthamView.as_view(), name="admin_horoscope_porutham"),
+    path("sync/", AdminHoroscopePanelSyncView.as_view(), name="admin_horoscope_sync"),
     path("jathakam-pdfs/", AdminHoroscopePanelJathakamPdfsView.as_view(), name="admin_horoscope_jathakam_pdfs"),
 ]

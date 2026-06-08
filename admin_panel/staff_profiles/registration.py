@@ -282,7 +282,14 @@ def create_user_and_profile_sections(
     staff,
 ) -> User:
     """Transactional create: User + optional sections + photos. OTP skipped (mobile_verified=True)."""
+    from astrology.services.horoscope_profile_service import (
+        apply_profile_creation_horoscope,
+        validate_horoscope_input,
+    )
+
     dob = date.fromisoformat(dob_iso)
+    # Validate horoscope fields up-front so a failure rolls back before any writes.
+    horoscope_input = validate_horoscope_input(data, date_of_birth=dob_iso)
     pwd = User.objects.make_random_password()
     with transaction.atomic():
         user = User.objects.create_user(
@@ -307,7 +314,7 @@ def create_user_and_profile_sections(
                 "updated_at",
             ]
         )
-        UserProfile.objects.get_or_create(
+        profile, _ = UserProfile.objects.get_or_create(
             user=user,
             defaults={
                 "location_completed": False,
@@ -318,6 +325,16 @@ def create_user_and_profile_sections(
                 "about_completed": False,
                 "photos_completed": False,
             },
+        )
+
+        # Horoscope support: persist birth inputs and create the horoscope_profile
+        # bridge record when has_horoscope is set (no calculation here).
+        apply_profile_creation_horoscope(
+            user=user,
+            profile=profile,
+            horoscope_input=horoscope_input,
+            name=name,
+            dob=dob,
         )
 
         basic = dict(data.get("basic_details") or {})

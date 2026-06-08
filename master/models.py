@@ -130,6 +130,18 @@ class MaritalStatus(TimeStampedModel):
         return self.name
 
 
+class Complexion(TimeStampedModel):
+    name = models.CharField(max_length=50, unique=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'master_complexion'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class IncomeRange(TimeStampedModel):
     name = models.CharField(max_length=100)
     min_value = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)

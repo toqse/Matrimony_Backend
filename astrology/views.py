@@ -1,21 +1,14 @@
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from django.core.cache import cache
-from django.db import transaction as db_transaction
-from django.db.models import Exists, OuterRef, Q
-from django.http import HttpResponse
-from django.shortcuts import get_object_or_404
-from django.urls import reverse
 from django.conf import settings
-from django.utils import timezone
+from django.db import transaction as db_transaction
+from django.urls import reverse
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import User
 from profiles.models import UserProfile
 
 from plans.models import Transaction
@@ -27,26 +20,14 @@ from plans.services import (
     plan_expired_response,
 )
 
-from .models import AstrologyPdfCredit, Horoscope
+from .models import AstrologyPdfCredit
 from .serializers import (
     AstrologyPdfOrderSerializer,
     AstrologyPdfVerifySerializer,
-    BirthDetailCandidateSerializer,
-    HoroscopeGenerateRequestSerializer,
-    HoroscopeSerializer,
+    HoroscopeProfilePublicSerializer,
+    HoroscopeProfileSerializer,
     PoruthamCheckRequestSerializer,
-    PoruthamResultSerializer,
 )
-from .services.chart_service import generate_chart_image
-from .services.chart_url import build_horoscope_chart_absolute_url
-from .services.generate_ui_service import build_match_ui, build_person_card, resolve_bride_groom_horoscopes
-from .services.match_ui_copy import generate_ui_config
-from .services.horoscope_runtime import (
-    create_or_update_horoscope,
-    resolve_horoscope_for_profile,
-)
-from .services.jathakam_pdf_service import build_jathakam_pdf
-from .services.match_report_service import build_match_report_pdf
 from .services.razorpay_pdf_orders import (
     RazorpayApiError,
     RazorpayNotConfiguredError,
@@ -57,58 +38,10 @@ from .services.razorpay_pdf_orders import (
     transaction_type_for_product,
     verify_payment_signature,
 )
-from .services.thalakuri_pdf_service import build_thalakuri_pdf
-from .services.horoscope_service import HoroscopeService
-from .services.porutham_service import calculate_porutham
-from .services.vimshottari_service import vimshottari_mahadasha_state
 from .services.public_url_signing import (
-    sign_match_report_access,
     sign_pdf_credit_access,
-    verify_chart_access,
-    verify_match_report_access,
     verify_pdf_credit_access,
 )
-
-PLANET_LABEL_MALAYALAM = {
-    'Lagna': 'ല',
-    'Sun': 'ര',
-    'Moon': 'ച',
-    'Mars': 'കു',
-    'Mercury': 'ബു',
-    'Jupiter': 'ഗു',
-    'Venus': 'ശു',
-    'Saturn': 'ശി',
-    'Rahu': 'രാ',
-    'Ketu': 'കേ',
-    'Gulika': 'മം',
-    'Yamaghantaka': 'മം',
-}
-
-
-def _planet_labels_for_response(planets: dict, lang: str) -> dict:
-    if lang != 'ml':
-        return planets
-    mapped = {}
-    for rasi, names in (planets or {}).items():
-        if not isinstance(names, list):
-            mapped[rasi] = names
-            continue
-        mapped[rasi] = [PLANET_LABEL_MALAYALAM.get(name, name) for name in names]
-    return mapped
-
-
-def _chart_absolute_url(request, profile_id: int, style: str = 'south') -> str:
-    return build_horoscope_chart_absolute_url(request, profile_id, style=style, lang='ml')
-
-
-def _match_report_absolute_url(request, bride_matri_id: str, groom_matri_id: str) -> str:
-    rel = reverse('astrology:match_report')
-    query = urlencode({
-        'bride_matri_id': bride_matri_id,
-        'groom_matri_id': groom_matri_id,
-        'sig': sign_match_report_access(bride_matri_id, groom_matri_id),
-    })
-    return request.build_absolute_uri(f'{rel}?{query}')
 
 
 def _pdf_public_download_url(request, credit: AstrologyPdfCredit) -> str:
@@ -133,287 +66,82 @@ def _astrology_pdf_verify_success_data(
     }
 
 
-def _chart_request_allowed(request, profile_id: int) -> bool:
-    sig = request.query_params.get('sig', '')
-    if verify_chart_access(sig, profile_id):
-        return True
-    user = getattr(request, 'user', None)
-    return bool(user and user.is_authenticated)
+class HoroscopeProfileMeView(APIView):
+    """GET /api/v1/astrology/horoscope/me/"""
 
-
-def _match_report_request_allowed(request, bride_mid: str, groom_mid: str) -> bool:
-    sig = request.query_params.get('sig', '')
-    if verify_match_report_access(sig, bride_mid, groom_mid):
-        return True
-    user = getattr(request, 'user', None)
-    return bool(user and user.is_authenticated)
-
-
-def _horoscope_summary(horoscope: Horoscope) -> dict:
-    return {
-        'rasi': horoscope.rasi,
-        'nakshatra': horoscope.nakshatra,
-        'nakshatra_pada': horoscope.nakshatra_pada,
-        'gana': horoscope.gana,
-    }
-
-
-def _current_user_profile_pk(user) -> int | None:
-    return UserProfile.objects.filter(user=user).values_list('pk', flat=True).first()
-
-
-def _chart_data_available(horoscope: Horoscope) -> bool:
-    g = horoscope.grahanila or {}
-    if g.get('lagna_longitude') is None:
-        return False
-    planets = g.get('planets') or {}
-    for key in (
-        'sun',
-        'moon',
-        'mars',
-        'mercury',
-        'jupiter',
-        'venus',
-        'saturn',
-        'rahu',
-        'ketu',
-    ):
-        info = planets.get(key)
-        if not isinstance(info, dict) or info.get('longitude') is None:
-            return False
-    return True
-
-
-def _user_can_view_horoscope(user, horoscope: Horoscope) -> bool:
-    if getattr(user, 'is_staff', False):
-        return True
-    return horoscope.profile.user_id == user.id
-
-
-def _dasa_fields(horoscope: Horoscope) -> tuple[str, str]:
-    dasa = vimshottari_mahadasha_state(horoscope, ref_utc=timezone.now())
-    if not dasa:
-        return '', ''
-    return str(dasa.get('lord') or ''), str(dasa.get('remaining_label') or '')
-
-
-def _generate_is_self_only(request, matri_id: str, partner_mid: str) -> bool:
-    owner = (getattr(request.user, 'matri_id', None) or '').strip()
-    p = (partner_mid or '').strip()
-    return (matri_id == owner) and not (p and p != matri_id)
-
-
-class GenerateHoroscopeView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        serializer = HoroscopeGenerateRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        matri_id = serializer.validated_data['matri_id'].strip()
-        partner_mid_raw = (serializer.validated_data.get('partner_matri_id') or '').strip()
-        if not _generate_is_self_only(request, matri_id, partner_mid_raw):
-            if get_user_plan_status(request.user) != 'active':
-                return Response(
-                    plan_expired_response(request.user),
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
-        user = get_object_or_404(User.objects.filter(is_active=True), matri_id=matri_id)
-        UserProfile.objects.get_or_create(user=user, defaults={})
-        profile = UserProfile.objects.select_related('user').get(user=user)
-        try:
-            horoscope = create_or_update_horoscope(profile)
-        except ValueError as exc:
-            return Response(
-                {'success': False, 'error': {'code': 400, 'message': str(exc)}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        horoscope = Horoscope.objects.select_related('profile__user').get(pk=horoscope.pk)
-
-        data = dict(HoroscopeSerializer(horoscope).data)
-        data['chart_url'] = _chart_absolute_url(request, profile.pk)
-        data['partner_chart_url'] = None
-        data['match_report_pdf_url'] = None
-        data['primary'] = build_person_card(profile, horoscope, data['chart_url'])
-        data['partner'] = None
-        data['match'] = None
-        data['ui_config'] = generate_ui_config()
-        data['title'] = 'Horoscope'
-        data['subtitle'] = None
-
-        partner_mid = partner_mid_raw
-        if partner_mid and partner_mid != matri_id:
-            try:
-                partner_user = User.objects.get(matri_id=partner_mid, is_active=True)
-            except User.DoesNotExist:
-                partner_user = None
-            if partner_user:
-                UserProfile.objects.get_or_create(user=partner_user, defaults={})
-                partner_profile = UserProfile.objects.select_related('user').get(user=partner_user)
-                try:
-                    create_or_update_horoscope(partner_profile)
-                except ValueError:
-                    pass
-                partner_h = (
-                    Horoscope.objects.filter(profile=partner_profile)
-                    .select_related('profile__user')
-                    .first()
-                )
-                if partner_h:
-                    allowed, _rem = can_horoscope_match(request.user)
-                    if not allowed:
-                        return Response(
-                            horoscope_quota_exhausted_response(),
-                            status=status.HTTP_403_FORBIDDEN,
-                        )
-                    data['partner_chart_url'] = _chart_absolute_url(request, partner_profile.pk)
-                    bride_h, groom_h = resolve_bride_groom_horoscopes(
-                        profile, partner_profile, horoscope, partner_h
-                    )
-                    bride_mid = getattr(bride_h.profile.user, 'matri_id', '') or ''
-                    groom_mid = getattr(groom_h.profile.user, 'matri_id', '') or ''
-                    data['match_report_pdf_url'] = _match_report_absolute_url(
-                        request, bride_mid, groom_mid
-                    )
-                    data['partner'] = build_person_card(
-                        partner_profile, partner_h, data['partner_chart_url']
-                    )
-                    data['match'] = build_match_ui(
-                        profile, partner_profile, horoscope, partner_h
-                    )
-                    data['title'] = 'Marriage Compatibility Report'
-                    data['subtitle'] = (
-                        f"{data['match']['bride_matri_id']} vs {data['match']['groom_matri_id']}"
-                    )
-                    consume_horoscope_match(request.user)
-
-        data['meta'] = {
-            'astrology_engine_version': str(
-                getattr(settings, 'ASTROLOGY_ENGINE_VERSION', '1')
-            ),
-        }
-        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
-
-
-class BirthDetailCandidatesListView(APIView):
-    """
-    GET /api/v1/astrology/birth-detail-candidates/
-    Lists other active members with complete birth inputs (DOB + time_of_birth + place_of_birth),
-    same rule as horoscope generation. Excludes sensitive fields.
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from .models import HoroscopeProfile
+
+        try:
+            hp = HoroscopeProfile.objects.get(user=request.user)
+        except HoroscopeProfile.DoesNotExist:
+            return Response(
+                {'success': True, 'data': {'exists': False, 'is_calculated': False}}
+            )
+        return Response(
+            {'success': True, 'data': HoroscopeProfileSerializer(hp).data}
+        )
+
+
+class HoroscopeProfileDetailView(APIView):
+    """GET /api/v1/astrology/horoscope/<uuid:user_id>/"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        from .models import HoroscopeProfile
+
         if get_user_plan_status(request.user) != 'active':
             return Response(
                 plan_expired_response(request.user),
                 status=status.HTTP_403_FORBIDDEN,
             )
-        horoscope_exists = Horoscope.objects.filter(profile_id=OuterRef('pk'))
-        qs = (
-            UserProfile.objects.select_related('user')
-            .annotate(stored_horoscope_exists=Exists(horoscope_exists))
-            .filter(
-                user__is_active=True,
-                user__dob__isnull=False,
-                time_of_birth__isnull=False,
-            )
-            .exclude(user=request.user)
-            .exclude(place_of_birth='')
-        )
-
-        all_genders = (request.query_params.get('all_genders') or '').strip().lower() in (
-            '1',
-            'true',
-            'yes',
-        )
-        if not all_genders:
-            gender = getattr(request.user, 'gender', None)
-            if gender == 'M':
-                qs = qs.filter(user__gender='F')
-            elif gender == 'F':
-                qs = qs.filter(user__gender='M')
-
-        search = (request.query_params.get('search') or '').strip()
-        if search:
-            qs = qs.filter(
-                Q(user__matri_id__icontains=search) | Q(user__name__icontains=search)
-            )
-
-        qs = qs.order_by('-user__created_at')
-
         try:
-            page = max(1, int(request.query_params.get('page', 1)))
-        except (TypeError, ValueError):
-            page = 1
-        try:
-            limit = max(1, min(50, int(request.query_params.get('limit', 10))))
-        except (TypeError, ValueError):
-            limit = 10
-
-        total = qs.count()
-        start = (page - 1) * limit
-        page_qs = qs[start : start + limit]
-        ser = BirthDetailCandidateSerializer(page_qs, many=True)
+            hp = HoroscopeProfile.objects.get(user_id=user_id)
+        except HoroscopeProfile.DoesNotExist:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         return Response(
-            {
-                'success': True,
-                'data': {
-                    'total': total,
-                    'page': page,
-                    'limit': limit,
-                    'results': ser.data,
-                },
-            },
-            status=status.HTTP_200_OK,
+            {'success': True, 'data': HoroscopeProfilePublicSerializer(hp).data}
         )
 
 
-class HoroscopeDetailView(APIView):
+class UpdateBirthCoordinatesView(APIView):
+    """PATCH /api/v1/astrology/birth-coordinates/"""
+
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, profile_id):
-        profile = get_object_or_404(UserProfile.objects.select_related('user'), pk=profile_id)
-        if profile.user_id != request.user.id and get_user_plan_status(request.user) != 'active':
-            return Response(
-                plan_expired_response(request.user),
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    def patch(self, request):
         try:
-            horoscope = resolve_horoscope_for_profile(profile)
-        except ValueError as exc:
+            lat = float(request.data.get('latitude'))
+            lon = float(request.data.get('longitude'))
+        except (TypeError, ValueError):
             return Response(
-                {'success': False, 'error': {'code': 400, 'message': str(exc)}},
+                {'success': False, 'error': {'code': 400, 'message': 'Invalid coordinates.'}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response({'success': True, 'data': HoroscopeSerializer(horoscope).data}, status=status.HTTP_200_OK)
-
-
-class HoroscopeMeView(APIView):
-    """
-    GET /api/v1/astrology/horoscope/me/
-    Current user's full horoscope (including grahanila) plus signed chart_url.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        UserProfile.objects.get_or_create(user=request.user, defaults={})
-        profile = UserProfile.objects.select_related('user').get(user=request.user)
-        try:
-            horoscope = resolve_horoscope_for_profile(profile)
-        except ValueError as exc:
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
             return Response(
-                {'success': False, 'error': {'code': 400, 'message': str(exc)}},
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Coordinates out of range.'},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        data = dict(HoroscopeSerializer(horoscope).data)
-        style = request.query_params.get('style', 'south')
-        data['chart_url'] = _chart_absolute_url(request, profile.pk, style=style)
-        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
+        profile, _ = UserProfile.objects.get_or_create(user=request.user, defaults={})
+        profile.birth_latitude = lat
+        profile.birth_longitude = lon
+        profile.save(update_fields=['birth_latitude', 'birth_longitude', 'updated_at'])
+        return Response({'success': True, 'data': {'latitude': lat, 'longitude': lon}})
 
 
 class PoruthamCheckView(APIView):
+    """POST /api/v1/astrology/porutham/"""
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -430,155 +158,80 @@ class PoruthamCheckView(APIView):
             )
         serializer = PoruthamCheckRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        bride = Horoscope.objects.filter(profile_id=serializer.validated_data['bride_id']).first()
-        groom = Horoscope.objects.filter(profile_id=serializer.validated_data['groom_id']).first()
-        if not bride or not groom:
-            return Response(
-                {'success': False, 'error': {'code': 400, 'message': 'Bride or groom horoscope not found.'}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        result = calculate_porutham(bride, groom)
-        consume_horoscope_match(request.user)
-        return Response(
-            {'success': True, 'data': PoruthamResultSerializer(result).data},
-            status=status.HTTP_200_OK,
-        )
 
-
-class HoroscopeChartView(APIView):
-    permission_classes = [AllowAny]
-
-    def get(self, request, profile_id):
-        if not _chart_request_allowed(request, profile_id):
-            return Response(
-                {
-                    'success': False,
-                    'error': {
-                        'code': 401,
-                        'message': 'Authentication credentials were not provided or signature is invalid/expired.',
-                    },
-                },
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        sig = request.query_params.get('sig', '')
-        if not verify_chart_access(sig, profile_id) and request.user.is_authenticated:
-            my_pk = _current_user_profile_pk(request.user)
-            if my_pk != profile_id and get_user_plan_status(request.user) != 'active':
-                return Response(
-                    plan_expired_response(request.user),
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-        style = request.query_params.get('style', 'south')
-        lang = (request.query_params.get('lang') or 'ml').strip().lower()
-        if lang not in ('ml', 'en'):
-            lang = 'ml'
-        profile = get_object_or_404(UserProfile, pk=profile_id)
-        horoscope = (
-            Horoscope.objects.filter(profile=profile)
-            .select_related('profile__user')
-            .first()
-        )
-        if not horoscope:
-            return Response(
-                {'success': False, 'error': {'code': 404, 'message': 'Horoscope not found.'}},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        # Include lang + renderer version to avoid serving stale English chart PNGs.
-        cache_key = (
-            f'astrology_chart:{profile_id}:{style}:{lang}:v7:'
-            f'{horoscope.updated_at.isoformat()}'
-        )
-        png_bytes = cache.get(cache_key)
-        if png_bytes is None:
-            png_bytes = generate_chart_image(
-                horoscope.grahanila,
-                style=style,
-                nakshatra_en=horoscope.nakshatra,
-                gender_code=getattr(horoscope.profile.user, 'gender', None),
-            )
-            cache.set(cache_key, png_bytes, timeout=60 * 60)
-        return HttpResponse(png_bytes, content_type='image/png')
-
-
-class MatchReportPdfView(APIView):
-    permission_classes = [AllowAny]
-
-    def get(self, request):
-        bride_mid = request.query_params.get('bride_matri_id', '').strip()
-        groom_mid = request.query_params.get('groom_matri_id', '').strip()
-        if not bride_mid or not groom_mid:
-            return Response(
-                {
-                    'success': False,
-                    'error': {
-                        'code': 400,
-                        'message': 'Query params bride_matri_id and groom_matri_id are required.',
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not _match_report_request_allowed(request, bride_mid, groom_mid):
-            return Response(
-                {
-                    'success': False,
-                    'error': {
-                        'code': 401,
-                        'message': 'Authentication credentials were not provided or signature is invalid/expired.',
-                    },
-                },
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        sig = request.query_params.get('sig', '')
-        if not verify_match_report_access(sig, bride_mid, groom_mid):
-            if request.user.is_authenticated:
-                if get_user_plan_status(request.user) != 'active':
-                    return Response(
-                        plan_expired_response(request.user),
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
+        from .models import HoroscopeProfile, PoruthamResult
+        from .porutham import calculate_porutham
 
         try:
-            bride_user = User.objects.get(matri_id=bride_mid, is_active=True)
-            groom_user = User.objects.get(matri_id=groom_mid, is_active=True)
-        except User.DoesNotExist:
-            return Response(
-                {'success': False, 'error': {'code': 404, 'message': 'User not found for matri_id.'}},
-                status=status.HTTP_404_NOT_FOUND,
+            bride_profile = UserProfile.objects.select_related('user').get(
+                pk=serializer.validated_data['bride_id']
             )
-
-        bride_profile = UserProfile.objects.filter(user=bride_user).first()
-        groom_profile = UserProfile.objects.filter(user=groom_user).first()
-        if not bride_profile or not groom_profile:
+            groom_profile = UserProfile.objects.select_related('user').get(
+                pk=serializer.validated_data['groom_id']
+            )
+        except UserProfile.DoesNotExist:
             return Response(
                 {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        bride_h = Horoscope.objects.filter(profile=bride_profile).first()
-        groom_h = Horoscope.objects.filter(profile=groom_profile).first()
-        if not bride_h or not groom_h:
+        try:
+            bride_hp = bride_profile.user.horoscope_profile
+            groom_hp = groom_profile.user.horoscope_profile
+        except HoroscopeProfile.DoesNotExist:
             return Response(
                 {
                     'success': False,
-                    'error': {'code': 400, 'message': 'Horoscope missing for bride or groom.'},
+                    'error': {
+                        'code': 400,
+                        'message': 'Horoscope not found for one or both profiles.',
+                    },
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        porutham_result = calculate_porutham(bride_h, groom_h)
-        pdf_bytes = build_match_report_pdf(
-            bride_mid,
-            groom_mid,
-            _horoscope_summary(bride_h),
-            _horoscope_summary(groom_h),
-            porutham_result,
+        if not bride_hp.is_exe_done() or not groom_hp.is_exe_done():
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 400,
+                        'message': 'Horoscope not yet calculated. Windows EXE must run first.',
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = calculate_porutham(bride_hp, groom_hp)
+
+        PoruthamResult.objects.update_or_create(
+            bride=bride_profile.user,
+            groom=groom_profile.user,
+            defaults={
+                'dinam': result['dinam'],
+                'ganam': result['ganam'],
+                'mahendra': result['mahendra'],
+                'sthree_deerga': result['sthree_deerga'],
+                'yoni': result['yoni'],
+                'rasi': result['rasi'],
+                'rasyadhipam': result['rasyadhipam'],
+                'vasyam': result['vasyam'],
+                'rajju_dosham': result['rajju_dosham'],
+                'vedha_dosham': result['vedha_dosham'],
+                'chovva_dosham': result['chovva_dosham'],
+                'bride_papatha': result['bride_papatha'],
+                'groom_papatha': result['groom_papatha'],
+                'total_porutham_count': result['total_porutham_count'],
+                'uthamam_count': result['uthamam_count'],
+                'madhyamam_count': result['madhyamam_count'],
+                'adhamam_count': result['adhamam_count'],
+                'has_dosha': result['has_dosha'],
+                'overall_result': result['overall_result'],
+            },
         )
-        filename = f'MatchReport_{bride_mid}_{groom_mid}.pdf'.replace(' ', '')
-        response = HttpResponse(pdf_bytes, content_type='application/pdf')
-        response['Content-Disposition'] = f'inline; filename="{filename}"'
-        return response
+
+        consume_horoscope_match(request.user)
+        return Response({'success': True, 'data': result}, status=status.HTTP_200_OK)
 
 
 class AstrologyPdfOrderView(APIView):
@@ -598,7 +251,9 @@ class AstrologyPdfOrderView(APIView):
             )
         product = ser.validated_data['product']
         try:
-            out = create_order(user_matri_id=getattr(request.user, 'matri_id', '') or '', product=product)
+            out = create_order(
+                user_matri_id=getattr(request.user, 'matri_id', '') or '', product=product
+            )
         except RazorpayNotConfiguredError as exc:
             return Response(
                 {
@@ -852,419 +507,75 @@ class AstrologyPdfVerifyView(APIView):
         )
 
 
-def _serve_pdf_by_signed_credit(request, credit_id: int, expected_product: str, builder):
+class HoroscopeDecoderDebugView(APIView):
     """
-    Public download: valid sig + credit_id. Consumes that credit and returns PDF bytes.
+    GET /api/horoscope/debug/<id>/
+
+    Returns the raw EXE strings and Django's decoded house-by-house output for
+    rasi / amsa / bhava. Read-only diagnostic endpoint for decoder verification.
+    Open when settings.DEBUG is True; otherwise requires authentication.
     """
-    with db_transaction.atomic():
+
+    def get_permissions(self):
+        if settings.DEBUG:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get(self, request, pk):
+        from .models import HoroscopeProfile
+        from .services.horoscope_decoder import decode_amsa, decode_bhava, decode_rasi
+
         try:
-            credit = AstrologyPdfCredit.objects.select_for_update().get(pk=credit_id)
-        except AstrologyPdfCredit.DoesNotExist:
-            return None, Response(
-                {
-                    'success': False,
-                    'error': {'code': 404, 'message': 'PDF credit not found.'},
-                },
+            hp = HoroscopeProfile.objects.get(pk=pk)
+        except HoroscopeProfile.DoesNotExist:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Not found.'}},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        if credit.product != expected_product:
-            return None, Response(
-                {
-                    'success': False,
-                    'error': {'code': 400, 'message': 'URL does not match this PDF type.'},
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if credit.consumed_at is not None:
-            return None, Response(
-                {
-                    'success': False,
-                    'error': {'code': 410, 'message': 'This download link has already been used.'},
-                },
-                status=status.HTTP_410_GONE,
-            )
-        user = credit.user
-        profile = UserProfile.objects.select_related('user').get(user=user)
-        try:
-            horoscope = resolve_horoscope_for_profile(profile)
-        except ValueError as exc:
-            return None, Response(
-                {'success': False, 'error': {'code': 400, 'message': str(exc)}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        pdf_bytes = builder(horoscope, user, profile)
-        credit.consumed_at = timezone.now()
-        credit.save(update_fields=['consumed_at', 'updated_at'])
-    mid = (user.matri_id or 'profile').replace(' ', '')
-    label = 'Jathakam' if expected_product == AstrologyPdfCredit.PRODUCT_JATHAKAM else 'Thalakuri'
-    filename = f'{label}_{mid}.pdf'
-    response = HttpResponse(pdf_bytes, content_type='application/pdf')
-    response['Content-Disposition'] = f'inline; filename="{filename}"'
-    return response, None
 
-
-def _consume_credit_and_build_pdf(request, product: str, builder):
-    UserProfile.objects.get_or_create(user=request.user, defaults={})
-    profile = UserProfile.objects.select_related('user').get(user=request.user)
-    user = request.user
-    with db_transaction.atomic():
-        credit = (
-            AstrologyPdfCredit.objects.select_for_update()
-            .filter(user=user, product=product, consumed_at__isnull=True)
-            .order_by('created_at')
-            .first()
+        return Response(
+            {
+                'id': hp.pk,
+                'raw_rasi': hp.pr_rasi or '',
+                'decoded_rasi': decode_rasi(hp.pr_rasi),
+                'raw_amsa': hp.pr_amsa or '',
+                'decoded_amsa': decode_amsa(hp.pr_amsa),
+                'raw_bhava': hp.pr_bhav or '',
+                'decoded_bhava': decode_bhava(hp.pr_bhav),
+                'pr_star': hp.pr_star,
+                'pr_pada': hp.pr_pada,
+                'pr_dasabalance': hp.pr_dasabalance,
+            }
         )
-        if not credit:
-            return None, Response(
-                {
-                    'success': False,
-                    'error': {
-                        'code': 403,
-                        'message': 'No unused purchase for this product. Pay and verify first.',
-                    },
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        try:
-            horoscope = resolve_horoscope_for_profile(profile)
-        except ValueError as exc:
-            return None, Response(
-                {'success': False, 'error': {'code': 400, 'message': str(exc)}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        pdf_bytes = builder(horoscope, user, profile)
-        credit.consumed_at = timezone.now()
-        credit.save(update_fields=['consumed_at', 'updated_at'])
-    mid = (user.matri_id or 'profile').replace(' ', '')
-    label = 'Jathakam' if product == AstrologyPdfCredit.PRODUCT_JATHAKAM else 'Thalakuri'
-    filename = f'{label}_{mid}.pdf'
-    response = HttpResponse(pdf_bytes, content_type='application/pdf')
-    response['Content-Disposition'] = f'inline; filename="{filename}"'
-    return response, None
 
 
 class AstrologyPdfJathakamDownloadView(APIView):
-    """
-    GET with JWT: consume first unused jathakam credit (same user).
-    GET with sig + credit_id (from verify response): public browser download, no Authorization header.
-    """
-
     permission_classes = [AllowAny]
 
     def get(self, request):
-        sig = (request.query_params.get('sig') or '').strip()
-        raw_cid = request.query_params.get('credit_id')
-        if sig and raw_cid is not None:
-            try:
-                cid = int(raw_cid)
-            except (TypeError, ValueError):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 400, 'message': 'Invalid credit_id.'},
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not verify_pdf_credit_access(sig, cid):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {
-                            'code': 401,
-                            'message': 'Invalid or expired signature for PDF download.',
-                        },
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-            resp, err = _serve_pdf_by_signed_credit(
-                request, cid, AstrologyPdfCredit.PRODUCT_JATHAKAM, build_jathakam_pdf
-            )
-            if err:
-                return err
-            return resp
-        if not request.user.is_authenticated:
-            return Response(
-                {
-                    'success': False,
-                    'error': {
-                        'code': 401,
-                        'message': 'Use Authorization: Bearer or open the signed download_url from verify.',
-                    },
+        return Response(
+            {
+                'success': False,
+                'error': {
+                    'code': 503,
+                    'message': 'Jathakam PDF temporarily unavailable during system upgrade.',
                 },
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        resp, err = _consume_credit_and_build_pdf(
-            request, AstrologyPdfCredit.PRODUCT_JATHAKAM, build_jathakam_pdf
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-        if err:
-            return err
-        return resp
 
 
 class AstrologyPdfThalakuriDownloadView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        sig = (request.query_params.get('sig') or '').strip()
-        raw_cid = request.query_params.get('credit_id')
-        if sig and raw_cid is not None:
-            try:
-                cid = int(raw_cid)
-            except (TypeError, ValueError):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 400, 'message': 'Invalid credit_id.'},
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not verify_pdf_credit_access(sig, cid):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {
-                            'code': 401,
-                            'message': 'Invalid or expired signature for PDF download.',
-                        },
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-            resp, err = _serve_pdf_by_signed_credit(
-                request, cid, AstrologyPdfCredit.PRODUCT_THALAKURI, build_thalakuri_pdf
-            )
-            if err:
-                return err
-            return resp
-        if not request.user.is_authenticated:
-            return Response(
-                {
-                    'success': False,
-                    'error': {
-                        'code': 401,
-                        'message': 'Use Authorization: Bearer or open the signed download_url from verify.',
-                    },
+        return Response(
+            {
+                'success': False,
+                'error': {
+                    'code': 503,
+                    'message': 'Thalakuri PDF temporarily unavailable during system upgrade.',
                 },
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        resp, err = _consume_credit_and_build_pdf(
-            request, AstrologyPdfCredit.PRODUCT_THALAKURI, build_thalakuri_pdf
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-        if err:
-            return err
-        return resp
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_chart_data(request, profile_id, chart_type):
-    """
-    JSON for South Indian chart UI (Rasi / Navamsa / whole-sign Bhava from Lagna).
-    ``profile_id`` is the UserProfile primary key (same as porutham bride_id/groom_id).
-    """
-    horoscope = get_object_or_404(
-        Horoscope.objects.select_related('profile__user'),
-        profile_id=profile_id,
-    )
-    if not _user_can_view_horoscope(request.user, horoscope):
-        return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
-    if not _chart_data_available(horoscope):
-        return Response(
-            {'error': 'Chart not available. Generate horoscope first.'},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if chart_type not in ('rasi', 'amsakom', 'bhavam'):
-        return Response(
-            {'error': 'Invalid chart type. Use: rasi, amsakom, bhavam'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    lang = (request.query_params.get('lang') or 'ml').strip().lower()
-    if lang not in ('ml', 'en'):
-        lang = 'ml'
-
-    cache_key = (
-        f'astrology_chart_api:ml-glyphs-v8:{horoscope.pk}:{chart_type}:{lang}:'
-        f'{horoscope.updated_at.isoformat()}'
-    )
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return Response(cached)
-
-    service = HoroscopeService(horoscope)
-    if chart_type == 'rasi':
-        planets = service.get_rasi_chart()
-    elif chart_type == 'amsakom':
-        planets = service.get_navamsa_chart()
-    else:
-        planets = service.get_bhava_chart()
-    planets = _planet_labels_for_response(planets, lang)
-
-    dasa_lord, dasa_balance = _dasa_fields(horoscope)
-    payload = {
-        'chart_type': chart_type,
-        'nakshatra': horoscope.nakshatra,
-        'nakshatra_pada': horoscope.nakshatra_pada,
-        'rasi': horoscope.rasi,
-        'lagna': horoscope.lagna,
-        'dasa_lord': dasa_lord,
-        'dasa_balance': dasa_balance,
-        'planets': planets,
-    }
-    cache.set(cache_key, payload, timeout=86400)
-    return Response(payload)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_match_chart_data(request, bride_id, groom_id, chart_type):
-    """
-    Chart JSON for both profiles in one call. ``bride_id`` / ``groom_id`` are
-    UserProfile primary keys (same as /api/v1/astrology/porutham/).
-    """
-    bride_h = get_object_or_404(
-        Horoscope.objects.select_related('profile__user'),
-        profile_id=bride_id,
-    )
-    groom_h = get_object_or_404(
-        Horoscope.objects.select_related('profile__user'),
-        profile_id=groom_id,
-    )
-
-    if not (
-        _user_can_view_horoscope(request.user, bride_h)
-        or _user_can_view_horoscope(request.user, groom_h)
-    ):
-        return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
-
-    if not _chart_data_available(bride_h) or not _chart_data_available(groom_h):
-        return Response(
-            {'error': 'Chart not available. Generate horoscope first.'},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if chart_type not in ('rasi', 'amsakom', 'bhavam'):
-        return Response({'error': 'Invalid chart type'}, status=status.HTTP_400_BAD_REQUEST)
-    lang = (request.query_params.get('lang') or 'ml').strip().lower()
-    if lang not in ('ml', 'en'):
-        lang = 'ml'
-
-    cache_key = (
-        'astrology_match_chart_api:v8:'
-        f'{bride_h.pk}:{groom_h.pk}:{chart_type}:{lang}:'
-        f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
-    )
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return Response(cached)
-
-    bride_service = HoroscopeService(bride_h)
-    groom_service = HoroscopeService(groom_h)
-
-    def _one_chart(service, horo):
-        if chart_type == 'rasi':
-            planets = service.get_rasi_chart()
-        elif chart_type == 'amsakom':
-            planets = service.get_navamsa_chart()
-        else:
-            planets = service.get_bhava_chart()
-        planets = _planet_labels_for_response(planets, lang)
-        dasa_lord, dasa_balance = _dasa_fields(horo)
-        return {
-            'name': (getattr(horo.profile.user, 'name', None) or '').strip(),
-            'nakshatra': horo.nakshatra,
-            'nakshatra_pada': horo.nakshatra_pada,
-            'rasi': horo.rasi,
-            'lagna': horo.lagna,
-            'dasa_lord': dasa_lord,
-            'dasa_balance': dasa_balance,
-            'planets': planets,
-        }
-
-    payload = {
-        'chart_type': chart_type,
-        'bride': _one_chart(bride_service, bride_h),
-        'groom': _one_chart(groom_service, groom_h),
-    }
-    cache.set(cache_key, payload, timeout=86400)
-    return Response(payload)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_match_chart_data_partner(request, partner_matri_id, chart_type):
-    """
-    Chart JSON for requester + partner in one call.
-    Requester is resolved from JWT user; partner is resolved by matri_id.
-    """
-    if chart_type not in ('rasi', 'amsakom', 'bhavam'):
-        return Response({'error': 'Invalid chart type'}, status=status.HTTP_400_BAD_REQUEST)
-    lang = (request.query_params.get('lang') or 'ml').strip().lower()
-    if lang not in ('ml', 'en'):
-        lang = 'ml'
-
-    requester_profile, _ = UserProfile.objects.select_related('user').get_or_create(
-        user=request.user,
-        defaults={},
-    )
-    partner_mid = (partner_matri_id or '').strip()
-    partner_user = User.objects.filter(is_active=True, matri_id__iexact=partner_mid).first()
-    if not partner_user:
-        return Response({'error': 'Partner not found for matri_id.'}, status=status.HTTP_404_NOT_FOUND)
-    partner_profile = UserProfile.objects.select_related('user').filter(user=partner_user).first()
-    if not partner_profile:
-        return Response(
-            {'error': 'Chart not available. Generate horoscope first.'},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    requester_h = Horoscope.objects.filter(profile=requester_profile).select_related('profile__user').first()
-    partner_h = Horoscope.objects.filter(profile=partner_profile).select_related('profile__user').first()
-    if not requester_h or not partner_h:
-        return Response(
-            {'error': 'Chart not available. Generate horoscope first.'},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    bride_h, groom_h = resolve_bride_groom_horoscopes(
-        requester_profile, partner_profile, requester_h, partner_h
-    )
-
-    cache_key = (
-        'astrology_match_chart_partner_api:v8:'
-        f'{requester_profile.pk}:{partner_profile.pk}:{chart_type}:{lang}:'
-        f'{bride_h.updated_at.isoformat()}:{groom_h.updated_at.isoformat()}'
-    )
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return Response(cached)
-
-    bride_service = HoroscopeService(bride_h)
-    groom_service = HoroscopeService(groom_h)
-
-    def _one_chart(service, horo):
-        if chart_type == 'rasi':
-            planets = service.get_rasi_chart()
-        elif chart_type == 'amsakom':
-            planets = service.get_navamsa_chart()
-        else:
-            planets = service.get_bhava_chart()
-        planets = _planet_labels_for_response(planets, lang)
-        dasa_lord, dasa_balance = _dasa_fields(horo)
-        return {
-            'name': (getattr(horo.profile.user, 'name', None) or '').strip(),
-            'nakshatra': horo.nakshatra,
-            'nakshatra_pada': horo.nakshatra_pada,
-            'rasi': horo.rasi,
-            'lagna': horo.lagna,
-            'dasa_lord': dasa_lord,
-            'dasa_balance': dasa_balance,
-            'planets': planets,
-        }
-
-    payload = {
-        'chart_type': chart_type,
-        'bride': _one_chart(bride_service, bride_h),
-        'groom': _one_chart(groom_service, groom_h),
-    }
-    cache.set(cache_key, payload, timeout=86400)
-    return Response(payload)

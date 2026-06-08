@@ -9,6 +9,7 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.pagination import StandardPagination
 from admin_panel.permissions import IsAdminOrBranchManager, IsStaffOrAbove
+from admin_panel.branches.models import Branch
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.audit_log.utils import create_audit_log
 
@@ -50,6 +51,126 @@ def _enquiry_scope_ok(user: AdminUser, enquiry: Enquiry) -> bool:
     if user.role == AdminUser.ROLE_STAFF:
         return enquiry.assigned_to_id == user.pk
     return False
+
+
+def _parse_branch_id_param(raw) -> int | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _branch_options(qs) -> list[dict]:
+    return [{"id": b.pk, "name": b.name} for b in qs.order_by("name")]
+
+
+def _staff_options(qs) -> list[dict]:
+    return [
+        {
+            "id": sp.admin_user_id,
+            "name": sp.name,
+            "branch_id": sp.branch_id,
+            "branch_name": sp.branch.name if sp.branch_id else "",
+        }
+        for sp in qs.select_related("branch", "admin_user").order_by("name")
+        if sp.admin_user_id
+    ]
+
+
+def _assignable_staff_queryset(*, branch_id: int | None = None):
+    qs = StaffProfile.objects.filter(
+        is_deleted=False,
+        is_active=True,
+        admin_user__isnull=False,
+        admin_user__is_active=True,
+        admin_user__role=AdminUser.ROLE_STAFF,
+    )
+    if branch_id is not None:
+        qs = qs.filter(branch_id=branch_id)
+    return qs
+
+
+class EnquiryFormOptionsView(_AdminUserMixin, APIView):
+    """
+    GET /api/v1/admin/enquiries/options/ — Branch + staff lists for Add Enquiry form.
+
+    staff[].id is AdminUser pk (Enquiry.assigned_to), not StaffProfile pk.
+    Optional ?branch_id= filters staff to one branch (cascading dropdown).
+    """
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsStaffOrAbove]
+
+    def get(self, request):
+        user = request.user
+        filter_branch_id = _parse_branch_id_param(request.query_params.get("branch_id"))
+
+        if user.role == AdminUser.ROLE_ADMIN:
+            branches_qs = Branch.objects.filter(is_deleted=False, is_active=True)
+            staff_qs = _assignable_staff_queryset(branch_id=filter_branch_id)
+
+        elif user.role == AdminUser.ROLE_BRANCH_MANAGER:
+            mb = admin_branch_for_manager(user)
+            if not mb:
+                return Response(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": 400,
+                            "message": "No branch assigned to your account. Contact admin.",
+                        },
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            branches_qs = Branch.objects.filter(pk=mb.pk, is_deleted=False, is_active=True)
+            mgr_code = manager_branch_code(user)
+            staff_qs = _assignable_staff_queryset().filter(branch__code=mgr_code)
+            if filter_branch_id is not None:
+                if filter_branch_id != mb.pk:
+                    staff_qs = staff_qs.none()
+                else:
+                    staff_qs = staff_qs.filter(branch_id=filter_branch_id)
+
+        elif user.role == AdminUser.ROLE_STAFF:
+            sp = staff_profile_for(user)
+            if not sp or not sp.branch_id:
+                return Response(
+                    {"success": True, "data": {"branches": [], "staff": []}},
+                    status=status.HTTP_200_OK,
+                )
+            branches_qs = Branch.objects.filter(
+                pk=sp.branch_id, is_deleted=False, is_active=True
+            )
+            staff_qs = StaffProfile.objects.filter(
+                pk=sp.pk,
+                is_deleted=False,
+                is_active=True,
+                admin_user__isnull=False,
+            )
+            if filter_branch_id is not None and filter_branch_id != sp.branch_id:
+                staff_qs = staff_qs.none()
+
+        else:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": 403, "message": "Insufficient permissions."},
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "branches": _branch_options(branches_qs),
+                    "staff": _staff_options(staff_qs),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class EnquiryListCreateView(_AdminUserMixin, APIView):

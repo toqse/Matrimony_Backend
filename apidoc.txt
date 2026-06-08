@@ -10,13 +10,16 @@ Staff My Commissions: /api/v1/staff/commissions/ | Staff My Salary: /api/v1/staf
 Admin Subscriptions: /api/v1/admin/subscriptions/ | Staff Subscriptions: /api/v1/staff/subscriptions/ (admin_panel.staff_subscriptions) | Admin Commissions: /api/v1/admin/commissions/ | Branch Manager Commissions (approval): /api/v1/branch/commissions/ | Branch Manager My Commissions: /api/v1/branch/my-commissions/ | Branch Manager My Profiles: /api/v1/branch/my-profiles/ | Admin Payroll: /api/v1/admin/payroll/ | Branch Manager Payroll: /api/v1/branch/payroll/ | Legacy staff payroll list: /api/v1/staff/payroll/ | Admin Enquiries: /api/v1/admin/enquiries/ | Staff Enquiries: /api/v1/staff/enquiries/ | Branch Manager Enquiries: /api/v1/branch/enquiries/
 Profile Base: /api/v1/profile/
 Master Base: /api/v1/master/
-Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt; includes GET chart/<profile_id>/[chart_type]/ and GET match-chart/<bride_id>/<groom_id>/[chart_type]/ for South Indian Rasi / Navamsa / Bhava cell JSON — see horoscope_apidoc §4b)
+Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt)
+  Member: GET horoscope/me/ | GET horoscope/<user_uuid>/ (plan) | PATCH birth-coordinates/ | POST porutham/ (plan+quota)
+  | POST pdf/order/ | POST pdf/verify/ | GET pdf/jathakam/ | GET pdf/thalakuri/ (503 JSON until PDFs rebuilt for EXE data)
+  Horoscope rows are HoroscopeProfile (Windows EXE writes pr_rasi/pr_star/... to MySQL); no server generate/chart JSON/PNG/match-report.
 Horoscope Management (Admin JWT, same paths under each base; data scoped by role):
   Admin: /api/v1/admin/horoscope/  |  Staff: /api/v1/staff/horoscope/  |  Branch Manager: /api/v1/branch/horoscope/
   Endpoints: GET summary/  |  GET records/?search=&branch_id=&page=&page_size=  |  GET records/by-matri/<matri_id>/
-  |  GET records/<user_uuid>/  |  POST records/<user_uuid>/regenerate/  |  POST porutham/  (body: bride_profile_id, groom_profile_id; no plan quota)
+  |  GET records/<user_uuid>/  |  POST porutham/  (body: bride_profile_id, groom_profile_id; no plan quota)
   |  GET jathakam-pdfs/
-  Chart refresh uses the same pipeline as member APIs (horoscope_runtime). match_calculations KPI sums UserPlan.horoscope_used for users in scope.
+  Panel uses HoroscopeProfile + VB porutham; regenerate route removed (EXE + management commands instead).
 
 --- Authentication ---
 All authenticated endpoints require header: Authorization: Bearer <access_token>
@@ -3050,7 +3053,15 @@ POST /api/v1/branch/my-profiles/create/
       "phone_number": "9876543210",
       "gender": "F",
       "dob": "24-03-2000",
-      "email": "priya@example.com"
+      "email": "priya@example.com",
+
+      // Optional horoscope support (see "Horoscope fields" below)
+      "has_horoscope": true,
+      "birth_time": "10:30",
+      "birth_place": "Chennai",
+      "birth_latitude": 13.0827,
+      "birth_longitude": 80.2707,
+      "birth_timezone": 5.5
     }
   Response 201:
     {
@@ -3058,7 +3069,25 @@ POST /api/v1/branch/my-profiles/create/
       "message": "Profile created successfully. Matri ID: AM100123.",
       "data": { "matri_id": "AM100123", "name": "Priya Sharma", "phone": "9876543210" }
     }
-  Error 400: validation messages listed above.
+  Error 400: validation messages listed above (plus horoscope messages below).
+
+  Horoscope fields (optional; shared with POST /api/v1/staff/profiles/create/):
+    - has_horoscope (bool, default false): when true, the backend creates a
+      horoscope_profile (astrology bridge) record after the profile is created.
+    - birth_time (string, "HH:MM" or "HH:MM:SS")
+    - birth_place (string, max 255)
+    - birth_latitude (float, -90..90)
+    - birth_longitude (float, -180..180)
+    - birth_timezone (float, -12..14; defaults to 5.5 / IST when omitted)
+    When has_horoscope=true, date_of_birth (the dob field), birth_time and
+    birth_place are REQUIRED:
+      - "Date of birth is required when has_horoscope is true."
+      - "Birth time is required when has_horoscope is true."
+      - "Birth place is required when has_horoscope is true."
+    No horoscope is calculated at creation time. The bridge record is created
+    with is_calculated=false and calculated_at=null (pr_name, pr_dob, pr_tob,
+    pr_lat, pr_lon, pr_tz populated). Actual generation happens later via the
+    Horoscope Generator workflow.
 
 GET /api/v1/branch/my-profiles/{matri_id}/documents/
   Description: Return uploaded document URLs and missing slots.
@@ -3966,6 +3995,17 @@ POST /api/v1/staff/profiles/create/
   Optional section objects (same field names as PATCH /api/v1/admin/profiles/{matri_id}/):
     basic_details, location_details, religion_details, personal_details, family_details, education_details, about_me
     (string or { "about_me": "..." }, max 500 characters).
+  Optional horoscope fields (root level):
+    - has_horoscope (bool, default false): when true, a horoscope_profile (astrology bridge) record
+      is created after the profile (no calculation; is_calculated=false, calculated_at=null).
+    - birth_time ("HH:MM" or "HH:MM:SS"), birth_place (string, max 255),
+      birth_latitude (-90..90), birth_longitude (-180..180), birth_timezone (-12..14, default 5.5 / IST).
+    When has_horoscope=true, dob, birth_time and birth_place are required:
+      "Date of birth is required when has_horoscope is true." /
+      "Birth time is required when has_horoscope is true." /
+      "Birth place is required when has_horoscope is true."
+    The bridge record stores pr_name, pr_dob, pr_tob, pr_lat, pr_lon, pr_tz; actual horoscope
+    generation happens later via the Horoscope Generator workflow.
   Multipart: send one JSON object in form field `registration`, `data`, `payload`, or `profile`; other non-file
     form fields are merged into the same dict. File parts use these names:
     - full_photo, passport_photo, profile_photo, selfie or selfie_photo, family_photo, aadhaar_front, aadhaar_back
@@ -4002,7 +4042,13 @@ POST /api/v1/staff/profiles/create/
         "occupation_id": 1,
         "annual_income_id": 1
       },
-      "about_me": "Short bio text."
+      "about_me": "Short bio text.",
+      "has_horoscope": true,
+      "birth_time": "10:30",
+      "birth_place": "Chennai",
+      "birth_latitude": 13.0827,
+      "birth_longitude": 80.2707,
+      "birth_timezone": 5.5
     }
 
   Field / validation messages (first error in error.message; create may include error.details map):

@@ -1,0 +1,108 @@
+{
+  "_note": "Ground truth for the horoscope decoder verification tool. The 'exe' section of each record MUST be filled in from the ACTUAL Windows Horoscope Generator output (read the Rasi/Amsakom/Bhavom charts house by house). The values below are pre-filled with Django's current decode as a format template ONLY. After confirming each house against the real EXE, set 'verified_against_exe' to true. Planet abbreviations: La=Lagnam, Su=Sun, Mo=Moon, Ma=Mars, Me=Mercury, Ju=Jupiter, Ve=Venus, Sa=Saturn, Ra=Rahu, Ke=Ketu, Md=Maandi. House numbers are zodiac signs 1-12 (1=Medam/Mesha ... 12=Meenam/Meena).",
+  "verified_against_exe": false,
+  "records": [
+    {
+      "id": 1842,
+      "name": "JOSEPH",
+      "pr_rasi": "BHEJGAFADJC",
+      "pr_amsa": "DGDLBAFFGAL",
+      "pr_bhav": "BHEJGLFADJC",
+      "exe": {
+        "rasi": {
+          "1": ["Ju", "Sa"],
+          "2": ["La"],
+          "3": ["Md"],
+          "4": ["Ra"],
+          "5": ["Mo"],
+          "6": ["Ve"],
+          "7": ["Me"],
+          "8": ["Su"],
+          "9": [],
+          "10": ["Ma", "Ke"],
+          "11": [],
+          "12": []
+        },
+        "amsa": {
+          "1": ["Ju", "Ke"],
+          "2": ["Me"],
+          "3": [],
+          "4": ["La", "Mo"],
+          "5": [],
+          "6": ["Ve", "Sa"],
+          "7": ["Su", "Ra"],
+          "8": [],
+          "9": [],
+          "10": [],
+          "11": [],
+          "12": ["Ma", "Md"]
+        },
+        "bhava": {
+          "1": ["Sa"],
+          "2": ["La"],
+          "3": ["Md"],
+          "4": ["Ra"],
+          "5": ["Mo"],
+          "6": ["Ve"],
+          "7": ["Me"],
+          "8": ["Su"],
+          "9": [],
+          "10": ["Ma", "Ke"],
+          "11": [],
+          "12": ["Ju"]
+        }
+      }
+    },
+    {
+      "id": "example_AGEEHKGAEKJ",
+      "name": "TEMPLATE - fill EXE houses from Windows Horoscope Generator",
+      "pr_rasi": "AGEEHKGAEKJ",
+      "pr_amsa": "EBAIIBCBAGA",
+      "pr_bhav": "AGEFHKHAEKJ",
+      "exe": {
+        "rasi": {
+          "1": ["La", "Sa"],
+          "2": [],
+          "3": [],
+          "4": [],
+          "5": ["Mo", "Ma", "Ra"],
+          "6": [],
+          "7": ["Su", "Ve"],
+          "8": ["Me"],
+          "9": [],
+          "10": ["Md"],
+          "11": ["Ju", "Ke"],
+          "12": []
+        },
+        "amsa": {
+          "1": ["Mo", "Ra", "Md"],
+          "2": ["Su", "Ju", "Sa"],
+          "3": ["Ve"],
+          "4": [],
+          "5": ["La"],
+          "6": [],
+          "7": ["Ke"],
+          "8": [],
+          "9": ["Ma", "Me"],
+          "10": [],
+          "11": [],
+          "12": []
+        },
+        "bhava": {
+          "1": ["La", "Sa"],
+          "2": [],
+          "3": [],
+          "4": [],
+          "5": ["Mo", "Ra"],
+          "6": ["Ma"],
+          "7": ["Su"],
+          "8": ["Me", "Ve"],
+          "9": [],
+          "10": ["Md"],
+          "11": ["Ju", "Ke"],
+          "12": []
+        }
+      }
+    }
+  ]
+}

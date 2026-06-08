@@ -1,10 +1,13 @@
+import calendar
 from datetime import date, datetime, time
 from decimal import Decimal
 from io import BytesIO
 
+from django.conf import settings
 from django.db import transaction as db_transaction
 from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
+from django.template.loader import render_to_string
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -62,6 +65,223 @@ def _build_simple_pdf(lines: list[str]) -> bytes:
         pdf.write(f"{o:010d} 00000 n \n".encode())
     pdf.write(f"trailer\n<< /Size {len(offs)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
     return pdf.getvalue()
+
+
+_ONES = (
+    "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+    "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+    "Seventeen", "Eighteen", "Nineteen",
+)
+_TENS = ("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety")
+
+
+def _two_digits_to_words(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    t, o = divmod(n, 10)
+    return _TENS[t] + (f" {_ONES[o]}" if o else "")
+
+
+def _three_digits_to_words(n: int) -> str:
+    h, rest = divmod(n, 100)
+    parts = []
+    if h:
+        parts.append(f"{_ONES[h]} Hundred")
+    if rest:
+        parts.append(_two_digits_to_words(rest))
+    return " ".join(parts)
+
+
+def _int_to_indian_words(n: int) -> str:
+    """Convert a non-negative integer to words using the Indian numbering system."""
+    if n == 0:
+        return "Zero"
+    parts: list[str] = []
+    crore, n = divmod(n, 10_000_000)
+    lakh, n = divmod(n, 100_000)
+    thousand, n = divmod(n, 1_000)
+    hundred = n
+    if crore:
+        parts.append(f"{_int_to_indian_words(crore)} Crore")
+    if lakh:
+        parts.append(f"{_two_digits_to_words(lakh)} Lakh")
+    if thousand:
+        parts.append(f"{_two_digits_to_words(thousand)} Thousand")
+    if hundred:
+        parts.append(_three_digits_to_words(hundred))
+    return " ".join(p for p in parts if p)
+
+
+def amount_to_words_inr(amount) -> str:
+    """Format a Decimal/number as 'X Rupees and Y Paise Only' (Indian numbering)."""
+    try:
+        dec = Decimal(amount or 0)
+    except Exception:
+        dec = Decimal("0")
+    if dec < 0:
+        return "Minus " + amount_to_words_inr(-dec)
+    rupees = int(dec)
+    paise = int((dec - rupees) * 100)
+    rupees_words = _int_to_indian_words(rupees)
+    if paise:
+        return f"{rupees_words} Rupees and {_two_digits_to_words(paise)} Paise Only"
+    return f"{rupees_words} Rupees Only"
+
+
+def _format_inr(amount) -> str:
+    """Format a numeric amount using Indian digit grouping, e.g. 'Rs.12,345.67'."""
+    try:
+        dec = Decimal(amount or 0)
+    except Exception:
+        dec = Decimal("0")
+    sign = "-" if dec < 0 else ""
+    dec = abs(dec)
+    whole = int(dec)
+    paise = int((dec - whole) * 100)
+    s = str(whole)
+    if len(s) <= 3:
+        grouped = s
+    else:
+        last3, rest = s[-3:], s[:-3]
+        chunks: list[str] = []
+        while len(rest) > 2:
+            chunks.append(rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            chunks.append(rest)
+        grouped = ",".join(reversed(chunks)) + "," + last3
+    return f"{sign}Rs.{grouped}.{paise:02d}"
+
+
+def _salary_status_label(salary_obj: SalaryRecord) -> str:
+    staff = getattr(salary_obj, "staff", None)
+    if staff and getattr(staff, "is_active", False):
+        return "Active"
+    if staff:
+        return "Inactive"
+    return (salary_obj.status or "").title()
+
+
+def _pay_date_for(salary_obj: SalaryRecord) -> date:
+    """Return the date that should appear as 'Pay Date' on the slip."""
+    paid_at = getattr(salary_obj, "paid_at", None)
+    if paid_at:
+        return timezone.localtime(paid_at).date()
+    if salary_obj.month:
+        last_day = calendar.monthrange(salary_obj.month.year, salary_obj.month.month)[1]
+        return date(salary_obj.month.year, salary_obj.month.month, last_day)
+    return timezone.localdate()
+
+
+def _build_salary_slip_context(salary_obj: SalaryRecord) -> dict:
+    now_local = timezone.localtime(timezone.now())
+    branch = getattr(salary_obj, "branch", None)
+    staff = getattr(salary_obj, "staff", None)
+
+    basic = Decimal(getattr(salary_obj, "basic", 0) or 0)
+    commission = Decimal(getattr(salary_obj, "commission", 0) or 0)
+    allowances = Decimal(getattr(salary_obj, "allowances", 0) or 0)
+    deductions = Decimal(getattr(salary_obj, "deductions", 0) or 0)
+    gross = Decimal(getattr(salary_obj, "gross", 0) or 0) or (basic + commission + allowances)
+    net = Decimal(getattr(salary_obj, "net", 0) or 0) or (gross - deductions)
+
+    month = salary_obj.month
+    if month:
+        month_name = month.strftime("%B")
+        year = month.strftime("%Y")
+        days_in_month = calendar.monthrange(month.year, month.month)[1]
+        pay_period = month.strftime("%b %Y")
+    else:
+        month_name = "-"
+        year = "-"
+        days_in_month = 0
+        pay_period = "-"
+
+    pay_date = _pay_date_for(salary_obj)
+
+    earnings = [
+        {"label": "Basic Salary", "amount": _format_inr(basic)},
+        {"label": "Commission", "amount": _format_inr(commission)},
+        {"label": "Allowances", "amount": _format_inr(allowances)},
+    ]
+    deduction_rows = [
+        {"label": "Deductions", "amount": _format_inr(deductions)},
+    ]
+
+    company_address = (
+        getattr(settings, "SALARY_SLIP_COMPANY_ADDRESS", "")
+        or getattr(branch, "address", "")
+        or ""
+    ).strip()
+
+    return {
+        "company_name": getattr(settings, "SALARY_SLIP_COMPANY_NAME", "") or "Company Name",
+        "company_address": company_address,
+        "logo_url": getattr(settings, "SALARY_SLIP_LOGO_URL", "") or "",
+        "month_name": month_name,
+        "year": year,
+        "employee_name": getattr(staff, "name", "") or "-",
+        "employee_id": getattr(staff, "emp_code", "") or "-",
+        "designation": getattr(staff, "designation", "") or "-",
+        "branch_name": getattr(branch, "name", "") or "-",
+        "status_label": _salary_status_label(salary_obj),
+        "pay_period": pay_period,
+        "pay_date": pay_date.strftime("%d %b %Y"),
+        "paid_days": days_in_month,
+        "lop_days": 0,
+        "earnings": earnings,
+        "deductions": deduction_rows,
+        "gross_amount": _format_inr(gross),
+        "total_deductions": _format_inr(deductions),
+        "net_amount": _format_inr(net),
+        "net_amount_words": amount_to_words_inr(net),
+        "generated_on": now_local.strftime("%d %b %Y %I:%M %p"),
+    }
+
+
+def build_salary_slip_pdf(salary_obj: SalaryRecord, request=None) -> bytes:
+    context = _build_salary_slip_context(salary_obj)
+    html_string = render_to_string("salary_slip.html", context)
+    base_url = request.build_absolute_uri("/") if request else None
+    try:
+        from weasyprint import HTML
+
+        return HTML(string=html_string, base_url=base_url).write_pdf()
+    except Exception:
+        # Graceful fallback to preserve download availability if WeasyPrint/runtime deps are missing.
+        lines: list[str] = [context["company_name"]]
+        if context["company_address"]:
+            lines.append(context["company_address"])
+        lines.extend(
+            [
+                f"Payslip for the Month of {context['month_name']} {context['year']}",
+                "",
+                f"Employee Name : {context['employee_name']}",
+                f"Employee ID   : {context['employee_id']}",
+                f"Designation   : {context['designation']}",
+                f"Branch        : {context['branch_name']}",
+                f"Pay Period    : {context['pay_period']}",
+                f"Pay Date      : {context['pay_date']}",
+                f"Paid Days     : {context['paid_days']}",
+                f"LOP Days      : {context['lop_days']}",
+                "",
+                "Earnings:",
+            ]
+        )
+        for row in context["earnings"]:
+            lines.append(f"  {row['label']:<22}{row['amount']:>16}")
+        lines.append(f"  {'Gross Earnings':<22}{context['gross_amount']:>16}")
+        lines.append("")
+        lines.append("Deductions:")
+        for row in context["deductions"]:
+            lines.append(f"  {row['label']:<22}{row['amount']:>16}")
+        lines.append(f"  {'Total Deductions':<22}{context['total_deductions']:>16}")
+        lines.append("")
+        lines.append(f"Total Net Payable : {context['net_amount']}")
+        lines.append(f"Amount in Words   : {context['net_amount_words']}")
+        lines.append("")
+        lines.append("-- This is a system-generated document --")
+        return _build_simple_pdf(lines)
 
 
 def _staff_profile_for_admin_user(user):
@@ -457,21 +677,7 @@ class PayrollDownloadAPIView(APIView):
                 {"success": False, "error": {"code": 404, "message": "Salary record not found"}},
                 status=404,
             )
-        month_label = obj.month.strftime("%B %Y") if obj.month else ""
-        lines = [
-            "Salary Slip",
-            f"Staff: {obj.staff.name} ({obj.staff.emp_code})",
-            f"Branch: {obj.branch.name}",
-            f"Month: {month_label}",
-            f"Basic: {obj.basic}",
-            f"Commission: {obj.commission}",
-            f"Allowances: {obj.allowances}",
-            f"Deductions: {obj.deductions}",
-            f"Gross: {obj.gross}",
-            f"Net: {obj.net}",
-            f"Status: {obj.status}",
-        ]
-        pdf = _build_simple_pdf(lines)
+        pdf = build_salary_slip_pdf(obj, request=request)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="salary_{obj.id}_slip.pdf"'
         return resp
@@ -753,21 +959,7 @@ class BranchPayrollDownloadAPIView(APIView):
         obj, err = _salary_record_for_branch_manager(request, pk, wrong_branch_as_404=True)
         if err:
             return err
-        month_label = obj.month.strftime("%B %Y") if obj.month else ""
-        lines = [
-            "Salary Slip",
-            f"Staff: {obj.staff.name} ({obj.staff.emp_code})",
-            f"Branch: {obj.branch.name}",
-            f"Month: {month_label}",
-            f"Basic: {obj.basic}",
-            f"Commission: {obj.commission}",
-            f"Allowances: {obj.allowances}",
-            f"Deductions: {obj.deductions}",
-            f"Gross: {obj.gross}",
-            f"Net: {obj.net}",
-            f"Status: {obj.status}",
-        ]
-        pdf = _build_simple_pdf(lines)
+        pdf = build_salary_slip_pdf(obj, request=request)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="salary_{obj.id}_slip.pdf"'
         return resp

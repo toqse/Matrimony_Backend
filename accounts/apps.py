@@ -6,3 +6,6 @@ class AccountsConfig(AppConfig):
     name = 'accounts'
     label = 'accounts'
     verbose_name = 'Accounts'
+
+    def ready(self):
+        from astrology import signals  # noqa: F401

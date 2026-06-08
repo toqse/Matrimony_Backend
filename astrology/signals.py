@@ -1,36 +1,74 @@
 import logging
 
+from django.conf import settings
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from profiles.models import UserProfile
 
-from .models import Horoscope
-from .services.horoscope_service import generate_horoscope_payload
-from .services.utils import build_birth_input_hash
-
 logger = logging.getLogger(__name__)
 
 
-@receiver(post_save, sender=UserProfile)
-def auto_generate_horoscope(sender, instance, **kwargs):
-    dob = getattr(instance.user, 'dob', None)
-    tob = getattr(instance, 'time_of_birth', None)
-    pob = getattr(instance, 'place_of_birth', '')
-    if not dob or not tob or not pob:
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def create_horoscope_profile_on_register(sender, instance, created, **kwargs):
+    """Create empty HoroscopeProfile row when a new user registers."""
+    if not created:
         return
-
-    birth_hash = build_birth_input_hash(dob, tob, pob)
-    existing = Horoscope.objects.filter(profile=instance).only('id', 'birth_input_hash').first()
-    if existing and existing.birth_input_hash == birth_hash:
-        return
+    from .models import HoroscopeProfile
 
     try:
-        payload = generate_horoscope_payload(
-            date_of_birth=dob,
-            time_of_birth=tob,
-            place_of_birth=pob,
+        HoroscopeProfile.objects.get_or_create(
+            user=instance,
+            defaults={
+                'pr_name': instance.name or '',
+                'pr_dob': getattr(instance, 'dob', None),
+                'pr_tz': 5.5,
+            },
         )
-        Horoscope.objects.update_or_create(profile=instance, defaults=payload)
-    except Exception as exc:  # pragma: no cover - graceful signal failure
-        logger.warning('Auto horoscope generation failed for profile=%s: %s', instance.pk, exc)
+    except Exception as exc:
+        logger.warning(
+            'create_horoscope_profile_on_register failed: %s', exc
+        )
+
+
+@receiver(post_save, sender=UserProfile)
+def sync_birth_to_horoscope_profile(sender, instance, **kwargs):
+    """
+    Keeps HoroscopeProfile input fields in sync when member updates
+    their birth time or birth place coordinates.
+    Never overwrites EXE output fields (pr_rasi, pr_star, etc.).
+    """
+    from .models import HoroscopeProfile
+
+    user = instance.user
+    try:
+        hp, _ = HoroscopeProfile.objects.get_or_create(
+            user=user,
+            defaults={
+                'pr_name': user.name or '',
+                'pr_dob': getattr(user, 'dob', None),
+                'pr_tz': 5.5,
+            },
+        )
+        profile_tz = getattr(instance, 'birth_timezone', None)
+        updates = {
+            'pr_name': user.name or '',
+            'pr_dob': getattr(user, 'dob', None),
+            'pr_tob': getattr(instance, 'time_of_birth', None),
+            'pr_lat': getattr(instance, 'birth_latitude', None),
+            'pr_lon': getattr(instance, 'birth_longitude', None),
+        }
+        if profile_tz is not None:
+            updates['pr_tz'] = profile_tz
+        changed = any(getattr(hp, k) != v for k, v in updates.items())
+        if changed:
+            for k, v in updates.items():
+                setattr(hp, k, v)
+            hp.is_calculated = False
+            hp.save(
+                update_fields=list(updates.keys()) + ['is_calculated', 'updated_at']
+            )
+    except Exception as exc:
+        logger.warning(
+            'sync_birth_to_horoscope_profile failed user=%s: %s', user.pk, exc
+        )

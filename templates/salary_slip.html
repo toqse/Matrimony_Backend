@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Payslip — {{ employee_name }} — {{ month_name }} {{ year }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 14mm;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: "Helvetica", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #1f2937;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+        .slip {
+            width: 100%;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        /* ---------- Header ---------- */
+        .header {
+            display: flex;
+            align-items: center;
+            padding: 18px 22px 14px 22px;
+        }
+        .header .logo-box {
+            width: 78px;
+            height: 78px;
+            border: 1px dashed #cbd5e1;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            text-align: center;
+            margin-right: 18px;
+            flex-shrink: 0;
+            background: #f8fafc;
+            border-radius: 2px;
+        }
+        .header .logo-box img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .header .company {
+            flex: 1;
+        }
+        .header .company-name {
+            font-size: 18px;
+            font-weight: 700;
+            color: #0f172a;
+            margin: 0 0 2px 0;
+        }
+        .header .company-address {
+            font-size: 10px;
+            color: #6b7280;
+            margin: 0 0 8px 0;
+            white-space: pre-line;
+        }
+        .header .payslip-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #111827;
+            margin: 6px 0 0 0;
+        }
+
+        /* ---------- Employee bar ---------- */
+        .employee-bar {
+            background: #ecfdf5;
+            border-top: 1px solid #d1fae5;
+            border-bottom: 1px solid #d1fae5;
+            padding: 14px 22px;
+        }
+        .employee-bar table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .employee-bar td {
+            padding: 4px 8px 4px 0;
+            vertical-align: top;
+            font-size: 10.5px;
+        }
+        .employee-bar .label {
+            color: #4b5563;
+            width: 120px;
+        }
+        .employee-bar .value {
+            color: #111827;
+            font-weight: 600;
+            padding-right: 24px;
+        }
+        .employee-bar .net-pay-label {
+            font-size: 10px;
+            color: #4b5563;
+            text-align: right;
+        }
+        .employee-bar .net-pay-amount {
+            font-size: 18px;
+            font-weight: 700;
+            color: #059669;
+            text-align: right;
+        }
+
+        /* ---------- Income details ---------- */
+        .section-title {
+            background: #f3f4f6;
+            color: #111827;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 8px 22px;
+            border-bottom: 1px solid #e5e7eb;
+            border-top: 1px solid #e5e7eb;
+        }
+        .income-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        .income-table > tbody > tr > td {
+            width: 50%;
+            vertical-align: top;
+            padding: 0;
+        }
+        .income-table .col-left {
+            border-right: 1px solid #e5e7eb;
+        }
+        .income-table .inner {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .income-table .inner th,
+        .income-table .inner td {
+            padding: 8px 22px;
+            font-size: 10.5px;
+        }
+        .income-table .inner th {
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .income-table .inner th.amount,
+        .income-table .inner td.amount {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .income-table .inner tr.row td {
+            border-bottom: 1px dashed #eef2f7;
+            color: #1f2937;
+        }
+        .income-table .inner tr.total td {
+            font-weight: 700;
+            color: #111827;
+            border-top: 1px solid #d1d5db;
+            background: #f9fafb;
+        }
+
+        /* ---------- Net payable ---------- */
+        .net-payable {
+            background: #ecfdf5;
+            border-top: 1px solid #d1fae5;
+            text-align: center;
+            padding: 16px 22px 18px 22px;
+        }
+        .net-payable .title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #065f46;
+            margin: 0 0 4px 0;
+            text-transform: none;
+        }
+        .net-payable .formula {
+            font-size: 10px;
+            color: #4b5563;
+            margin: 0 0 6px 0;
+        }
+        .net-payable .amount {
+            font-size: 22px;
+            font-weight: 700;
+            color: #059669;
+            margin: 2px 0 4px 0;
+        }
+        .net-payable .words {
+            font-size: 10px;
+            color: #4b5563;
+        }
+
+        /* ---------- Footer ---------- */
+        .footer {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 9.5px;
+            padding: 12px 22px 4px 22px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slip">
+        <div class="header">
+            <div class="logo-box">
+                {% if logo_url %}
+                <img src="{{ logo_url }}" alt="logo" />
+                {% else %}
+                Upload<br/>Logo
+                {% endif %}
+            </div>
+            <div class="company">
+                <p class="company-name">{{ company_name }}</p>
+                {% if company_address %}<p class="company-address">{{ company_address }}</p>{% endif %}
+                <p class="payslip-title">Payslip for the Month of {{ month_name }} {{ year }}</p>
+            </div>
+        </div>
+
+        <div class="employee-bar">
+            <table>
+                <tr>
+                    <td class="label">Employee Name</td>
+                    <td class="value">: {{ employee_name }}</td>
+                    <td class="net-pay-label" rowspan="2">
+                        <div>{{ net_amount }}</div>
+                        <div style="font-size:10px;color:#4b5563;font-weight:400;">Total Net Pay</div>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="label">Employee ID</td>
+                    <td class="value">: {{ employee_id }}</td>
+                </tr>
+                <tr>
+                    <td class="label">Pay Period</td>
+                    <td class="value">: {{ pay_period }}</td>
+                    <td>
+                        <table style="width:100%;">
+                            <tr>
+                                <td class="label">Paid Days</td>
+                                <td class="value">: {{ paid_days }}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="label">Pay Date</td>
+                    <td class="value">: {{ pay_date }}</td>
+                    <td>
+                        <table style="width:100%;">
+                            <tr>
+                                <td class="label">LOP Days</td>
+                                <td class="value">: {{ lop_days }}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section-title">Income Details</div>
+        <table class="income-table">
+            <tr>
+                <td class="col-left">
+                    <table class="inner">
+                        <thead>
+                            <tr>
+                                <th>Earnings</th>
+                                <th class="amount">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in earnings %}
+                            <tr class="row">
+                                <td>{{ row.label }}</td>
+                                <td class="amount">{{ row.amount }}</td>
+                            </tr>
+                            {% endfor %}
+                            <tr class="total">
+                                <td>Gross Earnings</td>
+                                <td class="amount">{{ gross_amount }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </td>
+                <td>
+                    <table class="inner">
+                        <thead>
+                            <tr>
+                                <th>Deductions</th>
+                                <th class="amount">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in deductions %}
+                            <tr class="row">
+                                <td>{{ row.label }}</td>
+                                <td class="amount">{{ row.amount }}</td>
+                            </tr>
+                            {% endfor %}
+                            <tr class="total">
+                                <td>Total Deductions</td>
+                                <td class="amount">{{ total_deductions }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </td>
+            </tr>
+        </table>
+
+        <div class="net-payable">
+            <p class="title">Total Net Payable</p>
+            <p class="formula">Gross Earnings - Total Deductions</p>
+            <p class="amount">{{ net_amount }}</p>
+            <p class="words">Amount in Words: {{ net_amount_words }}</p>
+        </div>
+
+        <div class="footer">
+            -- This is a system-generated document. --
+        </div>
+    </div>
+</body>
+</html>

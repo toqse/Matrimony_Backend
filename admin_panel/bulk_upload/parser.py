@@ -130,7 +130,32 @@ def _cell(v: Any) -> str:
     return str(v).strip()
 
 
+# Columns that uniquely identify the legacy matrimony export
+# (typo `mother toungue`, plus the horoscope chart fields). When any of these
+# is present we route the file through the legacy importer instead of
+# rejecting it as "Unknown columns".
+LEGACY_FORMAT_FINGERPRINTS = {
+    "mother toungue",
+    "horochart",
+    "amsachart",
+    "bhavchart",
+    "sishta_dur",
+    "padam",
+}
+
+
+def is_legacy_format(headers: list[str]) -> bool:
+    """True when the header row matches the old matrimony CSV export."""
+    normalized = {(h or "").strip().lower() for h in headers}
+    return bool(LEGACY_FORMAT_FINGERPRINTS & normalized)
+
+
 def parse_upload_file(uploaded_file) -> tuple[list[str], list[dict[str, str]]]:
+    """Parse and strictly validate a bulk-upload template file.
+
+    For modern templates this enforces exact header layout. Legacy matrimony
+    exports are routed via parse_legacy_upload_file (skipping this validator).
+    """
     name = (getattr(uploaded_file, "name", "") or "").lower()
     data = uploaded_file.read()
     if name.endswith(".xlsx"):
@@ -140,6 +165,51 @@ def parse_upload_file(uploaded_file) -> tuple[list[str], list[dict[str, str]]]:
 
     _validate_headers_strict(headers)
     return headers, rows
+
+
+def read_upload_file_text(uploaded_file) -> tuple[str, list[str]]:
+    """Decode an uploaded CSV/XLSX into CSV text + normalized header list.
+
+    Used by the legacy-format path to keep the raw bytes for re-processing
+    during import. XLSX is converted to CSV text on the fly so legacy
+    detection and the legacy importer share a single text-based path.
+    """
+    name = (getattr(uploaded_file, "name", "") or "").lower()
+    data = uploaded_file.read()
+    if name.endswith(".xlsx"):
+        return _xlsx_to_csv_text(data)
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("latin-1")
+    reader = csv.reader(io.StringIO(text))
+    try:
+        first = next(reader)
+    except StopIteration:
+        return text, []
+    return text, [_norm(h) for h in first]
+
+
+def _xlsx_to_csv_text(raw: bytes) -> tuple[str, list[str]]:
+    wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    ws = wb.active
+    out = io.StringIO()
+    writer = csv.writer(out)
+    headers: list[str] = []
+    for index, row in enumerate(ws.iter_rows(values_only=True)):
+        cells = []
+        for v in row:
+            if hasattr(v, "strftime"):
+                cells.append(v.strftime("%d/%m/%Y"))
+            elif v is None:
+                cells.append("")
+            else:
+                cells.append(str(v))
+        writer.writerow(cells)
+        if index == 0:
+            headers = [_norm(h) for h in cells]
+    wb.close()
+    return out.getvalue(), headers
 
 
 def _validate_headers_strict(headers: list[str]) -> None:

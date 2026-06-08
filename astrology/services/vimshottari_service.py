@@ -52,6 +52,8 @@ def vimshottari_mahadasha_state(horoscope, ref_utc: datetime | None = None) -> d
     Current Vimshottari mahadasha lord and approximate time left in the period.
     Uses moon longitude at birth from stored grahanila.
     """
+    if not getattr(horoscope, 'grahanila', None):
+        return None
     grahanila = horoscope.grahanila or {}
     moon = (grahanila.get('planets') or {}).get('moon') or {}
     lon = moon.get('longitude')

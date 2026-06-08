@@ -13,6 +13,7 @@ from profiles.views import (
     ProfileViewRecordView,
 )
 from admin_panel.success_stories.views import PublicSuccessStoryListAPIView
+from astrology.views import HoroscopeDecoderDebugView
 from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
 
 urlpatterns = [
@@ -31,6 +32,7 @@ urlpatterns = [
     path('api/v1/branch/commissions/', include('admin_panel.commissions.branch_urls')),
     path('api/v1/branch/my-commissions/', include('admin_panel.my_commissions.urls')),
     path('api/v1/branch/my-salary/', include('admin_panel.my_salary.urls')),
+    path('api/v1/staff/me/salary/', include('admin_panel.my_salary.staff_me_urls')),
     path('api/v1/branch/my-profiles/', include('admin_panel.my_profiles.urls')),
     path('api/v1/admin/subscriptions/', include('admin_panel.subscriptions.urls')),
     path('api/v1/branch/subscriptions/', include('admin_panel.subscriptions.branch_urls')),
@@ -67,6 +69,11 @@ urlpatterns = [
     ),
     path('api/v1/profile/', include('profiles.urls')),
     path('api/v1/astrology/', include('astrology.urls')),
+    path(
+        'api/horoscope/debug/<int:pk>/',
+        HoroscopeDecoderDebugView.as_view(),
+        name='horoscope_decoder_debug',
+    ),
     path('api/v1/dashboard/', include('dashboard.urls')),
     path('api/v1/profiles/<str:matri_id>/preview/', ProfilePreviewByMatriIdView.as_view()),
     path('api/v1/profiles/<str:matri_id>/view/', ProfileViewRecordView.as_view()),

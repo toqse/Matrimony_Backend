@@ -3,5 +3,6 @@ __pycache__/
 
 # Django / local dev
 .env
+db.sqlite3
 *.log
 

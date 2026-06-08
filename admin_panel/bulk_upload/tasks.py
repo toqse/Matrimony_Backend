@@ -15,6 +15,11 @@ from profiles.models import (
 )
 from profiles.utils import get_profile_completion_data
 
+from .legacy_runner import (
+    delete_cached_legacy_payload,
+    get_cached_legacy_payload,
+    import_legacy_csv_text,
+)
 from .models import BulkUploadJob
 from .validators import delete_cached_payload, get_cached_payload, normalize_gender
 
@@ -171,3 +176,46 @@ def run_import_job(job_id: int, token: str, admin_user_id: int, branch_id: int |
 @shared_task(bind=True, name="admin_panel.bulk_upload.bulk_import_profiles")
 def bulk_import_profiles_task(self, job_id: int, token: str, admin_user_id: int, branch_id: int | None):
     return run_import_job(job_id, token, admin_user_id, branch_id)
+
+
+def run_legacy_import_job(
+    job_id: int, token: str, admin_user_id: int, branch_id: int | None
+) -> dict:
+    """Real legacy CSV import driven from cache (used sync + via Celery)."""
+    job = BulkUploadJob.objects.filter(pk=job_id).first()
+    if not job:
+        return {"ok": False, "error": "Bulk upload job not found"}
+    cached = get_cached_legacy_payload(token)
+    if not cached:
+        job.mark_failed("Invalid or expired validation token")
+        return {"ok": False, "error": "Invalid or expired validation token"}
+    if int(cached.get("admin_user_id")) != int(admin_user_id):
+        job.mark_failed("Validation token does not belong to this user")
+        return {"ok": False, "error": "Validation token does not belong to this user"}
+    if int(cached.get("job_id")) != int(job_id):
+        job.mark_failed("Validation token does not belong to this job")
+        return {"ok": False, "error": "Validation token does not belong to this job"}
+
+    from master.models import Branch as _Branch
+
+    branch = _Branch.objects.filter(pk=branch_id, is_active=True).first() if branch_id else None
+    job.mark_processing()
+    try:
+        result = import_legacy_csv_text(cached["csv_text"], branch=branch)
+    except Exception as exc:  # noqa: BLE001 - report and surface
+        job.mark_failed(str(exc))
+        delete_cached_legacy_payload(token)
+        return {"ok": False, "error": str(exc)}
+
+    existing_errors = list(cached.get("errors") or [])
+    all_failures = existing_errors + list(result.get("failed") or [])
+    job.mark_completed(result.get("imported", 0), all_failures)
+    delete_cached_legacy_payload(token)
+    return {"ok": True, "imported": result.get("imported", 0), "failed": all_failures}
+
+
+@shared_task(bind=True, name="admin_panel.bulk_upload.bulk_import_legacy_profiles")
+def bulk_import_legacy_profiles_task(
+    self, job_id: int, token: str, admin_user_id: int, branch_id: int | None
+):
+    return run_legacy_import_job(job_id, token, admin_user_id, branch_id)
