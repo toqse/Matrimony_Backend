@@ -149,3 +149,29 @@ class HoroscopeProfileSerializerChartsTests(SimpleTestCase):
         self.assertEqual(data['lagnam_display'], 'Medam')
         self.assertEqual(data['rasi_display'], 'Chingam')
         self.assertEqual(data['dasa_display'], '06y 08m 25d')
+
+    def test_display_fields_computed_when_not_calculated(self):
+        """Core fix: display values come from raw EXE fields even with is_calculated=False
+        and the derived fields (lagnam/rasi_sign/star_name) still empty."""
+        hp = HoroscopeProfile(
+            id=1842,
+            pr_rasi='BHEJGAFADJC',
+            pr_amsa='DGDLBAFFGAL',
+            pr_bhav='BHEJGLFADJC',
+            pr_star=10,
+            pr_pada=4,
+            pr_dasabalance=491,
+            lagnam='',
+            rasi_sign='',
+            star_name='',
+            is_calculated=False,
+        )
+        data = HoroscopeProfileSerializer(hp).data
+        self.assertEqual(data['star_display'], 'Makam')
+        self.assertEqual(data['lagnam_display'], 'Edavam')
+        self.assertEqual(data['rasi_display'], 'Chingam')
+        self.assertEqual(data['dasa_display'], '01y 04m 04d')
+        self.assertEqual(data['dasa_lord'], 'Ketu')
+        self.assertEqual(data['charts']['dasa']['balance_text'], '01y 04m 04d')
+        self.assertEqual(data['charts']['rasi']['houses']['1'][0]['abbr_en'], 'Gu')
+        self.assertEqual(data['charts']['rasi']['houses']['1'][0]['abbr_ml'], 'ഗു')
