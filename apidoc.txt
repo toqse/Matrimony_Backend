@@ -16,10 +16,10 @@ Astrology Base: /api/v1/astrology/  (detailed doc in horoscope_apidoc.txt)
   Horoscope rows are HoroscopeProfile (Windows EXE writes pr_rasi/pr_star/... to MySQL); no server generate/chart JSON/PNG/match-report.
 Horoscope Management (Admin JWT, same paths under each base; data scoped by role):
   Admin: /api/v1/admin/horoscope/  |  Staff: /api/v1/staff/horoscope/  |  Branch Manager: /api/v1/branch/horoscope/
-  Endpoints: GET summary/  |  GET records/?search=&branch_id=&page=&page_size=  |  GET records/by-matri/<matri_id>/
-  |  GET records/<user_uuid>/  |  POST porutham/  (body: bride_profile_id, groom_profile_id; no plan quota)
-  |  GET jathakam-pdfs/
-  Panel uses HoroscopeProfile + VB porutham; regenerate route removed (EXE + management commands instead).
+  Endpoints: GET summary/  |  GET records/?search=&branch_id=&page=&page_size= (jathagam: calculated|pending|awaiting_exe)
+  |  GET records/by-matri/<matri_id>/  |  GET records/<user_uuid>/  |  POST porutham/ (body: bride_profile_id, groom_profile_id; no plan quota)
+  |  POST sync/ (fills derived fields for in-scope pending rows; -> {processed, errors})  |  GET jathakam-pdfs/
+  Panel uses HoroscopeProfile + VB porutham; regenerate route removed (EXE + management commands / POST sync/ instead).
 
 --- Authentication ---
 All authenticated endpoints require header: Authorization: Bearer <access_token>
@@ -4527,8 +4527,11 @@ all fields in the body are optional (partial update). Auth: JWT required for all
   2. Location
      PATCH /api/v1/profile/location/
      Body (JSON): { "country_id": int, "state_id": int, "district_id": int, "city_id": int, "address": string }
-     IDs must exist in master. Response 200: { "success": true, "data": { ... } }
-     Error 400: Invalid country_id, state_id, district_id, or city_id.
+     Also accepts optional horoscope fields (has_horoscope, birth_time, birth_place, birth_latitude,
+     birth_longitude, birth_timezone) -> persisted to UserProfile + horoscope_profile EXE bridge.
+     See "POST /api/v1/profile/location/" for full horoscope field rules.
+     IDs must exist in master. Response 200: { "success": true, "data": { ...location..., "horoscope": {...} } }
+     Error 400: Invalid country_id, state_id, district_id, or city_id; or horoscope validation.
 
   3. Religion
      PATCH /api/v1/profile/religion/
@@ -4862,14 +4865,19 @@ PATCH /api/v1/profile/personal/
 --- 5. Location Details ---
 GET /api/v1/profile/location/
   Auth: Required (JWT)
-  Response 200: { "success": true, "data": { "country_id", "country", "state_id", "state", "district_id", "district", "city_id", "city", "address" } }
+  Response 200: { "success": true, "data": { "country_id", "country", "state_id", "state", "district_id", "district", "city_id", "city", "address", "horoscope": { ... } } }
   *_id and name pairs; names from master (e.g. country, state, city).
+  "horoscope" block reflects stored birth inputs from UserProfile so the form can repopulate:
+    { "has_horoscope": bool, "birth_time": "HH:MM:SS"|null, "birth_place": string,
+      "birth_latitude": float|null, "birth_longitude": float|null, "birth_timezone": float|null }
+  (Returned even when no location row exists yet.)
 
 PATCH /api/v1/profile/location/
   Auth: Required (JWT)
   Body (JSON): { "country_id": int, "state_id": int, "district_id": int, "city_id": int, "address": string }
-  All optional. IDs must exist in master tables. Response 200: { "success": true, "data": { ... } }
-  Error 400: Invalid country_id, state_id, district_id, or city_id.
+  All optional. IDs must exist in master tables. Accepts the same optional horoscope fields as POST below.
+  Response 200: { "success": true, "data": { ...location..., "horoscope": { ... } } }
+  Error 400: Invalid country_id, state_id, district_id, or city_id; or horoscope validation (see POST).
 
 --- 6. Family Details ---
 GET /api/v1/profile/family/
@@ -5033,10 +5041,35 @@ POST /api/v1/profile/location/
       "state_id": "int (optional, must exist in master)",
       "district_id": "int (optional, must exist in master)",
       "city_id": "int (optional, must exist in master)",
-      "address": "string (optional)"
+      "address": "string (optional)",
+
+      // Optional horoscope fields (see "Horoscope fields" below)
+      "has_horoscope": "bool (default false)",
+      "birth_time": "string HH:MM or HH:MM:SS (alias: time_of_birth, tob)",
+      "birth_place": "string (alias: place_of_birth, pob)",
+      "birth_latitude": "float -90..90 (alias: latitude, lat)",
+      "birth_longitude": "float -180..180 (alias: longitude, lng/lon)",
+      "birth_timezone": "float offset 5.5, or IANA name 'Asia/Kolkata', or '+05:30' (alias: timezone, tz)"
     }
   Response 200: { "success": true, "message": "Location saved." }
-  Error 400: If any provided ID does not exist (e.g. invalid city_id).
+  Error 400: If any provided ID does not exist (e.g. invalid city_id); or horoscope validation (below).
+
+  Horoscope fields (optional; same serializer/aliases as the staff/branch create-profile APIs):
+    - has_horoscope (bool, default false): when true, the backend persists the birth inputs on the
+      member's UserProfile and creates/updates the horoscope_profile (astrology EXE bridge) record.
+    - When has_horoscope=true, the user's date_of_birth (User.dob), birth_time and birth_place are
+      required, else 400 with messages:
+        - "Date of birth is required when has_horoscope is true."
+        - "Birth time is required when has_horoscope is true."
+        - "Birth place is required when has_horoscope is true."
+    - birth_latitude/birth_longitude of (0,0) are treated as missing and resolved from birth_place
+      when possible. birth_timezone defaults to 5.5 (IST) if omitted/unparseable.
+    - The horoscope form's Country/State/District dropdowns are UI helpers only and are NOT stored
+      separately; only birth_place + latitude + longitude + timezone + birth_time are persisted.
+    - No horoscope is calculated at submit time. The bridge record is created with is_calculated=0;
+      the Windows EXE computes pr_rasi/pr_star/... later. Read results via GET /api/v1/astrology/
+      horoscope/me/ (see horoscope_apidoc.txt). If no horoscope keys are sent, location save is
+      unchanged (legacy behavior).
 
 ---
 

@@ -500,14 +500,61 @@ class BasicDetailsView(APIView):
 class ProfileLocationView(APIView):
     permission_classes = [IsAuthenticated]
 
+    _HOROSCOPE_KEYS = (
+        'has_horoscope', 'birth_time', 'time_of_birth', 'birth_place',
+        'place_of_birth', 'birth_latitude', 'latitude', 'birth_longitude',
+        'longitude', 'birth_timezone', 'timezone',
+    )
+
+    def _apply_horoscope(self, request):
+        """
+        Persist optional horoscope birth inputs and upsert the EXE bridge row.
+
+        No-op when the payload carries no horoscope fields, so plain location
+        saves keep their legacy behavior. Raises DRF ValidationError on invalid
+        horoscope input (surfaces as the standard 400 envelope).
+        """
+        if not any(k in request.data for k in self._HOROSCOPE_KEYS):
+            return
+        from astrology.services.horoscope_profile_service import (
+            HoroscopeInputSerializer,
+            apply_profile_creation_horoscope,
+        )
+
+        dob = getattr(request.user, 'dob', None)
+        horo = HoroscopeInputSerializer(
+            data=request.data, context={'date_of_birth': dob}
+        )
+        horo.is_valid(raise_exception=True)
+        profile, _ = UserProfile.objects.get_or_create(
+            user=request.user, defaults={}
+        )
+        apply_profile_creation_horoscope(
+            user=request.user,
+            profile=profile,
+            horoscope_input=dict(horo.validated_data),
+            name=request.user.name,
+            dob=dob,
+        )
+
+    def _horoscope_block(self, request):
+        profile = UserProfile.objects.filter(user=request.user).first()
+        return {
+            'has_horoscope': bool(getattr(profile, 'has_horoscope', False)),
+            'birth_time': profile.time_of_birth if profile else None,
+            'birth_place': getattr(profile, 'place_of_birth', '') if profile else '',
+            'birth_latitude': getattr(profile, 'birth_latitude', None) if profile else None,
+            'birth_longitude': getattr(profile, 'birth_longitude', None) if profile else None,
+            'birth_timezone': getattr(profile, 'birth_timezone', None) if profile else None,
+        }
+
     def get(self, request):
         loc = UserLocation.objects.filter(user=request.user).select_related(
             'country', 'state', 'district', 'city'
         ).first()
-        if not loc:
-            return Response({'success': True, 'data': {}}, status=status.HTTP_200_OK)
-        ser = LocationDetailsReadSerializer(loc)
-        return Response({'success': True, 'data': ser.data}, status=status.HTTP_200_OK)
+        data = LocationDetailsReadSerializer(loc).data if loc else {}
+        data['horoscope'] = self._horoscope_block(request)
+        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
         ser = LocationDetailsUpdateSerializer(data=request.data, partial=True)
@@ -517,18 +564,22 @@ class ProfileLocationView(APIView):
             if ser.validated_data.get(k) is not None:
                 defaults[k] = ser.validated_data[k]
         loc, _ = UserLocation.objects.update_or_create(user=request.user, defaults=defaults)
+        self._apply_horoscope(request)
         out_ser = LocationDetailsReadSerializer(
             UserLocation.objects.filter(user=request.user).select_related(
                 'country', 'state', 'district', 'city'
             ).first()
         )
+        data = out_ser.data
+        data['horoscope'] = self._horoscope_block(request)
         _audit_member_profile(request, "Location details updated.")
-        return Response({'success': True, 'data': out_ser.data}, status=status.HTTP_200_OK)
+        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
     def post(self, request):
         ser = UserLocationSerializer(data=request.data, context={'request': request})
         ser.is_valid(raise_exception=True)
         ser.create(ser.validated_data)
+        self._apply_horoscope(request)
         mark_profile_step_completed(request.user, 'location')
         _audit_member_profile(request, "Location details created.")
         return Response({'success': True, 'message': 'Location saved.'}, status=status.HTTP_200_OK)

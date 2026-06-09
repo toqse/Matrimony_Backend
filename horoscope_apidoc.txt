@@ -136,24 +136,50 @@ If a row exists (typical success):
     "rasi_sign": "Midhunam",
     "star_name": "Mrigasira",
     "nakshatra_pada": 2,
-    "gana": "M",
-    "yoni": "Pasu",
-    "rajju": "Kanda",
+    "gana": "Deva",
+    "yoni": "Sarpa",
+    "rajju": "Padam",
     "is_calculated": true,
     "calculated_at": "2026-05-14T10:00:00Z",
     "created_at": "...",
-    "updated_at": "..."
+    "updated_at": "...",
+    "star_display": "Mrigasira",
+    "dasa_display": "06y 08m 25d",
+    "lagnam_display": "Medam",
+    "rasi_display": "Midhunam",
+    "charts": {
+      "rasi":  { "lagna_sign": 1, "houses": { "1": [...], "...": [], "12": [] }, "planets": [...], "sign_names": {...} },
+      "amsa":  { "...": "..." },
+      "bhava": { "...": "..." },
+      "star":  { "number": 5, "name": "Mrigasira", "pada": 2 },
+      "dasa":  { "lord": "Mars", "balance_days": 2459, "years": 6, "months": 8, "days": 25, "balance_text": "06y 08m 25d" }
+    }
   }
 }
 ```
 
 Field notes:
-- **`pr_rasi`**: 11 characters, each character **A–L** maps to zodiac sign **1–12** (EXE convention).
+- **`pr_rasi`** / **`pr_amsa`** / **`pr_bhav`**: 11 characters, each character **A–L** maps to zodiac sign **1–12**
+  (EXE convention). Position = planet (1=Lagnam, 2=Sun, 3=Moon, 4=Mars, 5=Mercury, 6=Jupiter, 7=Venus, 8=Saturn,
+  9=Rahu, 10=Ketu, 11=Maandi).
 - **`pr_star`**: nakshatra index **1–27** (see server `astrology.porutham.STAR_NAMES` order).
 - **`pr_pada`**: **1–4**.
 - **`pr_dasabalance`**: sishta dasa balance in **days** from EXE (optional).
-- Derived string fields (`lagnam`, `rasi_sign`, `star_name`, `gana`, `yoni`, `rajju`) are filled by management
-  command `mark_horoscope_done` after EXE has written outputs.
+- Derived string fields (`lagnam`, `rasi_sign`, `star_name`, `gana`, `yoni`, `rajju`, `nakshatra_pada`) are filled
+  by management command `mark_horoscope_done` after EXE has written outputs. They are **stored** columns and stay
+  blank until the command (or admin **sync** endpoint, §7) runs for that row.
+  - **`gana`**: `Deva` | `Manusha` | `Asura` (full label, from the client star tables).
+  - **`yoni`**: full Sanskrit yoni name (e.g. `Mushika`, `Sarpa`, `Ashwa`).
+  - **`rajju`**: `Padam` | `Kanda` | `Udara` (from the client star table).
+- **`*_display`** fields are **computed on read** (do not require the command to have run):
+  - **`star_display`** / **`lagnam_display`** / **`rasi_display`**: echo the stored `star_name` / `lagnam` /
+    `rasi_sign` (blank until `mark_horoscope_done` runs).
+  - **`dasa_display`**: always derived live from `pr_dasabalance` using **365-day years and 365/12-day months**
+    (e.g. `2459 → "06y 08m 25d"`, matching the Windows EXE panel). `""` when `pr_dasabalance` is null.
+- **`charts`**: computed **on read** directly from the raw EXE strings (`pr_rasi` / `pr_amsa` / `pr_bhav`) plus
+  `pr_star` and `pr_dasabalance`. This is always correct even when the stored derived columns are still blank.
+  Each chart object exposes `lagna_sign`, `houses` (sign-number 1–12 → planet list), `planets`, and `sign_names`;
+  `star` and `dasa` carry the nakshatra and Vimshottari balance metadata.
 
 **Removed:** `chart_url`, query param `style`, lazy server generation, and any `grahanila` payload.
 
@@ -179,17 +205,23 @@ Success 200:
     "rasi_sign": "Midhunam",
     "star_name": "Mrigasira",
     "nakshatra_pada": 2,
-    "gana": "M",
-    "yoni": "Pasu",
-    "rajju": "Kanda",
+    "gana": "Deva",
+    "yoni": "Sarpa",
+    "rajju": "Padam",
     "is_calculated": true,
-    "calculated_at": "2026-05-14T10:00:00Z"
+    "calculated_at": "2026-05-14T10:00:00Z",
+    "star_display": "Mrigasira",
+    "dasa_display": "06y 08m 25d",
+    "lagnam_display": "Medam",
+    "rasi_display": "Midhunam",
+    "charts": { "rasi": {...}, "amsa": {...}, "bhava": {...}, "star": {...}, "dasa": {...} }
   }
 }
 ```
 
 This is the **public** serializer: **no** `pr_lat`, `pr_lon`, `pr_tob`, `pr_dob`, or internal `id` / timestamps
-in the default field list (see `HoroscopeProfilePublicSerializer` in code).
+in the default field list (see `HoroscopeProfilePublicSerializer` in code). It includes the same `*_display` and
+`charts` fields described in §2 (both computed on read).
 
 Errors:
 - **403** — plan not active.
@@ -312,13 +344,20 @@ Bases (same relative paths; scope differs by role):
 
 Endpoints:
 - **GET** `summary/` — KPI counts from `HoroscopeProfile` + `UserPlan.horoscope_used` (no mangal computation).
-- **GET** `records/?search=&branch_id=&page=&page_size=` — list rows (`jathagam`: `generated` | `pending` | `na`).
+- **GET** `records/?search=&branch_id=&page=&page_size=` — list rows. **`jathagam`** status is one of:
+  - **`calculated`** — `is_calculated = true` (derived fields filled).
+  - **`pending`** — EXE wrote `pr_rasi` but `is_calculated = false` ("Pending sync"; run the sync endpoint/command).
+  - **`awaiting_exe`** — `pr_rasi` empty (EXE has not written outputs yet).
 - **GET** `records/<user_uuid>/` — detail: `{ "record": {...}, "horoscope": <HoroscopeProfileSerializer|null> }`
 - **GET** `records/by-matri/<matri_id>/` — same as detail, keyed by matri id.
 - **POST** `porutham/` — body: `{ "bride_profile_id": <int>, "groom_profile_id": <int> }`  
   Success **`data`**: `bride_horoscope` and `groom_horoscope` are **full** `HoroscopeProfile` JSON objects
   (admin serializer), plus the same flat porutham keys as member **§4** (`dinam`, `poruthams`, `score`, …).  
   **Removed from panel porutham payload:** `bride_chart_url`, `groom_chart_url`, `flags`, `koota_points`, grahanila.
+- **POST** `sync/` — fills derived fields for all **in-scope** profiles where EXE wrote `pr_rasi` but
+  `is_calculated = false` (server-side equivalent of `mark_horoscope_done`, scoped to the caller's role). No body.
+  Success **`data`**: `{ "processed": <int>, "errors": <int> }`. Also sets `UserProfile.has_horoscope = true` for
+  each processed member. This is the admin "sync / re-fill derived fields" button.
 - **GET** `jathakam-pdfs/` — recent Jathakam PDF credits list for users in scope.
 
 --------------------------------------------------------------------------------
@@ -329,7 +368,13 @@ After members have complete birth data and coordinates, and before/after EXE run
 - `python manage.py push_to_exe_bridge` — pushes `UserProfile` + `User` birth fields into `horoscope_profile`
   for rows that have DOB, time, lat, lon.
 - `python manage.py mark_horoscope_done` — for rows with `pr_rasi` set and `is_calculated=false`, fills derived
-  labels and sets `is_calculated=true`.
+  labels (`lagnam`, `rasi_sign`, `star_name`, `nakshatra_pada`, `gana`, `yoni`, `rajju`) from the client star
+  tables, sets `is_calculated=true` + `calculated_at=now()`, and sets `UserProfile.has_horoscope=true`.
+
+Note: the Windows EXE writes `pr_*` columns **directly to MySQL**, outside the Django ORM, so no `post_save`
+signal fires on EXE writes. Derived columns are populated only by `mark_horoscope_done` or the admin **`sync/`**
+endpoint (§7). The chart display and `*_display` / `charts` API fields are computed live from the raw `pr_*`
+columns, so they render correctly even before the derived columns are filled.
 
 --------------------------------------------------------------------------------
 9) WINDOWS EXE ↔ DATABASE (CLIENT CONFIG SUMMARY)
