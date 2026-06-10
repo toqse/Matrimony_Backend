@@ -9,3 +9,4 @@ class AccountsConfig(AppConfig):
 
     def ready(self):
         from astrology import signals  # noqa: F401
+        from accounts import signals as accounts_signals  # noqa: F401
