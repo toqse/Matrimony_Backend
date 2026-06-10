@@ -11,10 +11,11 @@ from typing import Any
 
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
+from rest_framework import serializers as drf_serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from accounts.models import User
-from admin_panel.bulk_upload.services import mobile_exists_in_db, normalize_mobile
+from core.phone import normalize_phone_input, personal_mobile_in_use
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from profiles.models import UserPhotos, UserProfile
@@ -171,11 +172,18 @@ def validate_core_create_fields(data: dict) -> tuple[dict[str, str] | None, dict
     if not phone:
         errors["phone_number"] = "Phone number is required."
     else:
-        mobile = normalize_mobile(phone)
-        if not mobile:
-            errors["phone_number"] = "Enter a valid phone number in +91XXXXXXXXXX format."
-        elif mobile_exists_in_db(mobile):
-            errors["phone_number"] = "Phone number already registered."
+        try:
+            mobile = normalize_phone_input(phone)
+        except drf_serializers.ValidationError as exc:
+            detail = exc.detail
+            if isinstance(detail, list) and detail:
+                errors["phone_number"] = str(detail[0])
+            else:
+                errors["phone_number"] = str(detail)
+        else:
+            in_use = personal_mobile_in_use(mobile)
+            if in_use:
+                errors["phone_number"] = in_use
 
     gender = (data.get("gender") or "").strip().upper()
     if not gender:
@@ -276,12 +284,17 @@ def create_user_and_profile_sections(
     gender: str,
     dob_iso: str,
     email: str | None,
-    branch_pk: int,
+    branch_pk: int | None = None,
     data: dict,
     files: dict,
-    staff,
+    staff=None,
 ) -> User:
-    """Transactional create: User + optional sections + photos. OTP skipped (mobile_verified=True)."""
+    """Transactional create: User + optional sections + photos. OTP skipped (mobile_verified=True).
+
+    `staff` and `branch_pk` are optional so admins (who have no staff record/branch of
+    their own) can create unassigned profiles. When `staff` is provided a
+    CustomerStaffAssignment is created linking the new member to that staff.
+    """
     from astrology.services.horoscope_profile_service import (
         apply_profile_creation_horoscope,
         validate_horoscope_input,
@@ -359,7 +372,8 @@ def create_user_and_profile_sections(
 
         save_profile_uploads(user, files)
 
-        CustomerStaffAssignment.objects.update_or_create(user=user, defaults={"staff": staff})
+        if staff is not None:
+            CustomerStaffAssignment.objects.update_or_create(user=user, defaults={"staff": staff})
 
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"

@@ -231,15 +231,13 @@ def _row_is_empty(row: dict[str, str]) -> bool:
 
 
 def normalize_mobile(raw: str) -> str | None:
+    from core.phone import extract_indian_mobile_10
+
     if raw is None:
         return None
-    digits = "".join(c for c in str(raw) if c.isdigit())
-    if len(digits) == 12 and digits.startswith("91"):
-        digits = digits[-10:]
-    if len(digits) == 11 and digits.startswith("0"):
-        digits = digits[-10:]
-    if len(digits) == 10:
-        return f"+91{digits}"
+    mobile_10 = extract_indian_mobile_10(str(raw))
+    if mobile_10:
+        return f"+91{mobile_10}"
     return None
 
 

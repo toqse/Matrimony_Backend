@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from core.phone import to_e164_display
 from admin_panel.audit_log.models import AuditLog
 from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
@@ -617,11 +618,18 @@ class MyProfilesCreateView(APIView):
             errors["phone_number"] = "Phone number is required."
             mobile = None
         else:
-            mobile = normalize_mobile(phone)
-            if not mobile:
-                errors["phone_number"] = "Enter a valid phone number in +91XXXXXXXXXX format."
-            elif mobile_exists_in_db(mobile):
-                errors["phone_number"] = "Phone number already registered."
+            from core.phone import normalize_phone_input, personal_mobile_in_use
+            from rest_framework import serializers as drf_serializers
+
+            try:
+                mobile = normalize_phone_input(phone)
+            except drf_serializers.ValidationError as exc:
+                detail = exc.detail
+                errors["phone_number"] = str(detail[0]) if isinstance(detail, list) else str(detail)
+            else:
+                in_use = personal_mobile_in_use(mobile)
+                if in_use:
+                    errors["phone_number"] = in_use
 
         gender = (data.get("gender") or "").strip().upper()
         if not gender:
@@ -735,7 +743,11 @@ class MyProfilesCreateView(APIView):
             {
                 "success": True,
                 "message": f"Profile created successfully. Matri ID: {user.matri_id}.",
-                "data": {"matri_id": user.matri_id, "name": user.name, "phone": user.phone_number},
+                "data": {
+                    "matri_id": user.matri_id,
+                    "name": user.name,
+                    "phone": to_e164_display(user.mobile),
+                },
             },
             status=status.HTTP_201_CREATED,
         )

@@ -5,6 +5,7 @@ from .models import AuditLog
 
 class AuditLogSerializer(serializers.ModelSerializer):
     timestamp = serializers.SerializerMethodField()
+    action_display = serializers.CharField(source="get_action_display", read_only=True)
 
     class Meta:
         model = AuditLog
@@ -13,8 +14,12 @@ class AuditLogSerializer(serializers.ModelSerializer):
             "actor_name",
             "actor_role",
             "branch_name",
+            "staff_name",
             "target_profile_name",
+            "action",
+            "action_display",
             "action_type",
+            "resource",
             "details",
         ]
 

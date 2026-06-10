@@ -1,7 +1,22 @@
+import os
 from io import BytesIO
 
 from django.db.models import Q
 from django.http import HttpResponse
+from django.utils import timezone
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    HRFlowable,
+    Image as RLImage,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -62,6 +77,204 @@ def _build_simple_pdf(lines: list[str]) -> bytes:
         ).encode()
     )
     return pdf.getvalue()
+
+
+_REPORT_PRIMARY = colors.HexColor("#7A1F3D")
+_REPORT_LIGHT = colors.HexColor("#F1E4E9")
+_REPORT_MUTED = colors.HexColor("#6B7280")
+_REPORT_DARK = colors.HexColor("#1F2937")
+
+
+def _report_text(value, dash="-") -> str:
+    s = "" if value is None else str(value).strip()
+    return s if s else dash
+
+
+def _report_money(value) -> str:
+    try:
+        return f"Rs. {float(value or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "Rs. 0.00"
+
+
+def _build_staff_report_pdf(staff) -> bytes:
+    """Resume-style staff profile report (ReportLab platypus)."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title=f"{staff.emp_code} Staff Report",
+    )
+
+    styles = getSampleStyleSheet()
+    eyebrow_style = ParagraphStyle(
+        "eyebrow", parent=styles["Normal"], fontSize=8, leading=11,
+        textColor=colors.white, fontName="Helvetica-Bold", spaceAfter=2,
+    )
+    name_style = ParagraphStyle(
+        "name", parent=styles["Title"], fontSize=22, leading=26,
+        textColor=colors.white, spaceAfter=2,
+    )
+    sub_style = ParagraphStyle(
+        "sub", parent=styles["Normal"], fontSize=10.5, leading=15, textColor=colors.white,
+    )
+    section_style = ParagraphStyle(
+        "section", parent=styles["Normal"], fontSize=12, leading=15,
+        textColor=_REPORT_PRIMARY, fontName="Helvetica-Bold", spaceBefore=2, spaceAfter=2,
+    )
+    label_style = ParagraphStyle(
+        "label", parent=styles["Normal"], fontSize=7.5, leading=10,
+        textColor=_REPORT_MUTED, fontName="Helvetica-Bold",
+    )
+    value_style = ParagraphStyle(
+        "value", parent=styles["Normal"], fontSize=10.5, leading=14, textColor=_REPORT_DARK,
+    )
+    footer_style = ParagraphStyle(
+        "footer", parent=styles["Normal"], fontSize=8, leading=11, textColor=_REPORT_MUTED,
+    )
+
+    try:
+        role = staff.admin_user.role
+    except Exception:
+        role = ""
+    role_label = {"branch_manager": "Branch Manager", "staff": "Staff"}.get(role, role or "-")
+
+    mobile = (staff.mobile or "").strip()
+    mobile_disp = f"+91 {mobile}" if mobile else "-"
+
+    target = int(staff.monthly_target or 0)
+    achieved = int(staff.achieved_target or 0)
+    achievement = f"{round((achieved / target) * 100, 1)}%" if target else "0%"
+
+    elements = []
+
+    header_left = [
+        Paragraph("STAFF PROFILE REPORT", eyebrow_style),
+        Paragraph(_report_text(staff.name), name_style),
+        Paragraph(
+            f"{_report_text(staff.designation)}  \u00b7  {_report_text(staff.emp_code)}",
+            sub_style,
+        ),
+        Spacer(1, 4),
+        Paragraph(f"Mobile: {mobile_disp}", sub_style),
+        Paragraph(f"Email: {_report_text(staff.email)}", sub_style),
+    ]
+
+    photo_cell = ""
+    try:
+        if staff.profile_photo and staff.profile_photo.path and os.path.exists(staff.profile_photo.path):
+            photo_cell = RLImage(staff.profile_photo.path, width=28 * mm, height=28 * mm)
+    except Exception:
+        photo_cell = ""
+
+    header_tbl = Table(
+        [[header_left, photo_cell]],
+        colWidths=[doc.width - 34 * mm, 34 * mm],
+    )
+    header_tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _REPORT_PRIMARY),
+                ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
+                ("VALIGN", (1, 0), (1, 0), "MIDDLE"),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 16),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+                ("TOPPADDING", (0, 0), (-1, -1), 16),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+            ]
+        )
+    )
+    elements.append(header_tbl)
+    elements.append(Spacer(1, 14))
+
+    def add_section(title, pairs):
+        elements.append(Paragraph(title, section_style))
+        elements.append(
+            HRFlowable(width="100%", thickness=1.2, color=_REPORT_LIGHT, spaceBefore=2, spaceAfter=8)
+        )
+        rows = []
+        for i in range(0, len(pairs), 2):
+            left = [Paragraph(pairs[i][0].upper(), label_style), Paragraph(_report_text(pairs[i][1]), value_style)]
+            if i + 1 < len(pairs):
+                right = [Paragraph(pairs[i + 1][0].upper(), label_style), Paragraph(_report_text(pairs[i + 1][1]), value_style)]
+            else:
+                right = ""
+            rows.append([left, right])
+        tbl = Table(rows, colWidths=[doc.width / 2.0, doc.width / 2.0])
+        tbl.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                ]
+            )
+        )
+        elements.append(tbl)
+        elements.append(Spacer(1, 8))
+
+    add_section(
+        "Employment",
+        [
+            ("Branch", staff.branch.name if staff.branch_id else "-"),
+            ("Role", role_label),
+            ("Department", staff.department),
+            ("Joining Date", staff.joining_date),
+            ("Status", "Active" if staff.is_active else "Inactive"),
+        ],
+    )
+
+    add_section(
+        "Compensation & Performance",
+        [
+            ("Basic Salary", _report_money(staff.basic_salary)),
+            ("Commission Rate", f"{staff.commission_rate}%"),
+            ("Monthly Target", target),
+            ("Achieved", achieved),
+            ("Achievement", achievement),
+            ("PF Number", staff.pf_number),
+            ("ESI Number", staff.esi_number),
+        ],
+    )
+
+    add_section(
+        "Address",
+        [
+            ("Street Address", staff.street_address),
+            ("City", staff.city),
+            ("State", staff.state),
+            ("Pincode", staff.pincode),
+        ],
+    )
+
+    add_section(
+        "Bank Details",
+        [
+            ("Bank Name", staff.bank_name),
+            ("Account Number", staff.account_number),
+            ("IFSC Code", staff.ifsc_code),
+            ("UPI ID", staff.upi_id),
+        ],
+    )
+
+    elements.append(Spacer(1, 6))
+    elements.append(HRFlowable(width="100%", thickness=0.8, color=_REPORT_LIGHT, spaceAfter=6))
+    elements.append(
+        Paragraph(
+            f"Generated on {timezone.localtime().strftime('%d %b %Y, %I:%M %p')}",
+            footer_style,
+        )
+    )
+
+    doc.build(elements)
+    return buffer.getvalue()
 
 
 class StaffViewSet(viewsets.ModelViewSet):
@@ -213,19 +426,23 @@ class StaffViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="report")
     def report(self, request, pk=None):
         staff = self.get_object()
-        lines = [
-            "Staff Performance Report",
-            f"Employee Code: {staff.emp_code}",
-            f"Name: {staff.name}",
-            f"Branch: {staff.branch.name}",
-            f"Designation: {staff.designation}",
-            f"Status: {'Active' if staff.is_active else 'Inactive'}",
-            f"Monthly Target: {staff.monthly_target}",
-            f"Achieved: {staff.achieved_target}",
-            f"Commission %: {staff.commission_rate}",
-            f"Basic Salary: {staff.basic_salary}",
-        ]
-        pdf_bytes = _build_simple_pdf(lines)
+        try:
+            pdf_bytes = _build_staff_report_pdf(staff)
+        except Exception:
+            pdf_bytes = _build_simple_pdf(
+                [
+                    "Staff Performance Report",
+                    f"Employee Code: {staff.emp_code}",
+                    f"Name: {staff.name}",
+                    f"Branch: {staff.branch.name}",
+                    f"Designation: {staff.designation}",
+                    f"Status: {'Active' if staff.is_active else 'Inactive'}",
+                    f"Monthly Target: {staff.monthly_target}",
+                    f"Achieved: {staff.achieved_target}",
+                    f"Commission %: {staff.commission_rate}",
+                    f"Basic Salary: {staff.basic_salary}",
+                ]
+            )
         resp = HttpResponse(pdf_bytes, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="{staff.emp_code}_report.pdf"'
         return resp

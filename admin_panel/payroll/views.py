@@ -1,4 +1,5 @@
 import calendar
+import os
 from datetime import date, datetime, time
 from decimal import Decimal
 from io import BytesIO
@@ -9,6 +10,18 @@ from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
 from django.template.loader import render_to_string
 from django.utils import timezone
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    Image as RLImage,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -239,14 +252,304 @@ def _build_salary_slip_context(salary_obj: SalaryRecord) -> dict:
     }
 
 
+# Matrimony brand palette (burgundy/magenta primary with soft pink tints).
+_SLIP_PRIMARY = colors.HexColor("#8B2357")
+_SLIP_PRIMARY_DARK = colors.HexColor("#5D1438")
+_SLIP_TINT_BG = colors.HexColor("#F8E7EE")
+_SLIP_TINT_BORDER = colors.HexColor("#ECC9D8")
+_SLIP_GRAY_BAND = colors.HexColor("#F6EBF0")
+_SLIP_GRAY_LINE = colors.HexColor("#EBD9E1")
+_SLIP_HEAD_BG = colors.HexColor("#FBF2F6")
+_SLIP_TEXT_DARK = colors.HexColor("#111827")
+_SLIP_TEXT_MUTED = colors.HexColor("#6B4A57")
+
+
+def _build_salary_slip_reportlab(context: dict) -> bytes:
+    """Professional payslip rendered with ReportLab (no system deps)."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title=f"Payslip {context['employee_id']} {context['month_name']} {context['year']}",
+    )
+    full_w = doc.width
+
+    ss = getSampleStyleSheet()
+
+    def style(name, **kw):
+        return ParagraphStyle(name, parent=ss["Normal"], **kw)
+
+    company_name_style = style("cname", fontName="Helvetica-Bold", fontSize=17, leading=20, textColor=colors.HexColor("#0F172A"))
+    company_addr_style = style("caddr", fontSize=9, leading=12, textColor=_SLIP_TEXT_MUTED)
+    payslip_title_style = style("ptitle", fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=_SLIP_TEXT_DARK, spaceBefore=5)
+    logo_ph_style = style("logoph", fontSize=8, leading=10, textColor=colors.HexColor("#94A3B8"), alignment=1)
+    label_style = style("lbl", fontSize=9.5, leading=14, textColor=_SLIP_TEXT_MUTED)
+    value_style = style("val", fontName="Helvetica-Bold", fontSize=9.5, leading=14, textColor=_SLIP_TEXT_DARK)
+    netpay_amt_style = style("netamt", fontName="Helvetica-Bold", fontSize=16, leading=20, textColor=_SLIP_PRIMARY, alignment=2)
+    netpay_lbl_style = style("netlbl", fontSize=8.5, leading=11, textColor=_SLIP_TEXT_MUTED, alignment=2)
+    section_style = style("sec", fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=_SLIP_TEXT_DARK)
+    th_style = style("th", fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=colors.HexColor("#374151"))
+    th_amt_style = ParagraphStyle("thamt", parent=th_style, alignment=2)
+    cell_style = style("cell", fontSize=9.5, leading=12, textColor=colors.HexColor("#1F2937"))
+    cell_amt_style = ParagraphStyle("cellamt", parent=cell_style, alignment=2)
+    total_style = style("tot", fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=_SLIP_TEXT_DARK)
+    total_amt_style = ParagraphStyle("totamt", parent=total_style, alignment=2)
+    np_title_style = style("nptitle", fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=_SLIP_PRIMARY_DARK, alignment=1)
+    np_formula_style = style("npf", fontSize=9, leading=12, textColor=_SLIP_TEXT_MUTED, alignment=1)
+    np_amount_style = style("npa", fontName="Helvetica-Bold", fontSize=20, leading=24, textColor=_SLIP_PRIMARY, alignment=1)
+    np_words_style = style("npw", fontSize=9, leading=12, textColor=_SLIP_TEXT_MUTED, alignment=1)
+    footer_style = style("ft", fontSize=8.5, leading=11, textColor=colors.HexColor("#9CA3AF"), alignment=1)
+
+    # ----- Header (logo + company) -----
+    logo_path = context.get("logo_url") or ""
+    logo_cell = None
+    try:
+        if logo_path and not logo_path.startswith(("http://", "https://")) and os.path.exists(logo_path):
+            logo_cell = RLImage(logo_path, width=20 * mm, height=20 * mm)
+    except Exception:
+        logo_cell = None
+    if logo_cell is None:
+        logo_cell = Paragraph("Logo", logo_ph_style)
+
+    company_cell = [Paragraph(context["company_name"], company_name_style)]
+    if context.get("company_address"):
+        company_cell.append(
+            Paragraph(str(context["company_address"]).replace("\n", "<br/>"), company_addr_style)
+        )
+    company_cell.append(
+        Paragraph(
+            f"Payslip for the Month of {context['month_name']} {context['year']}",
+            payslip_title_style,
+        )
+    )
+
+    logo_w = 24 * mm
+    header_tbl = Table([[logo_cell, company_cell]], colWidths=[logo_w, full_w - logo_w])
+    header_tbl.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 14),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                ("BOX", (0, 0), (0, 0), 0.8, _SLIP_TINT_BORDER, None, [2, 2]),
+            ]
+        )
+    )
+
+    # ----- Employee bar -----
+    emp_left_w = full_w * 0.56
+    emp_right_w = full_w - emp_left_w
+    left_label_w = 30 * mm
+
+    left_inner = Table(
+        [
+            [Paragraph("Employee Name", label_style), Paragraph(f": {context['employee_name']}", value_style)],
+            [Paragraph("Employee ID", label_style), Paragraph(f": {context['employee_id']}", value_style)],
+            [Paragraph("Pay Period", label_style), Paragraph(f": {context['pay_period']}", value_style)],
+            [Paragraph("Pay Date", label_style), Paragraph(f": {context['pay_date']}", value_style)],
+        ],
+        colWidths=[left_label_w, emp_left_w - left_label_w - 28],
+    )
+    left_inner.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+
+    right_days_w = emp_right_w - 28
+    right_days = Table(
+        [
+            [Paragraph("Paid Days", label_style), Paragraph(f": {context['paid_days']}", value_style)],
+            [Paragraph("LOP Days", label_style), Paragraph(f": {context['lop_days']}", value_style)],
+        ],
+        colWidths=[right_days_w * 0.55, right_days_w * 0.45],
+    )
+    right_days.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ]
+        )
+    )
+    right_cell = [
+        Paragraph(context["net_amount"], netpay_amt_style),
+        Paragraph("Total Net Pay", netpay_lbl_style),
+        Spacer(1, 10),
+        right_days,
+    ]
+
+    emp_bar = Table([[left_inner, right_cell]], colWidths=[emp_left_w, emp_right_w])
+    emp_bar.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _SLIP_TINT_BG),
+                ("LINEABOVE", (0, 0), (-1, 0), 1, _SLIP_TINT_BORDER),
+                ("LINEBELOW", (0, 0), (-1, -1), 1, _SLIP_TINT_BORDER),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 12),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ]
+        )
+    )
+
+    # ----- Section title -----
+    section_bar = Table([[Paragraph("Income Details", section_style)]], colWidths=[full_w])
+    section_bar.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _SLIP_GRAY_BAND),
+                ("LINEABOVE", (0, 0), (-1, 0), 1, _SLIP_GRAY_LINE),
+                ("LINEBELOW", (0, 0), (-1, -1), 1, _SLIP_GRAY_LINE),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+
+    # ----- Earnings / Deductions columns -----
+    def detail_table(header, rows, total_label, total_amount, col_w):
+        data = [[Paragraph(header, th_style), Paragraph("Amount", th_amt_style)]]
+        for r in rows:
+            data.append([Paragraph(r["label"], cell_style), Paragraph(r["amount"], cell_amt_style)])
+        data.append([Paragraph(total_label, total_style), Paragraph(total_amount, total_amt_style)])
+        amt_w = 26 * mm
+        t = Table(data, colWidths=[col_w - amt_w, amt_w])
+        last = len(data) - 1
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _SLIP_HEAD_BG),
+                    ("LINEBELOW", (0, 0), (-1, 0), 1, _SLIP_GRAY_LINE),
+                    ("BACKGROUND", (0, last), (-1, last), _SLIP_HEAD_BG),
+                    ("LINEABOVE", (0, last), (-1, last), 1, _SLIP_TINT_BORDER),
+                    ("LINEBELOW", (0, 1), (-1, last - 1), 0.5, colors.HexColor("#EEF2F7")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ]
+            )
+        )
+        return t
+
+    half_w = full_w / 2.0
+    earnings_tbl = detail_table(
+        "Earnings", context["earnings"], "Gross Earnings", context["gross_amount"], half_w
+    )
+    deductions_tbl = detail_table(
+        "Deductions", context["deductions"], "Total Deductions", context["total_deductions"], half_w
+    )
+    income_tbl = Table([[earnings_tbl, deductions_tbl]], colWidths=[half_w, half_w])
+    income_tbl.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("LINEAFTER", (0, 0), (0, 0), 1, _SLIP_GRAY_LINE),
+                ("LINEBELOW", (0, 0), (-1, -1), 1, _SLIP_GRAY_LINE),
+            ]
+        )
+    )
+
+    # ----- Net payable -----
+    net_block = Table(
+        [
+            [Paragraph("Total Net Payable", np_title_style)],
+            [Paragraph("Gross Earnings - Total Deductions", np_formula_style)],
+            [Paragraph(context["net_amount"], np_amount_style)],
+            [Paragraph(f"Amount in Words: {context['net_amount_words']}", np_words_style)],
+        ],
+        colWidths=[full_w],
+    )
+    net_block.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _SLIP_TINT_BG),
+                ("LINEBELOW", (0, 0), (-1, -1), 1, _SLIP_TINT_BORDER),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (0, 0), 14),
+                ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+                ("TOPPADDING", (0, 1), (0, 1), 0),
+                ("BOTTOMPADDING", (0, 1), (0, 1), 4),
+                ("TOPPADDING", (0, 2), (0, 2), 0),
+                ("BOTTOMPADDING", (0, 2), (0, 2), 4),
+                ("TOPPADDING", (0, 3), (0, 3), 0),
+                ("BOTTOMPADDING", (0, 3), (0, 3), 14),
+            ]
+        )
+    )
+
+    footer = Table([[Paragraph("-- This is a system-generated document. --", footer_style)]], colWidths=[full_w])
+    footer.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+
+    inner = [header_tbl, emp_bar, section_bar, income_tbl, net_block, footer]
+    card = Table([[inner]], colWidths=[full_w])
+    card.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 1, _SLIP_GRAY_LINE),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+
+    doc.build([card])
+    return buffer.getvalue()
+
+
 def build_salary_slip_pdf(salary_obj: SalaryRecord, request=None) -> bytes:
     context = _build_salary_slip_context(salary_obj)
-    html_string = render_to_string("salary_slip.html", context)
-    base_url = request.build_absolute_uri("/") if request else None
+
+    # Preferred: HTML via WeasyPrint when the runtime has the system deps (e.g. Linux/Docker).
     try:
         from weasyprint import HTML
 
+        html_string = render_to_string("salary_slip.html", context)
+        base_url = request.build_absolute_uri("/") if request else None
         return HTML(string=html_string, base_url=base_url).write_pdf()
+    except Exception:
+        pass
+
+    # Professional cross-platform fallback (no system deps required).
+    try:
+        return _build_salary_slip_reportlab(context)
     except Exception:
         # Graceful fallback to preserve download availability if WeasyPrint/runtime deps are missing.
         lines: list[str] = [context["company_name"]]
@@ -542,19 +845,15 @@ class GeneratePayrollAPIView(APIView):
             .select_related("branch")
         )
         created = 0
+        skipped = 0
         with db_transaction.atomic():
-            if SalaryRecord.objects.filter(month=md).exists():
-                return Response(
-                    {
-                        "success": False,
-                        "error": {
-                            "code": 400,
-                            "message": "Salary already generated for this month. Use individual edits.",
-                        },
-                    },
-                    status=400,
-                )
+            existing_staff_ids = set(
+                SalaryRecord.objects.filter(month=md).values_list("staff_id", flat=True)
+            )
             for sp in staff_qs:
+                if sp.id in existing_staff_ids:
+                    skipped += 1
+                    continue
                 comm = commission_sum_paid_in_month(sp.id, md)
                 basic = Decimal(sp.basic_salary or 0)
                 allowances = Decimal("0")
@@ -578,7 +877,11 @@ class GeneratePayrollAPIView(APIView):
         return Response(
             {
                 "success": True,
-                "data": {"month": month_s, "records_created": created},
+                "data": {
+                    "month": month_s,
+                    "records_created": created,
+                    "skipped_existing": skipped,
+                },
             },
             status=status.HTTP_201_CREATED,
         )

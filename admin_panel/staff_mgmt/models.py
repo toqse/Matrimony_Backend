@@ -57,6 +57,10 @@ class StaffProfile(models.Model):
 
     is_active = models.BooleanField(default=True)
     is_deleted = models.BooleanField(default=False)
+    # Set when this staff was deactivated as a side effect of its branch being
+    # deactivated, so reactivating the branch only re-enables these accounts and
+    # not staff that were individually disabled beforehand.
+    deactivated_by_branch = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

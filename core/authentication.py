@@ -39,6 +39,17 @@ class JWTAuthenticationWithLastSeen(JWTAuthentication):
 
         user, validated_token = result
 
+        # 🚫 Deleted/deactivated check: a soft-deleted (is_active=False) user must not be
+        # able to use any endpoint with a previously issued (still unexpired) token.
+        # Tokens are only ever issued to active users, so this is safe to enforce here.
+        if not getattr(user, "is_active", False):
+            raise AuthenticationFailed("Your account is no longer active.")
+
+        # 🚫 Blocked-by-admin check: a blocked user must not be able to use any
+        # endpoint, even with a previously issued (still unexpired) token.
+        if getattr(user, "is_blocked", False):
+            raise AuthenticationFailed("Your account has been blocked.")
+
         # 🔒 Token invalidation check (logout support)
         invalid_before = getattr(user, "tokens_invalid_before", None)
         if invalid_before:

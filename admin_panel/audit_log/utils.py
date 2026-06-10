@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from admin_panel.auth.models import AdminUser
@@ -67,12 +68,64 @@ def infer_action_type(action: str) -> str:
     return AuditLog.ACTION_TYPE_UPDATE_PROFILE
 
 
+_METHOD_ACTION = {
+    "POST": AuditLog.ACTION_CREATE,
+    "PUT": AuditLog.ACTION_UPDATE,
+    "PATCH": AuditLog.ACTION_UPDATE,
+    "DELETE": AuditLog.ACTION_DELETE,
+}
+
+_METHOD_VERB = {
+    "POST": "Created",
+    "PUT": "Updated",
+    "PATCH": "Updated",
+    "DELETE": "Deleted",
+}
+
+
+def _looks_like_identifier(seg: str) -> bool:
+    # Numeric ids or matri-id style tokens (contain a digit), not sub-route words.
+    return bool(re.search(r"\d", seg or ""))
+
+
+def build_generic_audit(path: str, method: str) -> tuple[str, str, str]:
+    """
+    Derive a clean (action, resource, details) tuple for a mutating request when a
+    view did not log an explicit, richer audit row. Never stores raw URLs/query strings
+    so the frontend renders a friendly label.
+    """
+    m = (method or "").upper()
+    action = _METHOD_ACTION.get(m, AuditLog.ACTION_OTHER)
+
+    parts = [p for p in (path or "").strip("/").split("/") if p]
+    if parts and parts[0] == "api":
+        parts = parts[1:]
+    if parts and re.match(r"^v\d+$", parts[0], re.IGNORECASE):
+        parts = parts[1:]
+    # parts now: [role, resource, ...]
+    rest = parts[1:] if len(parts) > 1 else []
+
+    resource_noun = (rest[0] if rest else (parts[0] if parts else "resource")).replace("-", "_")
+    identifier = ""
+    for seg in rest[1:]:
+        if _looks_like_identifier(seg):
+            identifier = seg
+            break
+
+    resource = f"{resource_noun}:{identifier}" if identifier else resource_noun
+    verb = _METHOD_VERB.get(m, m.title())
+    noun_label = resource_noun.replace("_", " ").strip()
+    details = f"{verb} {noun_label}" + (f" (id {identifier})" if identifier else "")
+    return action, resource, details
+
+
 def create_audit_log(
     request,
     action: str,
     resource: str,
     details: str,
     *,
+    actor: AdminUser | None = None,
     branch_name: str | None = None,
     staff_name: str | None = None,
     target_profile_name: str | None = None,
@@ -82,34 +135,54 @@ def create_audit_log(
 ) -> None:
     """
     Create an immutable audit row. request.user is the actor when they are an AdminUser
-    (admin / staff / branch manager). Member app users are recorded via actor_name only.
+    (admin / staff / branch manager). For endpoints with no authenticated actor on the
+    request (e.g. the login/OTP-verify view), pass `actor` explicitly. Member app users are
+    not AdminUser instances, so they produce no rows.
     """
     action_norm = _normalize_action(action)
     user = getattr(request, "user", None)
-    actor: AdminUser | None = None
+    resolved_actor: AdminUser | None = None
     actor_name = ""
 
     if isinstance(user, AdminUser) and getattr(user, "is_authenticated", False):
-        actor = user
-        actor_name = _actor_full_name(actor)
+        resolved_actor = user
+    elif isinstance(actor, AdminUser):
+        resolved_actor = actor
 
-    # Save only staff / branch manager logs (ignore admin and member logs).
-    role = _role_from_request(request) if actor else ""
-    if role not in {AdminUser.ROLE_STAFF, AdminUser.ROLE_BRANCH_MANAGER}:
+    if resolved_actor:
+        actor_name = _actor_full_name(resolved_actor)
+
+    # Persist admin-panel actor logs only (admin / staff / branch manager). Member app users
+    # are not AdminUser instances, so they produce no rows. Prefer the actor's own role over
+    # the URL prefix so logins on the shared /admin/auth endpoint record the true role.
+    role = (getattr(resolved_actor, "role", "") or "").strip() if resolved_actor else ""
+    if not role and resolved_actor:
+        role = _role_from_request(request)
+    if role not in {
+        AdminUser.ROLE_ADMIN,
+        AdminUser.ROLE_STAFF,
+        AdminUser.ROLE_BRANCH_MANAGER,
+    }:
         return
 
     actor_role_display = (
-        "Staff" if role == AdminUser.ROLE_STAFF else "Branch Manager" if role == AdminUser.ROLE_BRANCH_MANAGER else ""
+        "Admin"
+        if role == AdminUser.ROLE_ADMIN
+        else "Staff"
+        if role == AdminUser.ROLE_STAFF
+        else "Branch Manager"
+        if role == AdminUser.ROLE_BRANCH_MANAGER
+        else ""
     )
 
     resolved_branch = (
         (branch_name or "").strip()
         if branch_name is not None
-        else _branch_name_from_actor(actor)
+        else _branch_name_from_actor(resolved_actor)
     )
 
     resolved_staff = (staff_name or "").strip() if staff_name is not None else ""
-    if not resolved_staff and actor:
+    if not resolved_staff and resolved_actor:
         resolved_staff = actor_name
 
     resolved_target = (target_profile_name or "").strip() if target_profile_name is not None else ""
@@ -119,7 +192,7 @@ def create_audit_log(
         resolved_action_type = infer_action_type(action_norm)
 
     AuditLog.objects.create(
-        actor=actor,
+        actor=resolved_actor,
         actor_name=actor_name,
         actor_role=actor_role_display,
         role=role,
@@ -134,3 +207,11 @@ def create_audit_log(
         target_profile_name=resolved_target,
         action_type=resolved_action_type,
     )
+
+    # Mark the underlying request so the audit middleware does not also emit a
+    # generic catch-all row for this same request (avoids duplicate entries).
+    django_request = getattr(request, "_request", None) or request
+    try:
+        django_request._audit_explicit_logged = True
+    except Exception:
+        pass

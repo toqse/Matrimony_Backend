@@ -26,18 +26,13 @@ def normalize_admin_role(value: str) -> str:
 
 
 def normalize_indian_mobile_10_to_e164(mobile_10: str) -> str:
-    mobile_10 = (mobile_10 or "").strip()
-    if not re.fullmatch(r"\d{10}", mobile_10 or ""):
-        raise serializers.ValidationError("Mobile number must be 10 digits")
-    return f"+91{mobile_10}"
+    from core.phone import normalize_phone_input
+    return normalize_phone_input(mobile_10)
 
 
 def mobile_to_display(mobile_e164: str) -> str:
-    mobile = (mobile_e164 or "").strip()
-    if mobile.startswith("+91") and len(mobile) >= 13:
-        raw = mobile[3:]
-        return f"+91 {raw[:5]} {raw[5:]}"
-    return mobile
+    from core.phone import to_display_spaced
+    return to_display_spaced(mobile_e164)
 
 
 class SendOTPSerializer(serializers.Serializer):
@@ -105,6 +100,13 @@ class AdminProfileSerializer(serializers.ModelSerializer):
             "role_display",
         ]
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from core.phone import to_e164_display
+        data["mobile"] = to_e164_display(instance.mobile)
+        data["mobile_display"] = mobile_to_display(instance.mobile)
+        return data
+
     def get_mobile_display(self, obj):
         return mobile_to_display(obj.mobile)
 
@@ -141,16 +143,16 @@ class ChangePhoneSendOTPSerializer(serializers.Serializer):
     new_mobile = serializers.CharField(required=True)
 
     def validate_new_mobile(self, value):
-        raw = (value or "").strip()
-        if not re.fullmatch(r"\d{10}", raw):
-            raise serializers.ValidationError("Enter a valid 10-digit mobile number.")
-        mobile = normalize_indian_mobile_10_to_e164(raw)
+        from core.phone import normalize_phone_input, personal_mobile_in_use
+
+        mobile = normalize_phone_input(value)
         user = self.context.get("user")
-        qs = AdminUser.objects.filter(mobile=mobile)
-        if user is not None:
-            qs = qs.exclude(pk=user.pk)
-        if qs.exists():
-            raise serializers.ValidationError("This mobile number is already registered to another account.")
+        err = personal_mobile_in_use(
+            mobile,
+            exclude_admin_user_id=user.pk if user is not None else None,
+        )
+        if err:
+            raise serializers.ValidationError(err)
         return mobile
 
 
@@ -159,10 +161,9 @@ class ChangePhoneVerifyOTPSerializer(serializers.Serializer):
     otp = serializers.CharField(required=True)
 
     def validate_new_mobile(self, value):
-        raw = (value or "").strip()
-        if not re.fullmatch(r"\d{10}", raw):
-            raise serializers.ValidationError("Enter a valid 10-digit mobile number.")
-        return normalize_indian_mobile_10_to_e164(raw)
+        from core.phone import normalize_phone_input
+
+        return normalize_phone_input(value)
 
     def validate_otp(self, value):
         v = (value or "").strip()

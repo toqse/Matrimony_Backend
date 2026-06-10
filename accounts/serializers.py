@@ -28,22 +28,15 @@ PROFILE_FOR_CHOICES = [
 
 
 def validate_phone_number(phone):
-    """
-    Enforce +91 followed by 10 digits.
-    """
-    phone = (phone or '').strip()
-    if not phone:
-        raise serializers.ValidationError('Phone number is required.')
-    if not re.fullmatch(r"\+91\d{10}", phone):
-        raise serializers.ValidationError('Invalid phone number format. Use +91XXXXXXXXXX.')
-    return phone
+    """Normalize to +91XXXXXXXXXX (Indian mobile, first digit 6-9)."""
+    from core.phone import normalize_phone_input
+    return normalize_phone_input(phone)
 
 
 def mobile_variants(phone: str) -> tuple[str, str, str]:
     """Return equivalent variants for compatibility lookups."""
-    canonical = validate_phone_number(phone)
-    digits = canonical[-10:]
-    return canonical, f"91{digits}", digits
+    from core.phone import phone_variants as _phone_variants
+    return _phone_variants(phone)
 
 
 def get_user_by_mobile_variants(phone: str):

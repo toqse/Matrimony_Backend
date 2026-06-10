@@ -33,6 +33,7 @@ from admin_panel.staff_payments.services import (
     staff_payment_customer_otp_identifier,
     validate_otp,
 )
+from core.phone import extract_indian_mobile_10, to_e164_display
 from admin_panel.staff_payments.serializers import (
     StaffPaymentCreateSerializer,
     StaffPaymentCustomerOtpSendSerializer,
@@ -855,11 +856,13 @@ class CustomerLookupAPIView(APIView):
         if matri_id:
             user = qs.filter(matri_id__iexact=matri_id).first()
         else:
-            digits = _digits_only(mobile_raw)
-            mobile10 = digits[-10:] if len(digits) >= 10 else digits
+            from accounts.serializers import mobile_variants
+
+            mobile10 = extract_indian_mobile_10(mobile_raw)
             if not mobile10:
                 return _err_response("mobile is invalid.", 400)
-            user = qs.filter(mobile__endswith=mobile10).first()
+            canonical, prefixed, bare = mobile_variants(f"+91{mobile10}")
+            user = qs.filter(mobile__in=[canonical, prefixed, bare]).first()
 
         if not user:
             return _err_response("Customer not found.", 404)
@@ -878,7 +881,7 @@ class CustomerLookupAPIView(APIView):
                     "id": str(user.id),
                     "matri_id": user.matri_id or "",
                     "name": user.name or "",
-                    "mobile": user.mobile or "",
+                    "mobile": to_e164_display(user.mobile or ""),
                 },
             },
             status=status.HTTP_200_OK,

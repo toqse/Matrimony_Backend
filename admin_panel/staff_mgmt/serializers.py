@@ -8,6 +8,12 @@ from rest_framework import serializers
 
 from admin_panel.auth.models import AdminUser
 from admin_panel.auth.serializers import normalize_admin_role
+from core.phone import (
+    mobile_10_from_stored,
+    normalize_phone_input,
+    personal_mobile_in_use,
+    to_e164_display,
+)
 from master.models import Branch as MasterBranch
 
 from .branch_sync import ensure_master_branch_from_admin_branch
@@ -109,6 +115,11 @@ class StaffSerializer(serializers.ModelSerializer):
     def get_target_progress(self, obj):
         return {"achieved": int(obj.achieved_target or 0), "target": int(obj.monthly_target or 0)}
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["mobile"] = to_e164_display(instance.mobile)
+        return data
+
     def validate_name(self, value):
         v = (value or "").strip()
         if not v:
@@ -117,14 +128,22 @@ class StaffSerializer(serializers.ModelSerializer):
 
     def validate_mobile(self, value):
         v = (value or "").strip()
-        if not re.fullmatch(r"\d{10}", v):
-            raise serializers.ValidationError("Mobile must be 10 digits")
-        qs = StaffProfile.objects.filter(mobile=v, is_deleted=False)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError("Mobile already registered to another staff member")
-        return v
+        if not v:
+            raise serializers.ValidationError("Mobile number is required")
+        e164 = normalize_phone_input(v)
+        mobile_10 = mobile_10_from_stored(e164)
+        exclude_staff = self.instance.pk if self.instance else None
+        exclude_admin = (
+            self.instance.admin_user_id if self.instance and self.instance.admin_user_id else None
+        )
+        err = personal_mobile_in_use(
+            e164,
+            exclude_staff_profile_id=exclude_staff,
+            exclude_admin_user_id=exclude_admin,
+        )
+        if err:
+            raise serializers.ValidationError(err)
+        return mobile_10
 
     def validate_email(self, value):
         if not value:
@@ -209,7 +228,11 @@ class StaffSerializer(serializers.ModelSerializer):
                     if raw_password:
                         validated_data["login_password_hash"] = make_password(raw_password)
                     return StaffProfile.objects.create(**validated_data)
-                except IntegrityError:
+                except IntegrityError as exc:
+                    if "mobile" in str(exc).lower() or "admin_admin_user" in str(exc).lower():
+                        raise serializers.ValidationError(
+                            {"mobile": "This mobile number is already registered."}
+                        ) from exc
                     continue
         raise serializers.ValidationError("Unable to generate unique employee code. Please try again.")
 

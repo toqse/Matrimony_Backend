@@ -24,6 +24,7 @@ def payment_status_label(obj):
 
 class PaymentTableSerializer(serializers.Serializer):
     id = serializers.IntegerField()
+    created_at = serializers.DateTimeField(read_only=True)
     date = serializers.SerializerMethodField()
     time = serializers.SerializerMethodField()
     receipt_txn_id = serializers.SerializerMethodField()
@@ -67,7 +68,6 @@ class PaymentDetailSerializer(PaymentTableSerializer):
     payment_method = serializers.CharField(read_only=True)
     payment_status = serializers.CharField(read_only=True)
     transaction_type = serializers.CharField(read_only=True)
-    created_at = serializers.DateTimeField(read_only=True)
 
     def get_rejection_reason(self, obj):
         review = getattr(obj, "payment_review", None)

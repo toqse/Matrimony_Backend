@@ -16,11 +16,13 @@ from plans.services import (
     can_view_profile,
     can_send_interest,
     can_chat,
+    user_has_active_plan,
     _get_user_plan,
 )
 from user_settings.models import UserSettings
 from wishlist.models import Wishlist
 
+from .services import apply_partner_age_preference, apply_partner_preference
 from .utils import age_from_dob, dob_range_for_age, build_user_match_score_sql_expression
 from .serializers import MatchListProfileSerializer, format_last_seen
 from core.media import absolute_media_url
@@ -59,59 +61,6 @@ def _match_queryset(request):
     return filter_visible_profiles_queryset(qs)
 
 
-def _apply_partner_preference(qs, viewer_rel):
-    pref_type = getattr(viewer_rel, 'partner_preference_type', None) or UserReligion.PARTNER_PREFERENCE_ALL
-    caste_map = getattr(viewer_rel, 'partner_caste_preferences', None) or {}
-    normalized_caste_map = {}
-    for key, value in caste_map.items():
-        try:
-            rid = int(str(key).strip())
-        except (TypeError, ValueError):
-            continue
-        if isinstance(value, list):
-            normalized_caste_map[rid] = [int(cid) for cid in value if str(cid).strip().isdigit()]
-
-    if pref_type == UserReligion.PARTNER_PREFERENCE_OWN:
-        if not viewer_rel.religion_id:
-            return qs.none()
-        qs = qs.filter(user_religion__religion_id=viewer_rel.religion_id)
-        own_castes = normalized_caste_map.get(int(viewer_rel.religion_id), [])
-        if own_castes:
-            qs = qs.filter(user_religion__caste_fk_id__in=own_castes)
-        return qs
-
-    if pref_type == UserReligion.PARTNER_PREFERENCE_SPECIFIC:
-        religion_ids = [int(x) for x in (getattr(viewer_rel, 'partner_religion_ids', None) or [])]
-        if not religion_ids:
-            return qs.none()
-        per_religion_q = Q()
-        for religion_id in religion_ids:
-            caste_ids = normalized_caste_map.get(religion_id, [])
-            if caste_ids:
-                per_religion_q |= Q(
-                    user_religion__religion_id=religion_id,
-                    user_religion__caste_fk_id__in=caste_ids,
-                )
-            else:
-                per_religion_q |= Q(user_religion__religion_id=religion_id)
-        return qs.filter(per_religion_q)
-
-    return qs
-
-
-def _apply_partner_age_preference(qs, viewer_rel):
-    age_min = getattr(viewer_rel, 'partner_age_from', None)
-    age_max = getattr(viewer_rel, 'partner_age_to', None)
-    if age_min is None and age_max is None:
-        return qs
-    dob_min, dob_max = dob_range_for_age(age_min, age_max)
-    if dob_min is not None:
-        qs = qs.filter(dob__gte=dob_min)
-    if dob_max is not None:
-        qs = qs.filter(dob__lte=dob_max)
-    return qs
-
-
 def _match_list_response(request, *, home_slider=False):
     """
     Shared match list payload. If home_slider is True: unviewed first, then viewed, then -created_at.
@@ -122,8 +71,8 @@ def _match_list_response(request, *, home_slider=False):
     # Apply viewer's stored partner religion/caste preference (matches depend on it)
     viewer_rel = UserReligion.objects.filter(user=request.user).first()
     if viewer_rel:
-        qs = _apply_partner_preference(qs, viewer_rel)
-        qs = _apply_partner_age_preference(qs, viewer_rel)
+        qs = apply_partner_preference(qs, viewer_rel)
+        qs = apply_partner_age_preference(qs, viewer_rel)
     # Profile visibility: hidden -> exclude; premium_only -> show only to viewers with active plan
     qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
     viewer_has_plan = _get_user_plan(request.user) is not None
@@ -201,9 +150,15 @@ def _match_list_response(request, *, home_slider=False):
         viewer=request.user,
         profile__user_id=OuterRef('pk'),
     )
+    unlocked_subq = ProfileViewModel.objects.filter(
+        viewer=request.user,
+        profile__user_id=OuterRef('pk'),
+        unlocked=True,
+    )
     match_expr = build_user_match_score_sql_expression(request.user)
     qs = qs.annotate(
         is_viewed=Exists(viewed_subq),
+        is_unlocked=Exists(unlocked_subq),
         match_score=match_expr,
     )
     qs = qs.annotate(relevance_score=F('match_score'))
@@ -254,6 +209,7 @@ def _match_list_response(request, *, home_slider=False):
     interest_ui_by_other_id = bulk_interest_ui_states_for_viewer(request.user.pk, page_user_ids)
 
     # Plan permissions for viewer (first-time full view quota)
+    has_plan = user_has_active_plan(request.user)
     can_view, _ = can_view_profile(request.user)
     can_send, _ = can_send_interest(request.user)
     can_chat_flag, _ = can_chat(request.user)
@@ -309,8 +265,8 @@ def _match_list_response(request, *, home_slider=False):
         last_seen = getattr(u, 'last_seen', None)
         is_online = last_seen and (timezone.now() - last_seen) < timedelta(minutes=15) if last_seen else False
 
-        is_already_viewed = bool(getattr(u, 'is_viewed', False))
-        is_able_to_view = is_already_viewed or can_view
+        is_already_viewed = bool(has_plan and getattr(u, 'is_unlocked', False))
+        is_able_to_view = bool(has_plan and (is_already_viewed or can_view))
 
         interest_status, is_interest_sent = interest_ui_by_other_id.get(u.pk, ('pending', False))
 

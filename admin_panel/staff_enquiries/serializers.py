@@ -1,8 +1,7 @@
-import re
-
 from rest_framework import serializers
 
 from admin_panel.branches.models import Branch
+from core.phone import normalize_phone_input
 
 SOURCE_CHOICES = ["website", "walk-in", "phone", "whatsapp", "email"]
 
@@ -38,12 +37,7 @@ class StaffEnquiryCreateSerializer(serializers.Serializer):
         return str(value).strip()
 
     def validate_phone(self, value):
-        if not value:
-            raise serializers.ValidationError("Phone number is required.")
-        cleaned = re.sub(r"\D", "", str(value))
-        if len(cleaned) != 10:
-            raise serializers.ValidationError("Enter a valid 10-digit phone number.")
-        return cleaned
+        return normalize_phone_input(value)
 
 
 class StaffEnquiryNoteCreateSerializer(serializers.Serializer):

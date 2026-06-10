@@ -142,8 +142,9 @@ class ProfilePreviewByMatriIdView(APIView):
             can_chat,
             get_interest_ui_state_for_viewer,
             has_accepted_interest_between,
+            has_unlocked_profile,
+            user_has_active_plan,
         )
-        from plans.models import ProfileView as ProfileViewModel
         from wishlist.models import Wishlist
 
         viewer = request.user
@@ -167,11 +168,8 @@ class ProfilePreviewByMatriIdView(APIView):
             )
 
         target_up = UserProfile.objects.filter(user=profile_user).first()
-        is_viewed_by_me = (
-            ProfileViewModel.objects.filter(viewer=viewer, profile=target_up).exists()
-            if target_up
-            else False
-        )
+        has_plan = user_has_active_plan(viewer)
+        already_unlocked = has_unlocked_profile(viewer, target_up)
         interest_status, is_interest_sent = get_interest_ui_state_for_viewer(viewer, profile_user)
         is_wishlisted = Wishlist.objects.filter(user=viewer, profile=profile_user).exists()
 
@@ -215,7 +213,8 @@ class ProfilePreviewByMatriIdView(APIView):
         can_chat_effective = bool(
             can_chat_flag and has_accepted_interest_between(viewer, profile_user)
         )
-        is_able_to_view = bool(is_viewed_by_me or can_view_flag)
+        is_able_to_view = bool(has_plan and (already_unlocked or can_view_flag))
+        is_viewed_by_me = bool(has_plan and already_unlocked)
         opposite_profile = getattr(profile_user, 'user_profile', None)
         can_horoscope_match = bool(
             getattr(profile_user, 'dob', None)
@@ -256,8 +255,7 @@ class ProfilePreviewByMatriIdView(APIView):
 
         out = {'success': True, 'data': {**data, 'is_viewed_by_me': is_viewed_by_me}}
 
-        # If the viewer already unlocked this profile via a prior full-view,
-        # include full details here too (without consuming profile view credits again).
+        # Include full details only when the viewer has an active plan and already unlocked.
         if is_viewed_by_me:
             out['data']['profile'] = _build_profile_data_for_user(
                 profile_user, request=request, include_contact=True, include_family=True
@@ -279,7 +277,12 @@ class PublicProfileByMatriIdView(APIView):
 
     def get(self, request, matri_id):
         from accounts.models import User
-        from plans.services import PlanLimitService, get_plan_info_for_response
+        from plans.services import (
+            PlanLimitService,
+            get_plan_info_for_response,
+            has_unlocked_profile,
+            user_has_active_plan,
+        )
         from plans.models import ProfileView as ProfileViewModel
         from django.db import transaction
 
@@ -303,11 +306,8 @@ class PublicProfileByMatriIdView(APIView):
             )
 
         target_up = UserProfile.objects.filter(user=profile_user).first()
-        already_viewed = (
-            ProfileViewModel.objects.filter(viewer=viewer, profile=target_up).exists()
-            if target_up
-            else False
-        )
+        has_plan = user_has_active_plan(viewer)
+        already_unlocked = has_unlocked_profile(viewer, target_up)
         can_view, remaining = PlanLimitService.can_view_profile(viewer)
         plan_info = get_plan_info_for_response(viewer)
         # Build plan block for "view details" UI so frontend can display plan
@@ -319,26 +319,24 @@ class PublicProfileByMatriIdView(APIView):
             'chat_remaining': plan_info.get('chat_remaining'),
         }
 
-        if already_viewed:
-            # Already unlocked earlier; do not decrement again. Bump last_viewed_at for home-slider ordering.
+        if has_plan and already_unlocked:
+            # Already unlocked with an active plan; bump last_viewed_at without consuming again.
             data = _build_profile_data_for_user(profile_user, request=request, include_contact=True, include_family=True)
             if target_up:
-                ProfileViewModel.objects.filter(viewer=viewer, profile=target_up).update(
-                    last_viewed_at=timezone.now()
-                )
+                ProfileViewModel.touch(viewer, target_up)
         elif can_view:
-            # First-time full view: record view and consume once. touch() updates last_viewed_at on every repeat.
+            # First-time paid unlock: record unlock and consume profile-view credit once.
             data = _build_profile_data_for_user(profile_user, request=request, include_contact=True, include_family=True)
             with transaction.atomic():
                 if target_up:
-                    _, created = ProfileViewModel.touch(viewer, target_up)
-                    if created:
+                    _, _, newly_unlocked = ProfileViewModel.touch(viewer, target_up, unlock=True)
+                    if newly_unlocked:
                         PlanLimitService.consume_profile_view(viewer)
             # Refresh plan_block after potential decrement
             plan_info = get_plan_info_for_response(viewer)
             plan_block['profile_views_remaining'] = plan_info.get('profile_views_remaining')
         else:
-            # Limited profile: no contact, no family
+            # No active plan, no balance, or not yet unlocked — limited profile only.
             data = _build_profile_data_for_user(profile_user, request=request, include_contact=False, include_family=False)
 
         return Response({
@@ -355,6 +353,7 @@ class ProfileViewRecordView(APIView):
     POST /api/v1/profiles/{matri_id}/view/
     Idempotently records that the logged-in user viewed this profile (match ordering & analytics).
     Call as many times as needed for the same matri_id; each call updates last_viewed_at for home-slider reordering.
+    Does NOT unlock full contact/family (touch uses unlock=False); paid unlock happens via full-profile or contact APIs.
     """
     permission_classes = [IsAuthenticated]
 
@@ -386,7 +385,7 @@ class ProfileViewRecordView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         try:
-            ProfileView.touch(request.user, up)
+            ProfileView.touch(request.user, up, unlock=False)
         except IntegrityError:
             ProfileView.objects.filter(viewer=request.user, profile=up).update(
                 last_viewed_at=timezone.now()

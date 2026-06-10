@@ -506,8 +506,12 @@ class BasicDetailsReadSerializer(serializers.Serializer):
     gender = serializers.SerializerMethodField()
     dob = serializers.DateField(format='%d-%m-%Y', allow_null=True)
     email = serializers.EmailField(allow_blank=True)
-    phone = serializers.CharField(source='mobile', allow_blank=True)
+    phone = serializers.SerializerMethodField()
     profile_for = serializers.CharField(allow_blank=True, allow_null=True)
+
+    def get_phone(self, obj):
+        from core.phone import to_e164_display
+        return to_e164_display(getattr(obj, 'mobile', None))
 
     def get_gender(self, obj):
         """API-facing gender labels (Male / Female / Other)."""

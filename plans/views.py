@@ -11,6 +11,7 @@ from rest_framework.parsers import JSONParser
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.models import User
+from core.phone import to_e164_display
 from profiles.models import UserProfile
 from core.permissions import IsAdmin
 from user_settings.models import UserSettings
@@ -28,6 +29,7 @@ from .services import (
     can_chat,
     can_view_contact,
     get_plan_info_for_response,
+    has_unlocked_profile,
     is_plan_expired,
     plan_expired_response,
     get_user_plan_status,
@@ -815,10 +817,8 @@ class ContactUnlockView(APIView):
                 'error': {'code': 404, 'message': 'Profile not found.'}
             }, status=status.HTTP_404_NOT_FOUND)
 
-        already_viewed = ProfileViewModel.objects.filter(
-            viewer=request.user, profile=target_profile
-        ).exists()
-        if not already_viewed:
+        already_unlocked = has_unlocked_profile(request.user, target_profile)
+        if not already_unlocked:
             can_profile, _ = PlanLimitService.can_view_profile(request.user)
             if not can_profile:
                 return Response({
@@ -831,8 +831,10 @@ class ContactUnlockView(APIView):
 
         with transaction.atomic():
             PlanLimitService.consume_contact_view(request.user)
-            _, created = ProfileViewModel.touch(request.user, target_profile)
-            if created:
+            _, _, newly_unlocked = ProfileViewModel.touch(
+                request.user, target_profile, unlock=True
+            )
+            if newly_unlocked:
                 PlanLimitService.consume_profile_view(request.user)
 
         profile = _build_profile_data_for_user(
@@ -842,7 +844,7 @@ class ContactUnlockView(APIView):
         return Response({
             'success': True,
             'data': {
-                'phone': target.mobile or '',
+                'phone': to_e164_display(target.mobile or ''),
                 'email': target.email or '',
                 'is_viewed_by_me': True,
                 'profile': profile,

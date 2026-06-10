@@ -1,6 +1,16 @@
 from decimal import Decimal
 
-from django.db.models import Count, Sum, Q
+from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import (
+    Count,
+    DecimalField,
+    IntegerField,
+    OuterRef,
+    Q,
+    Subquery,
+    Sum,
+)
 from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -15,6 +25,45 @@ from admin_panel.audit_log.models import AuditLog
 from plans.models import Transaction
 from .models import Branch
 from .serializers import BranchSerializer
+
+User = get_user_model()
+
+
+def _annotate_branch_metrics(queryset):
+    """Attach per-branch revenue and profile counts.
+
+    Customer accounts (``User.branch``) and transactions link to ``master.Branch``,
+    which is correlated to the admin ``branches.Branch`` by ``code`` (see
+    ``staff_mgmt.branch_sync``), so the metrics are matched on ``code``.
+    """
+    revenue_subquery = (
+        Transaction.objects.filter(
+            payment_status=Transaction.STATUS_SUCCESS,
+            user__branch__code=OuterRef("code"),
+        )
+        .values("user__branch__code")
+        .annotate(total=Sum("total_amount"))
+        .values("total")[:1]
+    )
+    profiles_subquery = (
+        User.objects.filter(branch__code=OuterRef("code"))
+        .values("branch__code")
+        .annotate(c=Count("id"))
+        .values("c")[:1]
+    )
+    return queryset.annotate(
+        revenue=Coalesce(
+            Subquery(
+                revenue_subquery,
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+            Decimal("0"),
+        ),
+        profiles_count=Coalesce(
+            Subquery(profiles_subquery, output_field=IntegerField()),
+            0,
+        ),
+    )
 
 
 def _build_summary_for_branches(branch_qs):
@@ -58,7 +107,7 @@ class BranchViewSet(AuditLogMixin, viewsets.ModelViewSet):
                 Q(code__icontains=search)
             )
 
-        return queryset
+        return _annotate_branch_metrics(queryset)
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
@@ -83,30 +132,58 @@ class BranchViewSet(AuditLogMixin, viewsets.ModelViewSet):
     def toggle_status(self, request, pk=None):
         branch = self.get_object()
 
-        # Example check (replace with real staff relation)
-        has_active_staff = False
-
-        # FIXED LOGIC
-        if branch.is_active and has_active_staff:
-            return Response(
-                {"error": "Deactivate or reassign staff before deactivating branch"},
-                status=400
-            )
-
         prev_status = branch.is_active
-        branch.is_active = not branch.is_active
-        branch.save()
+
+        with transaction.atomic():
+            branch.is_active = not branch.is_active
+            branch.save(update_fields=["is_active"])
+
+            if not branch.is_active:
+                # Deactivating the branch: lock out every active staff in it and
+                # mark them so we can re-enable exactly these on reactivation.
+                affected = branch.staff_members.filter(is_deleted=False, is_active=True)
+                affected_account_ids = list(
+                    affected.values_list("admin_user_id", flat=True)
+                )
+                staff_affected = affected.update(
+                    is_active=False, deactivated_by_branch=True
+                )
+                accounts_affected = AdminUser.objects.filter(
+                    id__in=affected_account_ids, is_active=True
+                ).update(is_active=False)
+            else:
+                # Reactivating the branch: only restore staff that were disabled by
+                # this branch, leaving individually-disabled staff untouched.
+                restorable = branch.staff_members.filter(
+                    is_deleted=False, deactivated_by_branch=True
+                )
+                restorable_account_ids = list(
+                    restorable.values_list("admin_user_id", flat=True)
+                )
+                staff_affected = restorable.update(
+                    is_active=True, deactivated_by_branch=False
+                )
+                accounts_affected = AdminUser.objects.filter(
+                    id__in=restorable_account_ids
+                ).update(is_active=True)
+
         self.log_action(
             action=AuditLog.ACTION_BRANCH_UPDATE,
             resource=f"branch:{branch.id}",
-            details="Branch active status toggled.",
+            details="Branch active status toggled; staff logins synced.",
             old_value={"is_active": prev_status},
-            new_value={"is_active": branch.is_active},
+            new_value={
+                "is_active": branch.is_active,
+                "staff_affected": staff_affected,
+                "accounts_affected": accounts_affected,
+            },
         )
 
         return Response({
             "success": True,
-            "status": "active" if branch.is_active else "inactive"
+            "status": "active" if branch.is_active else "inactive",
+            "staff_affected": staff_affected,
+            "accounts_affected": accounts_affected,
         })
 
     def destroy(self, request, *args, **kwargs):
@@ -121,17 +198,55 @@ class BranchViewSet(AuditLogMixin, viewsets.ModelViewSet):
                 status=400
             )
 
-        branch.is_deleted = True
-        branch.save()
+        with transaction.atomic():
+            branch.is_deleted = True
+            branch.is_active = False
+            branch.save(update_fields=["is_deleted", "is_active"])
+
+            # Collect the login accounts linked through staff profiles before we
+            # soft-delete those profiles.
+            staff_account_ids = list(
+                branch.staff_members.values_list("admin_user_id", flat=True)
+            )
+
+            # Soft-delete every staff profile belonging to this branch.
+            staff_deactivated = branch.staff_members.filter(is_deleted=False).update(
+                is_active=False, is_deleted=True
+            )
+
+            # Disable login for every staff / branch-manager account in this branch
+            # so they can no longer authenticate or call any API once the branch is
+            # removed. Match both by branch code (AdminUser.branch -> master.Branch)
+            # and by the accounts linked through the staff profiles.
+            accounts_disabled = AdminUser.objects.filter(
+                Q(
+                    role__in=[AdminUser.ROLE_BRANCH_MANAGER, AdminUser.ROLE_STAFF],
+                    branch__code=branch.code,
+                )
+                | Q(id__in=staff_account_ids),
+                is_active=True,
+            ).update(is_active=False)
+
         self.log_action(
             action=AuditLog.ACTION_BRANCH_UPDATE,
             resource=f"branch:{branch.id}",
-            details="Branch soft-deleted.",
+            details="Branch soft-deleted; staff and their logins deactivated.",
             old_value={"is_deleted": False},
-            new_value={"is_deleted": True},
+            new_value={
+                "is_deleted": True,
+                "staff_deactivated": staff_deactivated,
+                "accounts_disabled": accounts_disabled,
+            },
         )
 
-        return Response({"success": True}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "success": True,
+                "staff_deactivated": staff_deactivated,
+                "accounts_disabled": accounts_disabled,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def perform_update(self, serializer):
         instance = self.get_object()

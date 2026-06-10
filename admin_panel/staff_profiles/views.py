@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from core.phone import to_e164_display
 from admin_panel.audit_log.models import AuditLog
 from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
@@ -641,7 +642,7 @@ class StaffMyProfilesCreateView(APIView):
                 "data": {
                     "matri_id": user.matri_id,
                     "name": user.name,
-                    "phone": user.phone_number,
+                    "phone": to_e164_display(user.mobile),
                     "profile_completion_percentage": get_profile_completion_data(user)[
                         "profile_completion_percentage"
                     ],
@@ -649,3 +650,59 @@ class StaffMyProfilesCreateView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class StaffMyProfilesMatchesView(APIView):
+    """GET /api/v1/staff/profiles/{matri_id}/matches/ — suggestions for an assigned profile."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, matri_id):
+        from matches.services import build_matches_for_user
+
+        staff, err = _resolve_staff_panel(request)
+        if err:
+            return err
+        user, uerr = _resolve_user_for_staff_or_error(request, staff, matri_id)
+        if uerr:
+            return uerr
+
+        try:
+            limit = int(request.query_params.get("limit", 20))
+        except (TypeError, ValueError):
+            limit = 20
+
+        matches = build_matches_for_user(user, request=request, limit=limit)
+        return Response({"success": True, "data": {"matches": matches}})
+
+
+class StaffMyProfilesPublicDetailView(APIView):
+    """GET /api/v1/staff/profiles/{matri_id}/public-detail/ — read-only any member profile."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, matri_id):
+        staff, err = _resolve_staff_panel(request)
+        if err:
+            return err
+
+        user = _get_user_by_matri(matri_id)
+        if not user:
+            return Response(
+                {"success": False, "error": {"code": 404, "message": "Profile not found."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        data = _build_profile_data_for_user(user, request, include_contact=False, include_family=False)
+        completeness = _completeness_percent(user)
+        profile = getattr(user, "user_profile", None) or UserProfile.objects.filter(user=user).first()
+        data["admin"] = {
+            "admin_verified": bool(profile and profile.admin_verified),
+            "has_horoscope": bool(profile and profile.has_horoscope),
+            "is_blocked": getattr(user, "is_blocked", False),
+            "profile_status": "complete" if completeness == 100 else "incomplete",
+            "profile_completion_percentage": completeness,
+        }
+        return Response({"success": True, "data": data})

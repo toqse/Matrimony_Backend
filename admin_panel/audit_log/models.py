@@ -15,6 +15,8 @@ class AuditLog(TimeStampedModel):
         (ROLE_BRANCH_MANAGER, "Branch Manager"),
     )
 
+    ACTION_LOGIN = "login"
+    ACTION_LOGOUT = "logout"
     ACTION_CREATE = "create"
     ACTION_UPDATE = "update"
     ACTION_DELETE = "delete"
@@ -41,6 +43,8 @@ class AuditLog(TimeStampedModel):
     )
 
     ACTION_CHOICES = (
+        (ACTION_LOGIN, "Login"),
+        (ACTION_LOGOUT, "Logout"),
         (ACTION_CREATE, "Create"),
         (ACTION_UPDATE, "Update"),
         (ACTION_DELETE, "Delete"),

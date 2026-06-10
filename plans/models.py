@@ -216,6 +216,15 @@ class ProfileView(models.Model):
         default=timezone.now,
         help_text='Updated on every profile view; used for home-slider ordering among already-viewed profiles.',
     )
+    unlocked = models.BooleanField(
+        default=False,
+        help_text='True when the viewer spent a profile-view credit to unlock full contact/family details.',
+    )
+    unlocked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When this profile was first unlocked by the viewer.',
+    )
 
     class Meta:
         db_table = 'plans_profile_view'
@@ -228,13 +237,26 @@ class ProfileView(models.Model):
         ]
 
     @classmethod
-    def touch(cls, viewer, user_profile):
-        """Create or update last_viewed_at (one row per viewer+profile). Returns (instance, created)."""
-        return cls.objects.update_or_create(
+    def touch(cls, viewer, user_profile, *, unlock=False):
+        """
+        Create or update last_viewed_at (one row per viewer+profile).
+        When unlock=True, mark the row as unlocked on first paid unlock.
+        Returns (instance, created, newly_unlocked).
+        """
+        now = timezone.now()
+        obj, created = cls.objects.update_or_create(
             viewer=viewer,
             profile=user_profile,
-            defaults={'last_viewed_at': timezone.now()},
+            defaults={'last_viewed_at': now},
         )
+        newly_unlocked = False
+        if unlock and not obj.unlocked:
+            obj.unlocked = True
+            obj.unlocked_at = now
+            obj.last_viewed_at = now
+            obj.save(update_fields=['unlocked', 'unlocked_at', 'last_viewed_at'])
+            newly_unlocked = True
+        return obj, created, newly_unlocked
 
     def __str__(self):
         return f'{self.viewer.matri_id} viewed profile {self.profile_id}'

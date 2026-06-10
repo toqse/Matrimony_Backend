@@ -1,6 +1,6 @@
-import re
-
 from rest_framework import serializers
+
+from core.phone import normalize_phone_input, to_e164_display
 
 from .models import Enquiry, EnquiryNote
 
@@ -17,6 +17,11 @@ class EnquirySerializer(serializers.ModelSerializer):
     assigned_to_name = serializers.CharField(source="assigned_to.name", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     enquiry_notes = EnquiryNoteSerializer(many=True, read_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["phone"] = to_e164_display(instance.phone)
+        return data
 
     class Meta:
         model = Enquiry
@@ -49,12 +54,7 @@ class EnquiryCreateSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate_phone(self, value):
-        if not value:
-            raise serializers.ValidationError("Phone number is required.")
-        cleaned = re.sub(r"\D", "", value)
-        if len(cleaned) != 10:
-            raise serializers.ValidationError("Enter a valid 10-digit phone number.")
-        return cleaned
+        return normalize_phone_input(value)
 
     def validate_source(self, value):
         valid = ["website", "walk-in", "phone", "whatsapp", "email"]

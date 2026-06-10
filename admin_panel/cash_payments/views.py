@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from accounts.models import User
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
+from admin_panel.pagination import StandardPagination
 from admin_panel.staff_mgmt.models import StaffProfile
 from plans.models import Plan, Transaction
 
@@ -85,7 +86,7 @@ def _scoped_queryset(request):
     return qs
 
 
-def _apply_filters(request, qs):
+def _apply_filters(request, qs, apply_date=True):
     mode = (request.query_params.get("mode") or "").strip().lower()
     if mode:
         if mode not in {"cash", "upi", "card", "netbanking"}:
@@ -134,27 +135,26 @@ def _apply_filters(request, qs):
             Q(transaction_id__icontains=search) | Q(user__name__icontains=search) | Q(user__matri_id__icontains=search)
         )
 
-    date_s = (request.query_params.get("date") or "").strip()
-    if date_s:
-        try:
-            d = datetime.strptime(date_s, "%Y-%m-%d").date()
-        except ValueError:
-            return None, Response({"success": False, "error": {"code": 400, "message": "Invalid date filter"}}, status=400)
-        qs = qs.filter(created_at__date=d)
+    if apply_date:
+        date_s = (request.query_params.get("date") or "").strip()
+        if date_s:
+            try:
+                d = datetime.strptime(date_s, "%Y-%m-%d").date()
+            except ValueError:
+                return None, Response({"success": False, "error": {"code": 400, "message": "Invalid date filter"}}, status=400)
+            qs = qs.filter(created_at__date=d)
     return qs, None
 
 
 class PaymentsListAPIView(APIView):
     authentication_classes = [AdminJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
 
     @property
     def paginator(self):
         if not hasattr(self, "_paginator"):
-            from rest_framework.settings import api_settings
-
-            pc = api_settings.DEFAULT_PAGINATION_CLASS
-            self._paginator = pc() if pc else None
+            self._paginator = self.pagination_class() if self.pagination_class else None
         return self._paginator
 
     def get(self, request):
@@ -224,13 +224,20 @@ class PaymentsSummaryAPIView(APIView):
 
     def get(self, request):
         qs = _scoped_queryset(request)
-        qs, err = _apply_filters(request, qs)
+        qs, err = _apply_filters(request, qs, apply_date=False)
         if err:
             return err
 
         today = timezone.localdate()
-        prev = today - timedelta(days=1)
-        today_qs = qs.filter(created_at__date=today)
+        ref = today
+        date_s = (request.query_params.get("date") or "").strip()
+        if date_s:
+            try:
+                ref = datetime.strptime(date_s, "%Y-%m-%d").date()
+            except ValueError:
+                ref = today
+        prev = ref - timedelta(days=1)
+        current_qs = qs.filter(created_at__date=ref)
         prev_qs = qs.filter(created_at__date=prev)
 
         def _metrics(mode: str):
@@ -245,7 +252,7 @@ class PaymentsSummaryAPIView(APIView):
                     )
                 return q
 
-            a = _mode(today_qs)
+            a = _mode(current_qs)
             b = _mode(prev_qs)
             total = Decimal(a.aggregate(v=Sum("total_amount"))["v"] or 0)
             count = a.count()
@@ -256,7 +263,7 @@ class PaymentsSummaryAPIView(APIView):
         cash = _metrics("cash")
         upi = _metrics("upi")
         card = _metrics("card")
-        total = Decimal(today_qs.aggregate(v=Sum("total_amount"))["v"] or 0)
+        total = Decimal(current_qs.aggregate(v=Sum("total_amount"))["v"] or 0)
         prev_total = Decimal(prev_qs.aggregate(v=Sum("total_amount"))["v"] or 0)
         tg = float(((total - prev_total) / prev_total) * 100) if prev_total else (100.0 if total else 0.0)
         out = {
@@ -265,7 +272,7 @@ class PaymentsSummaryAPIView(APIView):
             "cash_payments": cash,
             "upi_payments": upi,
             "card_payments": card,
-            "total_revenue": {"total": float(total), "count": today_qs.count(), "growth_percent": round(tg, 2)},
+            "total_revenue": {"total": float(total), "count": current_qs.count(), "growth_percent": round(tg, 2)},
         }
         return Response({"success": True, "data": out})
 

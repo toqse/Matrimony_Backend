@@ -1,4 +1,7 @@
 from rest_framework import serializers
+
+from core.phone import extract_indian_mobile_10, mobile_10_from_stored, normalize_phone_input, to_e164_display
+
 from .models import Branch
 from .services import generate_branch_code
 
@@ -18,6 +21,11 @@ class BranchSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         return "active" if obj.is_active else "inactive"
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["phone"] = to_e164_display(instance.phone)
+        return data
+
     def validate_name(self, value):
         if len(value) < 3:
             raise serializers.ValidationError("Name too short")
@@ -29,17 +37,17 @@ class BranchSerializer(serializers.ModelSerializer):
         return value
 
     def validate_phone(self, value):
-        value = value.strip()
-        if not value.isdigit() or len(value) < 10:
-            raise serializers.ValidationError("Enter a valid phone number")
-        qs = Branch.objects.filter(phone=value, is_deleted=False)
+        e164 = normalize_phone_input(value)
+        mobile_10 = mobile_10_from_stored(e164)
+        qs = Branch.objects.filter(is_deleted=False)
         if self.instance is not None:
             qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError(
-                "Phone number already registered to another branch"
-            )
-        return value
+        for branch in qs.only("phone"):
+            if mobile_10_from_stored(branch.phone) == mobile_10:
+                raise serializers.ValidationError(
+                    "Phone number already registered to another branch"
+                )
+        return e164
 
     def validate_email(self, value):
         value = (value or "").strip().lower()

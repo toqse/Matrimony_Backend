@@ -30,6 +30,34 @@ def user_has_active_plan(user):
     return get_user_plan_status(user) == 'active'
 
 
+def has_unlocked_profile(viewer, profile_up):
+    """True when viewer has a paid unlock (not merely analytics) for this UserProfile."""
+    if not viewer or not profile_up:
+        return False
+    from .models import ProfileView
+    return ProfileView.objects.filter(
+        viewer=viewer,
+        profile=profile_up,
+        unlocked=True,
+    ).exists()
+
+
+def can_open_full_profile(viewer, profile_up):
+    """
+    Whether viewer may see full contact/family for profile_up.
+    Returns (allowed: bool, already_unlocked: bool, remaining: int | None).
+    Requires active plan; first unlock also needs profile-view balance.
+    """
+    has_plan = user_has_active_plan(viewer)
+    already_unlocked = has_unlocked_profile(viewer, profile_up)
+    can_view, remaining = PlanLimitService.can_view_profile(viewer)
+    if has_plan and already_unlocked:
+        return True, True, remaining
+    if can_view:
+        return True, False, remaining
+    return False, already_unlocked, remaining if has_plan else 0
+
+
 def get_user_plan_status(user):
     """
     Return a simple status string for the user's plan:

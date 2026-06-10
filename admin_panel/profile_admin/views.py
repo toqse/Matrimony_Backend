@@ -4,6 +4,7 @@ import uuid
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -12,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from core.phone import to_e164_display
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.staff_mgmt.models import StaffProfile
@@ -28,8 +30,10 @@ from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.staff_profiles.registration import (
     _first_drf_error,
     apply_profile_sections,
+    create_user_and_profile_sections,
     parse_request_data_and_files,
     save_profile_uploads,
+    validate_core_create_fields,
 )
 
 from .merge_service import merge_user_accounts
@@ -339,7 +343,10 @@ class AdminProfileDetailAPIView(APIView):
         anon = f"del{suffix}"[:20]
         user.mobile = anon
         user.is_active = False
-        user.save(update_fields=["mobile", "is_active", "updated_at"])
+        # Revoke every token issued so far so an already-logged-in user loses access
+        # immediately, instead of remaining authenticated until their token expires.
+        user.tokens_invalid_before = timezone.now()
+        user.save(update_fields=["mobile", "is_active", "tokens_invalid_before", "updated_at"])
         actor_nm = (getattr(request.user, "name", "") or "").strip()
         create_audit_log(
             request,
@@ -470,7 +477,13 @@ class AdminProfileBlockAPIView(APIView):
             user.is_blocked = bool(request.data["blocked"])
         else:
             user.is_blocked = not getattr(user, "is_blocked", False)
-        user.save(update_fields=["is_blocked", "updated_at"])
+        update_fields = ["is_blocked", "updated_at"]
+        if user.is_blocked:
+            # Invalidate every token issued so far so active sessions are revoked
+            # immediately, not just on the next token refresh.
+            user.tokens_invalid_before = timezone.now()
+            update_fields.append("tokens_invalid_before")
+        user.save(update_fields=update_fields)
         actor_nm = (getattr(request.user, "name", "") or "").strip()
         create_audit_log(
             request,
@@ -481,6 +494,119 @@ class AdminProfileBlockAPIView(APIView):
             action_type=AuditLog.ACTION_TYPE_UPDATE_PROFILE,
         )
         return Response({"success": True, "data": {"matri_id": user.matri_id, "is_blocked": user.is_blocked}})
+
+
+class AdminProfileCreateAPIView(APIView):
+    """Admin-side member registration (mirrors staff create, no OTP).
+
+    Admins have no staff record/branch of their own, so created profiles are
+    unassigned by default. An optional `staff_id` may be supplied to assign the
+    new member to a staff (the member's branch is then taken from that staff).
+    """
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def post(self, request):
+        role = getattr(request.user, "role", None)
+        if role not in (AdminUser.ROLE_ADMIN, AdminUser.ROLE_BRANCH_MANAGER):
+            return Response(
+                {"success": False, "error": {"code": 403, "message": "Insufficient permissions"}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            data, files = parse_request_data_and_files(request)
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        errors, norm = validate_core_create_fields(data)
+        if errors:
+            first = next(iter(errors))
+            return Response(
+                {"success": False, "error": {"code": 400, "message": errors[first], "details": errors}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        staff = None
+        branch_pk = None
+        staff_id = data.get("staff_id")
+        if staff_id not in (None, "", 0, "0"):
+            try:
+                staff = StaffProfile.objects.select_related("branch").get(
+                    pk=int(staff_id), is_deleted=False
+                )
+            except (StaffProfile.DoesNotExist, ValueError, TypeError):
+                return Response(
+                    {"success": False, "error": {"code": 400, "message": "Staff not found or inactive"}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not staff.is_active:
+                return Response(
+                    {"success": False, "error": {"code": 400, "message": "Staff not found or inactive"}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if staff.branch_id:
+                branch_pk = (
+                    MasterBranch.objects.filter(code=staff.branch.code)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+        elif role == AdminUser.ROLE_BRANCH_MANAGER:
+            branch_pk = getattr(request.user, "branch_id", None)
+
+        try:
+            user = create_user_and_profile_sections(
+                name=norm["name"],
+                mobile=norm["mobile"],
+                gender=norm["gender"],
+                dob_iso=norm["dob_iso"],
+                email=norm["email"],
+                branch_pk=branch_pk,
+                data=data,
+                files=files,
+                staff=staff,
+            )
+        except DRFValidationError as exc:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": _first_drf_error(exc)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface creation failure to caller
+            return Response(
+                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        actor_nm = (getattr(request.user, "name", "") or "").strip()
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_CREATE_PROFILE,
+            resource=f"profile:{user.matri_id}",
+            details=f"{actor_nm} created profile for {user.name}.",
+            target_profile_name=(user.name or "").strip(),
+            action_type=AuditLog.ACTION_TYPE_CREATE_PROFILE,
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": f"Profile created successfully. Matri ID: {user.matri_id}.",
+                "data": {
+                    "matri_id": user.matri_id,
+                    "name": user.name,
+                    "phone": to_e164_display(user.mobile),
+                    "profile_completion_percentage": get_profile_completion_data(user)[
+                        "profile_completion_percentage"
+                    ],
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class AdminProfileMergeAPIView(APIView):

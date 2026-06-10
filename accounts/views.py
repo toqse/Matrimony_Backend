@@ -65,6 +65,16 @@ def _tokens_for_user(user):
     return {'access': str(refresh.access_token), 'refresh': str(refresh)}
 
 
+def _blocked_response(user):
+    """Return a 403 response if the user is blocked by admin, else None."""
+    if getattr(user, 'is_blocked', False):
+        return Response({
+            'success': False,
+            'error': {'code': 403, 'message': 'Your account has been blocked.'},
+        }, status=status.HTTP_403_FORBIDDEN)
+    return None
+
+
 def _set_refresh_cookie(response, refresh_token):
     cookie_name = getattr(settings, 'JWT_REFRESH_COOKIE_NAME', 'refresh_token')
     httponly = getattr(settings, 'JWT_REFRESH_COOKIE_HTTPONLY', True)
@@ -162,6 +172,11 @@ class ResendOTPView(APIView):
         if user and not user.mobile_verified:
             user = None
 
+        if user:
+            blocked = _blocked_response(user)
+            if blocked:
+                return blocked
+
         allowed, msg = check_resend_otp_rate_limit(phone)
         if not allowed:
             return Response(
@@ -245,6 +260,9 @@ class RegisterMobileView(APIView):
                 'success': False,
                 'error': {'code': 404, 'message': 'No registered account found with this mobile number. Please register first.'},
             }, status=status.HTTP_404_NOT_FOUND)
+        blocked = _blocked_response(user)
+        if blocked:
+            return blocked
         identifier = f'mobile:{mobile}'
         otp = generate_otp(identifier)
         _send_otp_mobile(mobile, otp)
@@ -289,10 +307,14 @@ class VerifyMobileView(APIView):
                 is_active=True,
                 mobile_verified=True,
             )
-        elif not user.mobile_verified or not user.is_active:
-            user.mobile_verified = True
-            user.is_active = True
-            user.save(update_fields=['mobile_verified', 'is_active', 'updated_at'])
+        else:
+            blocked = _blocked_response(user)
+            if blocked:
+                return blocked
+            if not user.mobile_verified or not user.is_active:
+                user.mobile_verified = True
+                user.is_active = True
+                user.save(update_fields=['mobile_verified', 'is_active', 'updated_at'])
         tokens = _tokens_for_user(user)
         response = Response({
             'success': True,
@@ -339,6 +361,9 @@ class VerifyEmailView(APIView):
             email=email,
             defaults={'is_active': True, 'email_verified': True},
         )
+        blocked = _blocked_response(user)
+        if blocked:
+            return blocked
         if not user.email_verified:
             user.email_verified = True
             user.is_active = True
@@ -368,6 +393,9 @@ class LoginView(APIView):
         ser = LoginSerializer(data=payload)
         ser.is_valid(raise_exception=True)
         user = ser.validated_data['user']
+        blocked = _blocked_response(user)
+        if blocked:
+            return blocked
         if not user.mobile_verified or not user.is_active:
             user.mobile_verified = True
             user.is_active = True
@@ -391,6 +419,26 @@ class TokenRefreshViewCustom(TokenRefreshView):
             getattr(settings, 'JWT_REFRESH_COOKIE_NAME', 'refresh_token'), ''
         )
         if refresh:
+            # Reject refresh for blocked or deleted/deactivated users so they cannot mint a
+            # new access token from an old refresh token after being blocked or removed.
+            try:
+                token = RefreshToken(refresh)
+                user_id = token.get('user_id') or token.get('id')
+                if user_id:
+                    refresh_user = User.objects.filter(id=user_id).only('is_blocked', 'is_active').first()
+                    if refresh_user and refresh_user.is_blocked:
+                        return Response({
+                            'success': False,
+                            'error': {'code': 403, 'message': 'Your account has been blocked.'},
+                        }, status=status.HTTP_403_FORBIDDEN)
+                    if not refresh_user or not refresh_user.is_active:
+                        return Response({
+                            'success': False,
+                            'error': {'code': 403, 'message': 'Your account is no longer active.'},
+                        }, status=status.HTTP_403_FORBIDDEN)
+            except Exception:
+                # Let the parent view return the standard invalid-token error.
+                pass
             from django.http import QueryDict
             q = QueryDict(mutable=True)
             q['refresh'] = refresh

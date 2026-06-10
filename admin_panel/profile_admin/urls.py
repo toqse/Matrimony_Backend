@@ -12,6 +12,7 @@ from .section_edit_views import (
 from .views import (
     AdminProfileAssignStaffAPIView,
     AdminProfileBlockAPIView,
+    AdminProfileCreateAPIView,
     AdminProfileDetailAPIView,
     AdminProfileListAPIView,
     AdminProfileMergeAPIView,
@@ -20,6 +21,7 @@ from .views import (
 
 urlpatterns = [
     path("", AdminProfileListAPIView.as_view(), name="admin-profiles-list"),
+    path("create/", AdminProfileCreateAPIView.as_view(), name="admin-profiles-create"),
     path("merge/", AdminProfileMergeAPIView.as_view(), name="admin-profiles-merge"),
     path("<str:matri_id>/basic/", AdminProfileBasicSectionView.as_view(), name="admin-profiles-section-basic"),
     path("<str:matri_id>/location/", AdminProfileLocationSectionView.as_view(), name="admin-profiles-section-location"),

@@ -161,6 +161,7 @@ class SendOTPView(APIView):
             return Response(_err("Invalid request", 400), status=status.HTTP_400_BAD_REQUEST)
 
         mobile = ser.validated_data["mobile"]  # +91XXXXXXXXXX
+        selected_role = ser.validated_data.get("role") or ""
 
         user = AdminUser.objects.select_related("branch").filter(mobile=mobile).first()
         if not user:
@@ -171,6 +172,11 @@ class SendOTPView(APIView):
         if user.role != user_role:
             user.role = user_role
             user.save(update_fields=["role", "updated_at"])
+        if selected_role and selected_role != user_role:
+            return Response(
+                _err("This mobile number is not registered for the selected role", 403),
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if cache.get(_lock_key(mobile)):
             return Response(_err("Too many failed attempts", 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -209,6 +215,7 @@ class VerifyOTPView(APIView):
             return Response(_err("Invalid request", 400), status=status.HTTP_400_BAD_REQUEST)
 
         mobile = ser.validated_data["mobile"]
+        selected_role = ser.validated_data.get("role") or ""
         otp = ser.validated_data["otp"]
 
         user = AdminUser.objects.select_related("branch").filter(mobile=mobile).first()
@@ -220,6 +227,11 @@ class VerifyOTPView(APIView):
         if user.role != user_role:
             user.role = user_role
             user.save(update_fields=["role", "updated_at"])
+        if selected_role and selected_role != user_role:
+            return Response(
+                _err("This mobile number is not registered for the selected role", 403),
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if cache.get(_lock_key(mobile)):
             return Response(_err("Too many failed attempts", 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -246,11 +258,13 @@ class VerifyOTPView(APIView):
         cache.delete(_lock_key(mobile))
 
         tokens = _tokens_for_admin_user(user)
+        # request.user is anonymous on this AllowAny endpoint, so pass the actor explicitly.
         create_audit_log(
             request,
-            action=AuditLog.ACTION_OTP_VERIFY,
+            action=AuditLog.ACTION_LOGIN,
             resource=f"admin_user:{user.id}",
-            details="Admin panel OTP verified successfully.",
+            details="Logged in to the admin panel.",
+            actor=user,
         )
         return Response(
             {
@@ -319,6 +333,13 @@ class LogoutView(APIView):
         if jti and exp:
             expires_in = max(0, int(exp) - int(timezone.now().timestamp()))
             cache.set(_blacklist_key(jti), "1", timeout=expires_in)
+
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_LOGOUT,
+            resource=f"admin_user:{request.user.id}",
+            details="Logged out of the admin panel.",
+        )
 
         return Response({"success": True, "message": "Logged out successfully."}, status=status.HTTP_200_OK)
 

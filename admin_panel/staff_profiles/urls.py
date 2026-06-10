@@ -5,6 +5,8 @@ from .views import (
     StaffMyProfilesDetailView,
     StaffMyProfilesDocumentsView,
     StaffMyProfilesListView,
+    StaffMyProfilesMatchesView,
+    StaffMyProfilesPublicDetailView,
     StaffMyProfilesRefreshView,
     StaffMyProfilesSendEmailView,
     StaffMyProfilesSummaryView,
@@ -18,6 +20,12 @@ urlpatterns = [
     path("<str:matri_id>/wishlist/", StaffMyProfilesWishlistView.as_view(), name="staff-my-profiles-wishlist"),
     path("<str:matri_id>/documents/", StaffMyProfilesDocumentsView.as_view(), name="staff-my-profiles-documents"),
     path("<str:matri_id>/send-email/", StaffMyProfilesSendEmailView.as_view(), name="staff-my-profiles-send-email"),
+    path("<str:matri_id>/matches/", StaffMyProfilesMatchesView.as_view(), name="staff-my-profiles-matches"),
+    path(
+        "<str:matri_id>/public-detail/",
+        StaffMyProfilesPublicDetailView.as_view(),
+        name="staff-my-profiles-public-detail",
+    ),
     path("<str:matri_id>/", StaffMyProfilesDetailView.as_view(), name="staff-my-profiles-detail"),
     path("", StaffMyProfilesListView.as_view(), name="staff-my-profiles-list"),
 ]
