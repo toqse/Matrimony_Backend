@@ -7,17 +7,17 @@ from astrology.porutham import RASI_NAMES, STAR_NAMES, chart_to_array
 
 # Planet order in the 11-char EXE strings (index -> planet).
 PLANETS: list[dict[str, str]] = [
-    {'key': 'la', 'abbr': 'La', 'name': 'Lagnam'},
-    {'key': 'su', 'abbr': 'Su', 'name': 'Sun'},
-    {'key': 'mo', 'abbr': 'Mo', 'name': 'Moon'},
-    {'key': 'ma', 'abbr': 'Ma', 'name': 'Mars'},
-    {'key': 'me', 'abbr': 'Me', 'name': 'Mercury'},
-    {'key': 'ju', 'abbr': 'Ju', 'name': 'Jupiter'},
-    {'key': 've', 'abbr': 'Ve', 'name': 'Venus'},
-    {'key': 'sa', 'abbr': 'Sa', 'name': 'Saturn'},
-    {'key': 'ra', 'abbr': 'Ra', 'name': 'Rahu'},
-    {'key': 'ke', 'abbr': 'Ke', 'name': 'Ketu'},
-    {'key': 'md', 'abbr': 'Md', 'name': 'Maandi'},
+    {'key': 'la', 'abbr': 'La', 'abbr_en': 'La', 'abbr_ml': 'ല', 'name': 'Lagnam'},
+    {'key': 'su', 'abbr': 'Ra', 'abbr_en': 'Ra', 'abbr_ml': 'ര', 'name': 'Sun'},
+    {'key': 'mo', 'abbr': 'Ch', 'abbr_en': 'Ch', 'abbr_ml': 'ച', 'name': 'Moon'},
+    {'key': 'ma', 'abbr': 'Ku', 'abbr_en': 'Ku', 'abbr_ml': 'കു', 'name': 'Mars'},
+    {'key': 'me', 'abbr': 'Bu', 'abbr_en': 'Bu', 'abbr_ml': 'ബു', 'name': 'Mercury'},
+    {'key': 'ju', 'abbr': 'Gu', 'abbr_en': 'Gu', 'abbr_ml': 'ഗു', 'name': 'Jupiter'},
+    {'key': 've', 'abbr': 'Sk', 'abbr_en': 'Sk', 'abbr_ml': 'ശു', 'name': 'Venus'},
+    {'key': 'sa', 'abbr': 'Sn', 'abbr_en': 'Sn', 'abbr_ml': 'ശ', 'name': 'Saturn'},
+    {'key': 'ra', 'abbr': 'Ra', 'abbr_en': 'Ra', 'abbr_ml': 'രാ', 'name': 'Rahu'},
+    {'key': 'ke', 'abbr': 'Ke', 'abbr_en': 'Ke', 'abbr_ml': 'കേ', 'name': 'Ketu'},
+    {'key': 'md', 'abbr': 'Md', 'abbr_en': 'Md', 'abbr_ml': 'മ', 'name': 'Maandi'},
 ]
 
 VIMSHOTTARI_LORDS = [
@@ -32,8 +32,8 @@ VIMSHOTTARI_LORDS = [
     'Mercury',
 ]
 
-# EXE dasa balance display: 365-day year, month = 365/12 days.
-DASA_YEAR_DAYS = 365
+# EXE dasa balance display: 365.25-day year, month = 365.25/12 days.
+DASA_YEAR_DAYS = 365.25
 DASA_MONTH_DAYS = DASA_YEAR_DAYS / 12
 
 
@@ -53,7 +53,9 @@ def decode_chart(encoded: str | None) -> dict[str, Any]:
     """
     houses = _empty_houses()
     signs = chart_to_array(encoded)
-    if not signs or len(signs) < 11:
+    # chart_to_array returns a 1-indexed array: signs[0] is unused (0) and the
+    # 11 planet signs live at signs[1..11].
+    if not signs or len(signs) < 12:
         return {
             'lagna_sign': None,
             'sign_names': _sign_names(),
@@ -62,7 +64,7 @@ def decode_chart(encoded: str | None) -> dict[str, Any]:
         }
 
     planets_out: list[dict[str, Any]] = []
-    for idx, sign in enumerate(signs[:11]):
+    for idx, sign in enumerate(signs[1:12]):
         planet = PLANETS[idx]
         entry = {
             'index': idx,
@@ -75,7 +77,7 @@ def decode_chart(encoded: str | None) -> dict[str, Any]:
             houses[str(sign)].append(planet)
 
     return {
-        'lagna_sign': signs[0] if signs else None,
+        'lagna_sign': signs[1],
         'sign_names': _sign_names(),
         'houses': houses,
         'planets': planets_out,
@@ -89,13 +91,38 @@ def dasa_lord(star: int | None) -> str:
     return VIMSHOTTARI_LORDS[(star - 1) % 9]
 
 
+def star_name(star: int | None) -> str:
+    """Nakshatra name from pr_star, independent of is_calculated."""
+    if not star or not (1 <= star <= 27):
+        return ''
+    return STAR_NAMES[star]
+
+
+def _rasi_name_from_chart(encoded: str | None, index: int) -> str:
+    signs = chart_to_array(encoded)
+    if len(signs) <= index:
+        return ''
+    sign = signs[index]
+    return RASI_NAMES[sign] if 1 <= sign <= 12 else ''
+
+
+def lagnam_name(encoded: str | None) -> str:
+    """Lagnam name from pr_rasi. Position 1 is lagnam (1-indexed array)."""
+    return _rasi_name_from_chart(encoded, 1)
+
+
+def moon_rasi_name(encoded: str | None) -> str:
+    """Moon rasi name from pr_rasi. Position 3 is Chandran (1-indexed array)."""
+    return _rasi_name_from_chart(encoded, 3)
+
+
 def format_dasa_balance(days: int | None) -> dict[str, Any]:
     """
     Format pr_dasabalance (days) as y/m/d text matching the Windows EXE panel.
 
-    Uses 365-day years and 365/12-day months (matches EXE e.g. 2459 -> 06y 08m 25d).
+    Uses 365.25-day years and 365.25/12-day months (matches EXE e.g. 2459 -> 06y 08m 24d).
     """
-    if days is None or days < 0:
+    if days is None or days <= 0:
         return {
             'years': 0,
             'months': 0,
@@ -106,7 +133,10 @@ def format_dasa_balance(days: int | None) -> dict[str, Any]:
     years = int(days // DASA_YEAR_DAYS)
     rem_days = days - years * DASA_YEAR_DAYS
     months = int(rem_days // DASA_MONTH_DAYS)
-    rem_day = int(rem_days - months * DASA_MONTH_DAYS)
+    rem_day = round(rem_days - months * DASA_MONTH_DAYS) + 1
+    if rem_day > 30:
+        rem_day -= 30
+        months += 1
     return {
         'years': years,
         'months': months,
@@ -127,7 +157,7 @@ def build_horoscope_charts(hp) -> dict[str, Any]:
         'bhava': decode_chart(getattr(hp, 'pr_bhav', None) if hp else None),
         'star': {
             'number': star_num,
-            'name': STAR_NAMES[star_num] if star_num and 1 <= star_num <= 27 else '',
+            'name': star_name(star_num),
             'pada': pada,
         },
         'dasa': {

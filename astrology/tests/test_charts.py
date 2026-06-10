@@ -72,8 +72,8 @@ class DasaTests(SimpleTestCase):
         result = format_dasa_balance(491)
         self.assertEqual(result['years'], 1)
         self.assertEqual(result['months'], 4)
-        self.assertEqual(result['days'], 4)
-        self.assertEqual(result['balance_text'], '01y 04m 04d')
+        self.assertEqual(result['days'], 5)
+        self.assertEqual(result['balance_text'], '01y 04m 05d')
 
     def test_format_dasa_balance_2459_matches_exe(self):
         result = format_dasa_balance(2459)
@@ -104,7 +104,7 @@ class BuildHoroscopeChartsTests(SimpleTestCase):
         self.assertEqual(charts['star']['pada'], 4)
         self.assertEqual(charts['dasa']['lord'], 'Ketu')
         self.assertEqual(charts['dasa']['balance_days'], 491)
-        self.assertEqual(charts['dasa']['balance_text'], '01y 04m 04d')
+        self.assertEqual(charts['dasa']['balance_text'], '01y 04m 05d')
         self.assertEqual(charts['rasi']['lagna_sign'], 2)
         self.assertEqual(charts['amsa']['lagna_sign'], 4)
         self.assertEqual(charts['bhava']['lagna_sign'], 2)
@@ -125,7 +125,7 @@ class HoroscopeProfileSerializerChartsTests(SimpleTestCase):
 
         self.assertIn('charts', data)
         self.assertEqual(data['charts']['dasa']['lord'], 'Ketu')
-        self.assertEqual(data['charts']['dasa']['balance_text'], '01y 04m 04d')
+        self.assertEqual(data['charts']['dasa']['balance_text'], '01y 04m 05d')
         self.assertEqual(data['charts']['rasi']['houses']['10'][0]['key'], 'ma')
 
     def test_serializer_includes_display_fields(self):
@@ -170,8 +170,8 @@ class HoroscopeProfileSerializerChartsTests(SimpleTestCase):
         self.assertEqual(data['star_display'], 'Makam')
         self.assertEqual(data['lagnam_display'], 'Edavam')
         self.assertEqual(data['rasi_display'], 'Chingam')
-        self.assertEqual(data['dasa_display'], '01y 04m 04d')
+        self.assertEqual(data['dasa_display'], '01y 04m 05d')
         self.assertEqual(data['dasa_lord'], 'Ketu')
-        self.assertEqual(data['charts']['dasa']['balance_text'], '01y 04m 04d')
+        self.assertEqual(data['charts']['dasa']['balance_text'], '01y 04m 05d')
         self.assertEqual(data['charts']['rasi']['houses']['1'][0]['abbr_en'], 'Gu')
         self.assertEqual(data['charts']['rasi']['houses']['1'][0]['abbr_ml'], 'ഗു')
