@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -70,7 +71,13 @@ class HoroscopePanelRecordsView(APIView):
         search = (request.query_params.get("search") or "").strip()
         branch_id = request.query_params.get("branch_id")
         data = horoscope_panel.list_horoscope_records(
-            qs, search=search, branch_id=branch_id, page=page, page_size=page_size
+            qs,
+            search=search,
+            branch_id=branch_id,
+            page=page,
+            page_size=page_size,
+            request=request,
+            mount=self.mount,
         )
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 
@@ -97,13 +104,56 @@ class HoroscopePanelRecordDetailView(APIView):
                 {"success": False, "error": {"code": 400, "message": "Invalid user id."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        data = horoscope_panel.record_detail(qs, uid)
+        data = horoscope_panel.record_detail(
+            qs, uid, request=request, mount=self.mount
+        )
         if not data:
             return Response(
                 {"success": False, "error": {"code": 404, "message": "Profile not found or out of scope."}},
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+
+
+class HoroscopePanelJathagamPdfDownloadView(APIView):
+    authentication_classes = [AdminJWTAuthentication]
+    mount = "admin"
+
+    def get_permissions(self):
+        if self.mount == "admin":
+            return [IsAuthenticated(), IsAdminUser()]
+        if self.mount == "staff":
+            return [IsAuthenticated(), IsPanelStaff()]
+        return [IsAuthenticated(), IsBranchManagerOnly()]
+
+    def get(self, request, horoscope_id):
+        from astrology.jathagam import generate_pdf
+
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        hp = horoscope_panel.get_horoscope_in_scope(qs, horoscope_id)
+        if not hp:
+            return Response(
+                {"success": False, "error": {"code": 404, "message": "Horoscope not found or out of scope."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not hp.pr_rasi or len(hp.pr_rasi) < 11:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": 400, "message": "Horoscope not calculated yet."},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content, fmt = generate_pdf(hp)
+        name = f"jathagam_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
+        if fmt == 'pdf':
+            resp = HttpResponse(content, content_type='application/pdf')
+            resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+            return resp
+        return HttpResponse(content, content_type='text/html')
 
 
 class HoroscopePanelRecordByMatriView(APIView):
@@ -121,7 +171,9 @@ class HoroscopePanelRecordByMatriView(APIView):
         qs, err = _resolve_qs(request, self.mount)
         if err:
             return err
-        data = horoscope_panel.record_detail_by_matri(qs, matri_id)
+        data = horoscope_panel.record_detail_by_matri(
+            qs, matri_id, request=request, mount=self.mount
+        )
         if not data:
             return Response(
                 {"success": False, "error": {"code": 404, "message": "Profile not found or out of scope."}},
@@ -219,6 +271,16 @@ BranchHoroscopePanelRecordsView = _clone_view_attrs(HoroscopePanelRecordsView, "
 AdminHoroscopePanelRecordDetailView = _clone_view_attrs(HoroscopePanelRecordDetailView, "admin")
 StaffHoroscopePanelRecordDetailView = _clone_view_attrs(HoroscopePanelRecordDetailView, "staff")
 BranchHoroscopePanelRecordDetailView = _clone_view_attrs(HoroscopePanelRecordDetailView, "branch")
+
+AdminHoroscopePanelJathagamPdfDownloadView = _clone_view_attrs(
+    HoroscopePanelJathagamPdfDownloadView, "admin"
+)
+StaffHoroscopePanelJathagamPdfDownloadView = _clone_view_attrs(
+    HoroscopePanelJathagamPdfDownloadView, "staff"
+)
+BranchHoroscopePanelJathagamPdfDownloadView = _clone_view_attrs(
+    HoroscopePanelJathagamPdfDownloadView, "branch"
+)
 
 AdminHoroscopePanelRecordByMatriView = _clone_view_attrs(HoroscopePanelRecordByMatriView, "admin")
 StaffHoroscopePanelRecordByMatriView = _clone_view_attrs(HoroscopePanelRecordByMatriView, "staff")

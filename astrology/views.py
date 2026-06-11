@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.db import transaction as db_transaction
+from django.http import HttpResponse
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -20,6 +21,7 @@ from plans.services import (
     plan_expired_response,
 )
 
+from .jathagam import generate_pdf
 from .models import AstrologyPdfCredit
 from .serializers import (
     AstrologyPdfOrderSerializer,
@@ -547,6 +549,47 @@ class HoroscopeDecoderDebugView(APIView):
                 'pr_dasabalance': hp.pr_dasabalance,
             }
         )
+
+
+class JathagamPDFView(APIView):
+    """GET /api/v1/astrology/jathagam/<horoscope_id>/ — owner or staff only."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, horoscope_id):
+        from .models import HoroscopeProfile
+
+        try:
+            hp = HoroscopeProfile.objects.select_related('user').get(id=horoscope_id)
+        except HoroscopeProfile.DoesNotExist:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user = request.user
+        if not (hp.user_id == user.id or user.is_staff or user.is_superuser):
+            return Response(
+                {'success': False, 'error': {'code': 403, 'message': 'Not allowed.'}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not hp.pr_rasi or len(hp.pr_rasi) < 11:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Horoscope not calculated yet.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content, fmt = generate_pdf(hp)
+        name = f"jathagam_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
+        if fmt == 'pdf':
+            resp = HttpResponse(content, content_type='application/pdf')
+            resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+            return resp
+        return HttpResponse(content, content_type='text/html')
 
 
 class AstrologyPdfJathakamDownloadView(APIView):

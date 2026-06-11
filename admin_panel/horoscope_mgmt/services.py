@@ -12,6 +12,7 @@ from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.my_profiles.views import _my_profiles_base_queryset
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from admin_panel.subscriptions.models import CustomerStaffAssignment
+from astrology.charts import format_dasa_balance, moon_rasi_name, star_name
 from astrology.models import AstrologyPdfCredit, HoroscopeProfile, PoruthamResult
 from astrology.porutham import calculate_porutham
 from master.models import Branch as MasterBranch
@@ -87,33 +88,71 @@ def build_summary_counts(users_qs) -> dict[str, int]:
     }
 
 
-def build_record_row(user: User, hp_by_user_id: dict) -> dict[str, Any]:
+def panel_jathagam_pdf_path(mount: str, horoscope_id: int) -> str:
+    return f'/api/v1/{mount}/horoscope/jathagam/{horoscope_id}/'
+
+
+def get_horoscope_in_scope(users_qs, horoscope_id: int) -> HoroscopeProfile | None:
+    return (
+        HoroscopeProfile.objects.filter(id=horoscope_id, user__in=users_qs)
+        .select_related('user')
+        .first()
+    )
+
+
+def build_record_row(
+    user: User,
+    hp_by_user_id: dict,
+    *,
+    request=None,
+    mount: str | None = None,
+) -> dict[str, Any]:
     hp = hp_by_user_id.get(user.pk)
     profile = getattr(user, 'user_profile', None)
     rel = getattr(user, 'user_religion', None)
 
-    if hp and hp.is_calculated:
-        jathagam = 'calculated'
-    elif hp and hp.pr_rasi:
-        jathagam = 'pending'
-    elif hp and hp.is_exe_ready():
-        jathagam = 'awaiting_exe'
-    else:
-        jathagam = 'awaiting_exe'
+    # Prefer the derived fields, but fall back to values computed straight from
+    # the raw EXE output (pr_star / pr_rasi). The derived star_name/rasi_sign are
+    # only filled once mark_horoscope_done runs, so relying on them alone hides
+    # members whose horoscope the EXE already produced.
+    star_display = ''
+    rasi_display = ''
+    dasa_display = ''
+    if hp:
+        star_display = hp.star_name or star_name(hp.pr_star)
+        rasi_display = hp.rasi_sign or moon_rasi_name(hp.pr_rasi)
+        dasa_display = format_dasa_balance(hp.pr_dasabalance).get('balance_text', '')
+
+    # PDF generation requires the full 11-char pr_rasi chart (same check as
+    # JathagamPDFView). Star-only legacy imports must not show Ready/PDF.
+    has_chart = bool(hp and hp.pr_rasi and len(hp.pr_rasi) >= 11)
+    is_ready = has_chart
+    jathagam = 'calculated' if has_chart else 'awaiting_exe'
+    pdf_url = None
+    if is_ready and hp and request and mount:
+        pdf_url = request.build_absolute_uri(panel_jathagam_pdf_path(mount, hp.pk))
 
     return {
         'profile_id': profile.pk if profile else None,
         'user_id': str(user.pk),
+        'horoscope_id': hp.pk if hp else None,
         'matri_id': user.matri_id or '',
         'name': (user.name or '').strip(),
         'branch': user.branch.name if user.branch_id else '',
         'religion': rel.religion.name if rel and rel.religion_id else '',
         'dob': user.dob.isoformat() if user.dob else None,
-        'rasi': hp.rasi_sign if hp else '',
-        'nakshatram': hp.star_name if hp else '',
+        'rasi': rasi_display,
+        'nakshatram': star_display,
+        'star_display': star_display,
+        'dasa_display': dasa_display,
+        'pr_rasi': hp.pr_rasi if hp else '',
+        'pr_star': hp.pr_star if hp else None,
+        'pr_pada': hp.pr_pada if hp else None,
         'dosham': '',
         'mangal': None,
         'jathagam': jathagam,
+        'is_ready': is_ready,
+        'pdf_url': pdf_url,
         'last_edited_at': profile.updated_at.isoformat() if profile else None,
     }
 
@@ -139,7 +178,16 @@ def paginate(qs, page: int, page_size: int):
     return total, qs[start: start + page_size]
 
 
-def list_horoscope_records(users_qs, *, search, branch_id, page, page_size):
+def list_horoscope_records(
+    users_qs,
+    *,
+    search,
+    branch_id,
+    page,
+    page_size,
+    request=None,
+    mount: str | None = None,
+):
     qs = _list_users_filtered(users_qs, search=search, branch_id=branch_id)
     total, page_qs = paginate(qs, page, page_size)
     user_ids = [u.pk for u in page_qs]
@@ -164,7 +212,9 @@ def list_horoscope_records(users_qs, *, search, branch_id, page, page_size):
         'page_size': page_size,
         'next': next_link,
         'previous': previous_link,
-        'results': [build_record_row(u, hp_map) for u in page_qs],
+        'results': [
+            build_record_row(u, hp_map, request=request, mount=mount) for u in page_qs
+        ],
     }
 
 
@@ -183,7 +233,13 @@ def get_target_user_by_matri(users_qs, matri_id: str) -> User | None:
     return users_qs.filter(matri_id__iexact=mid).first()
 
 
-def record_detail(users_qs, user_id: UUID) -> dict[str, Any] | None:
+def record_detail(
+    users_qs,
+    user_id: UUID,
+    *,
+    request=None,
+    mount: str | None = None,
+) -> dict[str, Any] | None:
     from astrology.serializers import HoroscopeProfileSerializer
 
     user = get_target_user_in_scope(users_qs, user_id)
@@ -191,7 +247,12 @@ def record_detail(users_qs, user_id: UUID) -> dict[str, Any] | None:
         return None
     hp = HoroscopeProfile.objects.filter(user=user).first()
     return {
-        'record': build_record_row(user, {user.pk: hp} if hp else {}),
+        'record': build_record_row(
+            user,
+            {user.pk: hp} if hp else {},
+            request=request,
+            mount=mount,
+        ),
         'horoscope': HoroscopeProfileSerializer(hp).data if hp else None,
     }
 
@@ -225,11 +286,17 @@ def run_mark_horoscope_done(users_qs) -> dict[str, int]:
     return {'processed': processed, 'errors': errors}
 
 
-def record_detail_by_matri(users_qs, matri_id: str) -> dict[str, Any] | None:
+def record_detail_by_matri(
+    users_qs,
+    matri_id: str,
+    *,
+    request=None,
+    mount: str | None = None,
+) -> dict[str, Any] | None:
     user = get_target_user_by_matri(users_qs, matri_id)
     if not user:
         return None
-    return record_detail(users_qs, user.pk)
+    return record_detail(users_qs, user.pk, request=request, mount=mount)
 
 
 def panel_porutham(

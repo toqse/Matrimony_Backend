@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ml">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+@page{size:A4;margin:0}
+html,body{width:210mm}
+body{font-family:'Noto Sans Malayalam','Manjari',Arial,sans-serif;font-size:11px;color:#1a1a1a}
+.page{width:210mm;padding:12mm;overflow:hidden}
+.header{text-align:center;border-bottom:2px solid #8b1a4a;padding-bottom:8px;margin-bottom:12px}
+.header h1{font-size:20px;color:#8b1a4a;font-weight:bold}
+.header h2{font-size:13px;color:#555;margin-top:3px}
+.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:#fdf0f5;border-radius:5px;padding:8px;margin-bottom:12px}
+.info-item label{font-size:9px;color:#888;display:block}
+.info-item span{font-size:11px;font-weight:600}
+.star-box{background:#fdf0f5;border:1px solid #e0b0c8;border-radius:5px;padding:8px 12px;margin-bottom:12px}
+.star-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.star-grid label{font-size:9px;color:#888;display:block}
+.star-grid span{font-size:13px;font-weight:700;color:#8b1a4a}
+.section-title{font-size:12px;font-weight:bold;color:#8b1a4a;border-left:3px solid #8b1a4a;padding-left:7px;margin:12px 0 6px}
+.charts-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.chart-wrap h4{text-align:center;font-size:10px;color:#8b1a4a;margin-bottom:3px;font-weight:bold}
+.chart-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.chart-table td{width:25%;height:22mm;border:1px solid #c0a0b0;vertical-align:top;padding:2px 3px;font-size:12px;font-weight:500;color:#8b1a4a;position:relative;overflow-wrap:break-word;word-break:break-word}
+.chart-table td.lagna{background:#fdf0f5;border:1.5px solid #8b1a4a}
+.cn{position:absolute;top:1px;left:2px;font-size:7px;color:#bbb;font-weight:normal}
+.lt{position:absolute;top:1px;right:2px;font-size:7px;color:#8b1a4a;background:#fce4ef;padding:0 2px;border-radius:2px}
+.pt{margin-top:10px;line-height:1.5}
+.planet-table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:12px}
+.planet-table th{background:#8b1a4a;color:#fff;padding:4px 7px;text-align:left}
+.planet-table td{border-bottom:1px solid #eee;padding:3px 7px}
+.planet-table tr:nth-child(even) td{background:#fdf5f8}
+.footer{text-align:center;font-size:8px;color:#bbb;border-top:1px solid #eee;margin-top:12px;padding-top:6px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="header">
+  <h1>ഐശ്വര്യ മാട്രിമോണിയൽസ് — Aiswarya Matrimonials</h1>
+  <h2>ജാതകം &bull; Jathagam</h2>
+</div>
+
+<div class="info-grid">
+  <div class="info-item"><label>Name / പേര്</label><span>{{ hp.pr_name }}</span></div>
+  <div class="info-item"><label>Date of Birth</label><span>{{ dob }}</span></div>
+  <div class="info-item"><label>Time of Birth</label><span>{{ tob }}</span></div>
+  <div class="info-item"><label>ലഗ്നം / Lagnam</label><span>{{ lagnam_ml }} ({{ lagnam_en }})</span></div>
+  <div class="info-item"><label>രാശി / Rasi</label><span>{{ rasi_ml }} ({{ rasi_en }})</span></div>
+  <div class="info-item"><label>Lat / Lon</label><span>{{ hp.pr_lat|floatformat:4 }}, {{ hp.pr_lon|floatformat:4 }}</span></div>
+</div>
+
+<div class="star-box">
+  <div class="star-grid">
+    <div><label>നക്ഷത്രം / Star</label><span>{{ star_ml }}<br><small>{{ star_en }} ({{ star_num }})</small></span></div>
+    <div><label>പാദം / Pada</label><span>{{ pada }}</span></div>
+    <div><label>ദശ ബാലൻസ് / Dasa</label><span>{{ dasa }}</span></div>
+    <div><label>ദശനാഥൻ / Lord</label><span>{{ dasa_lord }}</span></div>
+  </div>
+</div>
+
+<div class="section-title">ഗ്രഹനില — Graha Positions</div>
+<div class="charts-row">
+
+  <div class="chart-wrap">
+    <h4>രാശി — Rasi</h4>
+    <table class="chart-table">
+      {% for row in rasi_rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell.type == 'house' %}
+            <td class="{% if cell.is_lagna %}lagna{% endif %}">
+              <span class="cn">{{ cell.num }}</span>
+              {% if cell.is_lagna %}<span class="lt">ല</span>{% endif %}
+              <div class="pt">{{ cell.planets|join:" " }}</div>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="chart-wrap">
+    <h4>അംശകം — Navamsa</h4>
+    <table class="chart-table">
+      {% for row in amsa_rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell.type == 'house' %}
+            <td class="{% if cell.is_lagna %}lagna{% endif %}">
+              <span class="cn">{{ cell.num }}</span>
+              {% if cell.is_lagna %}<span class="lt">ല</span>{% endif %}
+              <div class="pt">{{ cell.planets|join:" " }}</div>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="chart-wrap">
+    <h4>ഭാവം — Bhava</h4>
+    <table class="chart-table">
+      {% for row in bhav_rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell.type == 'house' %}
+            <td class="{% if cell.is_lagna %}lagna{% endif %}">
+              <span class="cn">{{ cell.num }}</span>
+              {% if cell.is_lagna %}<span class="lt">ല</span>{% endif %}
+              <div class="pt">{{ cell.planets|join:" " }}</div>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="section-title">ഗ്രഹ സ്ഥാനം — Planet Table</div>
+<table class="planet-table">
+  <thead>
+    <tr><th>ഗ്രഹം</th><th>Planet</th><th>രാശി</th><th>Rasi</th></tr>
+  </thead>
+  <tbody>
+    {% for p in planet_rows %}
+    <tr>
+      <td>{{ p.ml }}</td><td>{{ p.en }}</td>
+      <td>{{ p.rasi_ml }}</td><td>{{ p.rasi_en }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="footer">Aiswarya Matrimonials &bull; {{ hp.pr_dob }} &bull; Jathagam</div>
+</div>
+</body>
+</html>

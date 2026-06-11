@@ -7,6 +7,7 @@ from .views import (
     AstrologyPdfVerifyView,
     HoroscopeProfileDetailView,
     HoroscopeProfileMeView,
+    JathagamPDFView,
     PoruthamCheckView,
     UpdateBirthCoordinatesView,
 )
@@ -53,5 +54,10 @@ urlpatterns = [
         'pdf/thalakuri/',
         AstrologyPdfThalakuriDownloadView.as_view(),
         name='astrology_pdf_thalakuri',
+    ),
+    path(
+        'jathagam/<int:horoscope_id>/',
+        JathagamPDFView.as_view(),
+        name='jathagam_pdf',
     ),
 ]
