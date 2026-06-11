@@ -1,5 +1,7 @@
 from django.urls import path
 
+from astrology.views import ThalakkuriPDFView
+
 from .views import (
     AdminHoroscopePanelJathagamPdfDownloadView,
     AdminHoroscopePanelJathakamPdfsView,
@@ -19,6 +21,11 @@ urlpatterns = [
         "jathagam/<int:horoscope_id>/",
         AdminHoroscopePanelJathagamPdfDownloadView.as_view(),
         name="admin_horoscope_jathagam_pdf",
+    ),
+    path(
+        "thalakkuri/<int:horoscope_id>/",
+        ThalakkuriPDFView.as_view(),
+        name="admin_horoscope_thalakkuri_pdf",
     ),
     path("records/<uuid:user_id>/", AdminHoroscopePanelRecordDetailView.as_view(), name="admin_horoscope_record_detail"),
     path("porutham/", AdminHoroscopePanelPoruthamView.as_view(), name="admin_horoscope_porutham"),

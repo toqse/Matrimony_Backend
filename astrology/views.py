@@ -243,18 +243,35 @@ class PoruthamCheckView(APIView):
 
         consume_horoscope_match(request.user)
 
+        from django.core.exceptions import ObjectDoesNotExist
+
+        from core.media import absolute_media_url
+
+        def _profile_photo(user):
+            try:
+                photos = user.user_photos
+            except ObjectDoesNotExist:
+                return None
+            return (
+                absolute_media_url(request, photos.profile_photo)
+                or photos.profile_photo_url
+                or None
+            )
+
         # Both partners' grahanila (planetary charts), placed below porutham.
         result['grahanila'] = {
             'bride': {
                 'matri_id': bride_user.matri_id,
                 'name': bride_user.name,
                 'gender': bride_user.gender,
+                'profile_photo': _profile_photo(bride_user),
                 'horoscope': HoroscopeProfilePublicSerializer(bride_hp).data,
             },
             'groom': {
                 'matri_id': groom_user.matri_id,
                 'name': groom_user.name,
                 'gender': groom_user.gender,
+                'profile_photo': _profile_photo(groom_user),
                 'horoscope': HoroscopeProfilePublicSerializer(groom_hp).data,
             },
         }
@@ -648,3 +665,33 @@ class AstrologyPdfThalakuriDownloadView(APIView):
             },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
+
+
+class ThalakkuriPDFView(APIView):
+    """GET /api/v1/admin/horoscope/thalakkuri/<horoscope_id>/"""
+
+    permission_classes = []
+    authentication_classes = []
+
+    def get(self, request, horoscope_id):
+        from .models import HoroscopeProfile
+        from .thalakkuri_calc import generate_thalakkuri_pdf
+
+        try:
+            hp = HoroscopeProfile.objects.get(id=horoscope_id)
+        except HoroscopeProfile.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # NEVER check is_calculated — readiness is pr_rasi length == 11.
+        if not hp.pr_rasi or len(hp.pr_rasi) < 11:
+            return Response(
+                {'error': 'Horoscope not calculated yet (EXE needed)'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content, fmt = generate_thalakkuri_pdf(hp)
+        name = f"thalakkuri_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
+        ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
+        resp = HttpResponse(content, content_type=ct)
+        resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+        return resp

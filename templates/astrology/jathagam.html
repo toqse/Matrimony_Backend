@@ -3,35 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <style>
+@page{size:A4;margin:10mm}
+html,body{width:210mm;height:297mm}
 *{margin:0;padding:0;box-sizing:border-box}
-@page{size:A4;margin:0}
-html,body{width:210mm}
-body{font-family:'Noto Sans Malayalam','Manjari',Arial,sans-serif;font-size:11px;color:#1a1a1a}
-.page{width:210mm;padding:12mm;overflow:hidden}
-.header{text-align:center;border-bottom:2px solid #8b1a4a;padding-bottom:8px;margin-bottom:12px}
-.header h1{font-size:20px;color:#8b1a4a;font-weight:bold}
-.header h2{font-size:13px;color:#555;margin-top:3px}
-.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:#fdf0f5;border-radius:5px;padding:8px;margin-bottom:12px}
-.info-item label{font-size:9px;color:#888;display:block}
-.info-item span{font-size:11px;font-weight:600}
-.star-box{background:#fdf0f5;border:1px solid #e0b0c8;border-radius:5px;padding:8px 12px;margin-bottom:12px}
-.star-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.star-grid label{font-size:9px;color:#888;display:block}
-.star-grid span{font-size:13px;font-weight:700;color:#8b1a4a}
-.section-title{font-size:12px;font-weight:bold;color:#8b1a4a;border-left:3px solid #8b1a4a;padding-left:7px;margin:12px 0 6px}
-.charts-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
-.chart-wrap h4{text-align:center;font-size:10px;color:#8b1a4a;margin-bottom:3px;font-weight:bold}
+body{font-family:'Noto Sans Malayalam','Manjari',Arial,sans-serif;font-size:9px;color:#1a1a1a}
+.page{width:190mm;max-width:190mm;min-height:277mm;margin:0 auto;padding:0;overflow:visible}
+.header{text-align:center;border-bottom:2px solid #8b1a4a;padding-bottom:4px;margin-bottom:5px}
+.header h1{font-size:15px;color:#8b1a4a;font-weight:bold;line-height:1.15}
+.header h2{font-size:10px;color:#555;margin-top:1px;line-height:1.15}
+.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;background:#fdf0f5;border-radius:4px;padding:5px;margin-bottom:5px}
+.info-item label{font-size:7px;color:#888;display:block;line-height:1.1}
+.info-item span{font-size:9px;font-weight:600;line-height:1.15}
+.star-box{background:#fdf0f5;border:1px solid #e0b0c8;border-radius:4px;padding:5px 8px;margin-bottom:5px}
+.star-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.star-grid label{font-size:7px;color:#888;display:block;line-height:1.1}
+.star-grid span{font-size:10px;font-weight:700;color:#8b1a4a;line-height:1.15}
+.section-title{font-size:10px;font-weight:bold;color:#8b1a4a;border-left:3px solid #8b1a4a;padding-left:5px;margin:5px 0 3px;line-height:1.15}
+.charts-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:5px}
+.chart-wrap h4{text-align:center;font-size:8px;color:#8b1a4a;margin-bottom:2px;font-weight:bold;line-height:1.1}
 .chart-table{width:100%;border-collapse:collapse;table-layout:fixed}
-.chart-table td{width:25%;height:22mm;border:1px solid #c0a0b0;vertical-align:top;padding:2px 3px;font-size:12px;font-weight:500;color:#8b1a4a;position:relative;overflow-wrap:break-word;word-break:break-word}
+.chart-table td{width:25%;height:16mm;border:1px solid #c0a0b0;vertical-align:top;padding:1px 2px;font-size:9px;font-weight:500;color:#8b1a4a;position:relative;overflow-wrap:break-word;word-break:break-word}
 .chart-table td.lagna{background:#fdf0f5;border:1.5px solid #8b1a4a}
-.cn{position:absolute;top:1px;left:2px;font-size:7px;color:#bbb;font-weight:normal}
-.lt{position:absolute;top:1px;right:2px;font-size:7px;color:#8b1a4a;background:#fce4ef;padding:0 2px;border-radius:2px}
-.pt{margin-top:10px;line-height:1.5}
-.planet-table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:12px}
-.planet-table th{background:#8b1a4a;color:#fff;padding:4px 7px;text-align:left}
-.planet-table td{border-bottom:1px solid #eee;padding:3px 7px}
+.cn{position:absolute;top:1px;left:2px;font-size:5px;color:#bbb;font-weight:normal}
+.lt{position:absolute;top:1px;right:2px;font-size:5px;color:#8b1a4a;background:#fce4ef;padding:0 2px;border-radius:2px}
+.pt{margin-top:8px;line-height:1.35}
+.planet-table{width:100%;border-collapse:collapse;font-size:8px;margin-bottom:4px;line-height:1.15;page-break-inside:avoid}
+.planet-table th{background:#8b1a4a;color:#fff;padding:2px 4px;text-align:left}
+.planet-table td{border-bottom:1px solid #eee;padding:1.5px 4px}
 .planet-table tr:nth-child(even) td{background:#fdf5f8}
-.footer{text-align:center;font-size:8px;color:#bbb;border-top:1px solid #eee;margin-top:12px;padding-top:6px}
+.footer{text-align:center;font-size:7px;color:#888;border-top:1px solid #eee;margin-top:4px;padding-top:3px;line-height:1.1}
 </style>
 </head>
 <body>

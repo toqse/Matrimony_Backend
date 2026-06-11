@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ml">
+<head>
+<meta charset="UTF-8">
+<style>
+@page {
+  size: A4;
+  margin: 10mm;
+}
+html,
+body {
+  width: 210mm;
+  height: 297mm;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans Malayalam',Arial,sans-serif;font-size:10px;color:#000}
+.page{width:190mm;max-width:190mm;min-height:277mm;margin:0 auto;padding:0;overflow:visible}
+
+/* Header */
+.header{text-align:center;border-bottom:2px solid #000;padding-bottom:4px;margin-bottom:4px}
+.header h1{font-size:11px;font-weight:bold;line-height:1.2}
+.header h2{font-size:14px;font-weight:bold;margin-top:1px;line-height:1.2}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:1px;font-size:8px;margin-bottom:4px;color:#333;line-height:1.25}
+.meta-right{text-align:right}
+
+/* Descriptive paragraph */
+.para{text-align:justify;font-size:9.2px;line-height:1.65;
+  border:1px solid #000;padding:5px 8px;margin-bottom:5px}
+
+/* Section title */
+.sec-title{font-size:10px;font-weight:bold;line-height:1.15;
+  border-left:3px solid #000;padding-left:5px;margin:5px 0 3px}
+
+/* Three charts */
+.charts-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:4px}
+.chart-wrap h4{text-align:center;font-size:8px;font-weight:bold;margin-bottom:2px;line-height:1.1}
+.chart-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.chart-table td{
+  width:25%;height:15.2mm;border:1px solid #888;
+  vertical-align:top;padding:1px 1px;
+  font-size:9px;font-weight:600;color:#000;position:relative;
+  overflow-wrap:break-word;word-break:break-word;
+}
+.chart-table td.lagna{background:#f0f0f0;border:1.5px solid #000}
+.cn{position:absolute;top:1px;left:2px;font-size:5px;color:#aaa;font-weight:normal}
+.lt{position:absolute;top:1px;right:2px;font-size:5px;color:#000;
+    background:#ddd;padding:0 2px;border-radius:1px}
+.pt{margin-top:8px;line-height:1.35}
+.center-td{background:#fff;border:1px solid #888;
+  vertical-align:middle;text-align:center;font-size:7px;color:#444;line-height:1.35}
+
+/* Ayanamsa row */
+.ayan-row{text-align:right;font-size:7px;color:#555;margin-bottom:2px;line-height:1.1}
+
+/* Planet table */
+.planet-table{width:100%;border-collapse:collapse;font-size:8px;line-height:1.15;page-break-inside:avoid}
+.planet-table th{border:1px solid #000;padding:2px 3px;text-align:center;background:#ddd;font-weight:bold}
+.planet-table td{border:1px solid #ccc;padding:1.5px 3px;text-align:center}
+.planet-table tr:nth-child(even) td{background:#f7f7f7}
+
+.footer{text-align:center;font-size:7px;color:#888;
+  border-top:1px solid #ddd;margin-top:4px;padding-top:3px;line-height:1.1}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- HEADER -->
+<div class="header">
+  <h1>ഹരിശ്രീ ഗണപതയേ നമഃ</h1>
+  <h2>ജ്യോതിഷദീപ്തി തലക്കുറി</h2>
+</div>
+
+<!-- META -->
+<div class="meta">
+  <div>name: <strong>{{ hp.pr_name }}</strong></div>
+  <div class="meta-right">DOB: {{ dob_display }} | TOB: {{ tob_display }}</div>
+  <div>Lat: {{ lat }}°N, Lon: {{ lon }}°E +5.30</div>
+  <div class="meta-right">നക്ഷ: {{ star_ml }}, {{ star_pada }} | ദശ: {{ dasa_display }}</div>
+</div>
+
+<!-- PARAGRAPH -->
+<div class="para">
+{{ ayanam }}, {{ season }}ഋതുവിൽ,
+ക്രിസ്തുവർഷം {{ hp.pr_dob.year }} {{ hp.pr_dob|date:"N" }} {{ hp.pr_dob.day }} ാം തീയതിയും,
+കൊല്ലവർഷം {{ kollam_year }} {{ mal_month }} മാസം,
+{{ kali_dinam }} ാം കലിദിനത്തിൽ {{ weekday_ml }}വാരെ
+{{ star_ml }} നക്ഷത്രത്തിൽ {{ star_pada }} ാം പാദവും,
+{{ tithi }}യും, {{ yoga }}നിത്യയോഗവും, {{ karana }}ക്കരണവും
+കൂടിയ ദിനത്തിൽ (സമയം: {{ tob_display }})
+ചന്ദ്രൻ {{ moon_rasi_ml }}ക്കൂറിൽ നിൽക്കെ
+{{ lagnam_rasi_ml }}ലഗ്നം ദേവഗണത്തിൽ ജനനം.
+ഗർഭശിഷ്ടദശ {{ dasa_lord_ml }}, {{ dasa_display }},
+ആണ്ടെ ദിവസം സൂര്യോദയം {{ sunrise }}നും,
+അസ്തമനം {{ sunset }}നും ആകുന്നു.
+</div>
+
+<!-- THREE CHARTS -->
+<div class="sec-title">ഗ്രഹനില</div>
+<div class="charts-row">
+
+  <!-- RASI CHART -->
+  <div class="chart-wrap">
+    <h4>രാശി — Rasi</h4>
+    <table class="chart-table">
+      {% for row in rasi_rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell.type == 'center' %}
+            {% if forloop.parentloop.counter == 2 and forloop.counter == 2 %}
+              <td colspan="2" rowspan="2" class="center-td">
+                {{ rasi_center.star_ml }}<br>
+                {{ rasi_center.dasa_disp }}<br>
+                {{ rasi_center.dasa_lord }}
+              </td>
+            {% endif %}
+          {% else %}
+            <td class="{% if cell.is_lagna %}lagna{% endif %}">
+              <span class="cn">{{ cell.num }} {{ cell.rasi }}</span>
+              {% if cell.is_lagna %}<span class="lt">ലഗ്നം</span>{% endif %}
+              <div class="pt">{{ cell.planets }}</div>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- AMSA CHART -->
+  <div class="chart-wrap">
+    <h4>അംശകം — Navamsa</h4>
+    <table class="chart-table">
+      {% for row in amsa_rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell.type == 'center' %}
+            {% if forloop.parentloop.counter == 2 and forloop.counter == 2 %}
+              <td colspan="2" rowspan="2" class="center-td"></td>
+            {% endif %}
+          {% else %}
+            <td class="{% if cell.is_lagna %}lagna{% endif %}">
+              <span class="cn">{{ cell.num }} {{ cell.rasi }}</span>
+              {% if cell.is_lagna %}<span class="lt">ലഗ്നം</span>{% endif %}
+              <div class="pt">{{ cell.planets }}</div>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- BHAVA CHART -->
+  <div class="chart-wrap">
+    <h4>ഭാവം — Bhava</h4>
+    <table class="chart-table">
+      {% for row in bhav_rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell.type == 'center' %}
+            {% if forloop.parentloop.counter == 2 and forloop.counter == 2 %}
+              <td colspan="2" rowspan="2" class="center-td"></td>
+            {% endif %}
+          {% else %}
+            <td class="{% if cell.is_lagna %}lagna{% endif %}">
+              <span class="cn">{{ cell.num }} {{ cell.rasi }}</span>
+              {% if cell.is_lagna %}<span class="lt">ലഗ്നം</span>{% endif %}
+              <div class="pt">{{ cell.planets }}</div>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+</div>
+
+<!-- PLANET TABLE -->
+<div class="ayan-row">അയനാംശം (എൻ. സി. ലാഹിരി): {{ ayanamsa }}</div>
+<div class="sec-title">ഗ്രഹസ്ഫുടങ്ങൾ</div>
+<table class="planet-table">
+  <thead>
+    <tr>
+      <th>ഗ്രഹം</th>
+      <th>രാശി</th>
+      <th>സ്ഫുടം</th>
+      <th>നക്ഷത്രം</th>
+      <th>നക്ഷത്രാധിപൻ</th>
+      <th>ഗതി</th>
+      <th>മൗഢ്യം</th>
+      <th>ഭാവം</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in planet_table %}
+    <tr>
+      <td>{{ p.ml }}</td>
+      <td>{{ p.rasi_ml }}</td>
+      <td>{{ p.sphuta }}</td>
+      <td>{{ p.nak_ml }}, {{ p.nak_pada }}</td>
+      <td>{{ p.nak_lord }}</td>
+      <td>{{ p.gati }}</td>
+      <td>...</td>
+      <td>{{ p.bhava }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="footer">
+  Aiswarya Matrimonials &bull; {{ hp.pr_name }} &bull; {{ dob_display }}
+</div>
+
+</div>
+</body>
+</html>
