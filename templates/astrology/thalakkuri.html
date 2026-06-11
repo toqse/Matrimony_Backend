@@ -5,14 +5,18 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Malayalam:wght@400;600;700&display=swap');
 
+@page {
+  size: A4;
+  margin: 14mm 14mm 12mm 14mm;
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: 'Noto Sans Malayalam', 'Manjari', Arial, sans-serif;
-  font-size: 13px;
+  font-size: 12px;
   color: #000;
   background: #fff;
 }
-.page { width: 210mm; padding: 14mm 16mm 10mm 16mm; }
+.page { width: 100%; padding: 0; }
 
 /* Header */
 .header-top {
@@ -25,24 +29,29 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 12px;
   margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #999;
 }
 .header-title {
   font-size: 17px;
   font-weight: bold;
+  white-space: nowrap;
 }
 .header-meta {
   text-align: right;
-  font-size: 11px;
-  line-height: 1.7;
+  font-size: 10px;
+  line-height: 1.6;
   color: #222;
+  white-space: nowrap;
 }
 
 /* Paragraph */
 .para {
   text-align: justify;
-  font-size: 13px;
-  line-height: 2.1;
+  font-size: 12px;
+  line-height: 1.95;
   margin-bottom: 12px;
 }
 
@@ -88,9 +97,9 @@ body {
 .cn {
   position: absolute;
   top: 1px; left: 2px;
-  font-size: 6px;
-  color: #bbb;
-  font-weight: normal;
+  font-size: 8.5px;
+  color: #444;
+  font-weight: 600;
 }
 .lt {
   position: absolute;
@@ -102,7 +111,7 @@ body {
   border-radius: 1px;
 }
 .pt {
-  margin-top: 11px;
+  margin-top: 14px;
   line-height: 1.6;
 }
 .center-td {

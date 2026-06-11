@@ -281,10 +281,11 @@ def calculate_all(hp):
     weekday = int(jd + 1.5) % 7
     gh_start = [26, 22, 18, 14, 10, 6, 2][weekday]
     try:
-        sr_jd = swe.rise_trans(jd - 0.5, swe.SUN, lon, lat,
-                               swe.CALC_RISE, [0, 0, 1013.25, 10])[1][0]
-        ss_jd = swe.rise_trans(jd - 0.5, swe.SUN, lon, lat,
-                               swe.CALC_SET, [0, 0, 1013.25, 10])[1][0]
+        geopos = (lon, lat, 0)
+        sr_jd = swe.rise_trans(jd - 0.5, swe.SUN, swe.CALC_RISE, geopos,
+                               1013.25, 10)[1][0]
+        ss_jd = swe.rise_trans(jd - 0.5, swe.SUN, swe.CALC_SET, geopos,
+                               1013.25, 10)[1][0]
         day_len = ss_jd - sr_jd
         maan_jd = sr_jd + gh_start * (day_len / 30.0)
         mpos, _ = swe.calc_ut(maan_jd, swe.SATURN)
