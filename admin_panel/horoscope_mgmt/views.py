@@ -216,7 +216,7 @@ class HoroscopePanelPoruthamView(APIView):
 
 
 class HoroscopePanelMatchReportView(APIView):
-    """GET /api/v1/admin/horoscope/match-report/?bride_profile_id=&groom_profile_id="""
+    """GET /api/v1/admin/horoscope/match-report/?matri_id=&partner_matri_id="""
 
     authentication_classes = [AdminJWTAuthentication]
     mount = "admin"
@@ -233,38 +233,31 @@ class HoroscopePanelMatchReportView(APIView):
         if err:
             return err
 
-        try:
-            bride_profile_id = int(request.query_params.get("bride_profile_id", ""))
-            groom_profile_id = int(request.query_params.get("groom_profile_id", ""))
-        except (TypeError, ValueError):
+        matri_id = (request.query_params.get("matri_id") or "").strip()
+        partner_matri_id = (request.query_params.get("partner_matri_id") or "").strip()
+        if not matri_id or not partner_matri_id:
             return Response(
                 {
                     "success": False,
                     "error": {
                         "code": 400,
-                        "message": "bride_profile_id and groom_profile_id are required integers.",
+                        "message": "matri_id and partner_matri_id are required.",
                     },
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         content, fmt, msg = horoscope_panel.build_match_report(
-            qs, bride_profile_id, groom_profile_id
+            qs, matri_id, partner_matri_id
         )
         if msg:
-            code = 404 if "out of scope" in msg or "Invalid profile" in msg else 400
+            code = 404 if "not found" in msg or "out of scope" in msg else 400
             return Response(
                 {"success": False, "error": {"code": code, "message": msg}},
                 status=status.HTTP_404_NOT_FOUND if code == 404 else status.HTTP_400_BAD_REQUEST,
             )
 
-        from profiles.models import UserProfile
-
-        b_prof = UserProfile.objects.select_related("user").filter(pk=bride_profile_id).first()
-        g_prof = UserProfile.objects.select_related("user").filter(pk=groom_profile_id).first()
-        b_id = (b_prof.user.matri_id if b_prof and b_prof.user else "") or str(bride_profile_id)
-        g_id = (g_prof.user.matri_id if g_prof and g_prof.user else "") or str(groom_profile_id)
-        name = f"match_report_{b_id}_{g_id}".replace(" ", "_")
+        name = f"match_report_{matri_id}_{partner_matri_id}".replace(" ", "_")
         ct = "application/pdf" if fmt == "pdf" else "text/html"
         resp = HttpResponse(content, content_type=ct)
         resp["Content-Disposition"] = f'attachment; filename="{name}.pdf"'

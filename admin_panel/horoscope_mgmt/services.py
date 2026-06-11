@@ -343,29 +343,26 @@ def panel_porutham(
 
 def build_match_report(
     users_qs,
-    bride_profile_id: int,
-    groom_profile_id: int,
+    matri_id: str,
+    partner_matri_id: str,
 ) -> tuple[bytes | None, str | None, str | None]:
     """
-    Generate match report PDF bytes for bride/groom UserProfile ids.
-    Returns (content, fmt, error_message). error_message is set on failure.
+    Generate match report PDF bytes for bride/groom matri_ids.
+    Resolution is scoped via users_qs. Returns (content, fmt, error_message);
+    error_message is set on failure.
     """
     from astrology.match_report import generate_match_report_pdf
     from profiles.models import UserPhotos
 
-    b_prof = UserProfile.objects.filter(pk=bride_profile_id).select_related('user').first()
-    g_prof = UserProfile.objects.filter(pk=groom_profile_id).select_related('user').first()
+    bride_user = get_target_user_by_matri(users_qs, matri_id)
+    groom_user = get_target_user_by_matri(users_qs, partner_matri_id)
 
-    if not b_prof or not g_prof:
-        return None, None, 'Invalid profile id(s).'
-    if not user_in_scope(users_qs, b_prof.user_id) or not user_in_scope(
-        users_qs, g_prof.user_id
-    ):
-        return None, None, 'One or both profiles are out of scope.'
+    if not bride_user or not groom_user:
+        return None, None, 'Member not found or out of scope.'
 
     try:
-        bride_hp = b_prof.user.horoscope_profile
-        groom_hp = g_prof.user.horoscope_profile
+        bride_hp = bride_user.horoscope_profile
+        groom_hp = groom_user.horoscope_profile
     except HoroscopeProfile.DoesNotExist:
         return None, None, 'Horoscope not found. Run Windows EXE first.'
 
@@ -374,16 +371,16 @@ def build_match_report(
     if not groom_hp.pr_rasi or len(groom_hp.pr_rasi) < 11:
         return None, None, 'Groom horoscope not calculated yet.'
 
-    bride_photos = UserPhotos.objects.filter(user=b_prof.user).first()
-    groom_photos = UserPhotos.objects.filter(user=g_prof.user).first()
+    bride_photos = UserPhotos.objects.filter(user=bride_user).first()
+    groom_photos = UserPhotos.objects.filter(user=groom_user).first()
     bride_photo = bride_photos.profile_photo if bride_photos else None
     groom_photo = groom_photos.profile_photo if groom_photos else None
 
     content, fmt = generate_match_report_pdf(
         bride_hp,
         groom_hp,
-        b_prof.user,
-        g_prof.user,
+        bride_user,
+        groom_user,
         bride_photo=bride_photo,
         groom_photo=groom_photo,
     )
