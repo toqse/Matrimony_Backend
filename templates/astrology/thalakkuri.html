@@ -13,53 +13,69 @@ body {
   height: 297mm;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Noto Sans Malayalam',Arial,sans-serif;font-size:10px;color:#000}
+body{font-family:'Noto Sans Malayalam','Manjari',Arial,sans-serif;font-size:10px;color:#2b1b24;background:#fff}
 .page{width:190mm;max-width:190mm;min-height:277mm;margin:0 auto;padding:0;overflow:visible}
 
 /* Header */
-.header{text-align:center;border-bottom:2px solid #000;padding-bottom:4px;margin-bottom:4px}
-.header h1{font-size:11px;font-weight:bold;line-height:1.2}
-.header h2{font-size:14px;font-weight:bold;margin-top:1px;line-height:1.2}
-.meta{display:grid;grid-template-columns:1fr 1fr;gap:1px;font-size:8px;margin-bottom:4px;color:#333;line-height:1.25}
+.header{text-align:center;border-bottom:2px solid #8b1a4a;padding:5px 0 6px;margin-bottom:5px;background:#fff5f9}
+.header h1{font-size:11px;font-weight:bold;line-height:1.2;color:#6f1239}
+.header h2{font-size:16px;font-weight:bold;margin-top:1px;line-height:1.2;color:#8b1a4a}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;font-size:8px;margin-bottom:5px;color:#3f3037;line-height:1.35;border:1px solid #efc9d8;background:#fff8fb;padding:4px 6px;border-radius:4px}
 .meta-right{text-align:right}
+.label{color:#8b1a4a;font-weight:bold}
 
 /* Descriptive paragraph */
-.para{text-align:justify;font-size:9.2px;line-height:1.65;
-  border:1px solid #000;padding:5px 8px;margin-bottom:5px}
+.para{text-align:justify;font-size:9.2px;line-height:1.7;
+  border:1px solid #e2b4c7;border-left:4px solid #8b1a4a;padding:6px 9px;margin-bottom:6px;background:#fffafc;border-radius:4px}
 
 /* Section title */
-.sec-title{font-size:10px;font-weight:bold;line-height:1.15;
-  border-left:3px solid #000;padding-left:5px;margin:5px 0 3px}
+.sec-title{font-size:10px;font-weight:bold;line-height:1.15;color:#8b1a4a;
+  border-left:4px solid #8b1a4a;padding-left:6px;margin:6px 0 4px;background:#fff5f9}
 
 /* Three charts */
-.charts-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:4px}
-.chart-wrap h4{text-align:center;font-size:8px;font-weight:bold;margin-bottom:2px;line-height:1.1}
+.charts-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:5px;align-items:start}
+.chart-wrap{border:1px solid #efc9d8;background:#fff;border-radius:4px;padding:3px;page-break-inside:avoid}
+.chart-wrap h4{text-align:center;font-size:8.5px;font-weight:bold;margin-bottom:3px;line-height:1.15;color:#8b1a4a;background:#fff5f9;border-radius:3px;padding:2px}
 .chart-table{width:100%;border-collapse:collapse;table-layout:fixed}
 .chart-table td{
-  width:25%;height:15.2mm;border:1px solid #888;
+  width:25%;height:15.2mm;border:1px solid #d1a9ba;
   vertical-align:top;padding:1px 1px;
-  font-size:9px;font-weight:600;color:#000;position:relative;
+  font-size:9px;font-weight:600;color:#321621;position:relative;
   overflow-wrap:break-word;word-break:break-word;
 }
-.chart-table td.lagna{background:#f0f0f0;border:1.5px solid #000}
-.cn{position:absolute;top:1px;left:2px;font-size:5px;color:#aaa;font-weight:normal}
-.lt{position:absolute;top:1px;right:2px;font-size:5px;color:#000;
-    background:#ddd;padding:0 2px;border-radius:1px}
+.chart-table td.lagna{background:#fff0f6;border:1.5px solid #8b1a4a}
+.cn{position:absolute;top:1px;left:2px;font-size:5px;color:#a77c8e;font-weight:normal}
+.lt{position:absolute;top:1px;right:2px;font-size:5px;color:#8b1a4a;
+    background:#fde6f0;padding:0 2px;border-radius:1px;border:1px solid #efc9d8}
 .pt{margin-top:8px;line-height:1.35}
-.center-td{background:#fff;border:1px solid #888;
-  vertical-align:middle;text-align:center;font-size:7px;color:#444;line-height:1.35}
+.center-td{background:#fff8fb;border:1px solid #d1a9ba;
+  vertical-align:middle;text-align:center;font-size:7px;color:#8b1a4a;line-height:1.4;font-weight:bold}
 
 /* Ayanamsa row */
-.ayan-row{text-align:right;font-size:7px;color:#555;margin-bottom:2px;line-height:1.1}
+.ayan-row{text-align:right;font-size:7px;color:#6b5861;margin-bottom:2px;line-height:1.1}
 
 /* Planet table */
-.planet-table{width:100%;border-collapse:collapse;font-size:8px;line-height:1.15;page-break-inside:avoid}
-.planet-table th{border:1px solid #000;padding:2px 3px;text-align:center;background:#ddd;font-weight:bold}
-.planet-table td{border:1px solid #ccc;padding:1.5px 3px;text-align:center}
-.planet-table tr:nth-child(even) td{background:#f7f7f7}
+.planet-table{width:100%;border-collapse:collapse;font-size:8px;line-height:1.25;
+  table-layout:fixed;page-break-inside:avoid}
+.planet-table th{border:1px solid #8b1a4a;padding:3px 3px;text-align:center;
+  background:#8b1a4a;color:#fff;font-weight:bold;vertical-align:middle}
+.planet-table td{border:1px solid #ead0db;padding:2.5px 3px;text-align:center;
+  vertical-align:middle;overflow-wrap:break-word;word-break:break-word}
+.planet-table tr:nth-child(even) td{background:#fff6fa}
+.planet-table tr:nth-child(odd) td{background:#fff}
+.planet-table td.col-grh{font-weight:bold;color:#8b1a4a}
+.planet-table td.col-sph{font-variant-numeric:tabular-nums;white-space:nowrap}
+.planet-table th.col-grh,.planet-table td.col-grh{width:8%}
+.planet-table th.col-rasi,.planet-table td.col-rasi{width:14%}
+.planet-table th.col-sph,.planet-table td.col-sph{width:14%}
+.planet-table th.col-nak,.planet-table td.col-nak{width:20%}
+.planet-table th.col-lord,.planet-table td.col-lord{width:18%}
+.planet-table th.col-gati,.planet-table td.col-gati{width:8%}
+.planet-table th.col-mou,.planet-table td.col-mou{width:9%}
+.planet-table th.col-bhava,.planet-table td.col-bhava{width:9%}
 
-.footer{text-align:center;font-size:7px;color:#888;
-  border-top:1px solid #ddd;margin-top:4px;padding-top:3px;line-height:1.1}
+.footer{text-align:center;font-size:7px;color:#9a7b88;
+  border-top:1px solid #efc9d8;margin-top:5px;padding-top:3px;line-height:1.1}
 </style>
 </head>
 <body>
@@ -73,10 +89,10 @@ body{font-family:'Noto Sans Malayalam',Arial,sans-serif;font-size:10px;color:#00
 
 <!-- META -->
 <div class="meta">
-  <div>name: <strong>{{ hp.pr_name }}</strong></div>
-  <div class="meta-right">DOB: {{ dob_display }} | TOB: {{ tob_display }}</div>
-  <div>Lat: {{ lat }}°N, Lon: {{ lon }}°E +5.30</div>
-  <div class="meta-right">നക്ഷ: {{ star_ml }}, {{ star_pada }} | ദശ: {{ dasa_display }}</div>
+  <div><span class="label">Name:</span> <strong>{{ hp.pr_name }}</strong></div>
+  <div class="meta-right"><span class="label">DOB:</span> {{ dob_display }} | <span class="label">TOB:</span> {{ tob_display }}</div>
+  <div><span class="label">Lat/Lon:</span> {{ lat }}°N, {{ lon }}°E | +5.30</div>
+  <div class="meta-right"><span class="label">നക്ഷ:</span> {{ star_ml }}, {{ star_pada }} | <span class="label">ദശ:</span> {{ dasa_display }}</div>
 </div>
 
 <!-- PARAGRAPH -->
@@ -183,27 +199,27 @@ body{font-family:'Noto Sans Malayalam',Arial,sans-serif;font-size:10px;color:#00
 <table class="planet-table">
   <thead>
     <tr>
-      <th>ഗ്രഹം</th>
-      <th>രാശി</th>
-      <th>സ്ഫുടം</th>
-      <th>നക്ഷത്രം</th>
-      <th>നക്ഷത്രാധിപൻ</th>
-      <th>ഗതി</th>
-      <th>മൗഢ്യം</th>
-      <th>ഭാവം</th>
+      <th class="col-grh">ഗ്രഹം</th>
+      <th class="col-rasi">രാശി</th>
+      <th class="col-sph">സ്ഫുടം</th>
+      <th class="col-nak">നക്ഷത്രം</th>
+      <th class="col-lord">നക്ഷത്രാധിപൻ</th>
+      <th class="col-gati">ഗതി</th>
+      <th class="col-mou">മൗഢ്യം</th>
+      <th class="col-bhava">ഭാവം</th>
     </tr>
   </thead>
   <tbody>
     {% for p in planet_table %}
     <tr>
-      <td>{{ p.ml }}</td>
-      <td>{{ p.rasi_ml }}</td>
-      <td>{{ p.sphuta }}</td>
-      <td>{{ p.nak_ml }}, {{ p.nak_pada }}</td>
-      <td>{{ p.nak_lord }}</td>
-      <td>{{ p.gati }}</td>
-      <td>...</td>
-      <td>{{ p.bhava }}</td>
+      <td class="col-grh">{{ p.ml }}</td>
+      <td class="col-rasi">{{ p.rasi_ml }}</td>
+      <td class="col-sph">{{ p.sphuta }}</td>
+      <td class="col-nak">{{ p.nak_ml }}, {{ p.nak_pada }}</td>
+      <td class="col-lord">{{ p.nak_lord }}</td>
+      <td class="col-gati">{{ p.gati }}</td>
+      <td class="col-mou">...</td>
+      <td class="col-bhava">{{ p.bhava }}</td>
     </tr>
     {% endfor %}
   </tbody>

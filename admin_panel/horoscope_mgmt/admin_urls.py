@@ -5,6 +5,7 @@ from astrology.views import ThalakkuriPDFView
 from .views import (
     AdminHoroscopePanelJathagamPdfDownloadView,
     AdminHoroscopePanelJathakamPdfsView,
+    AdminHoroscopePanelMatchReportView,
     AdminHoroscopePanelPoruthamView,
     AdminHoroscopePanelRecordByMatriView,
     AdminHoroscopePanelRecordDetailView,
@@ -29,6 +30,7 @@ urlpatterns = [
     ),
     path("records/<uuid:user_id>/", AdminHoroscopePanelRecordDetailView.as_view(), name="admin_horoscope_record_detail"),
     path("porutham/", AdminHoroscopePanelPoruthamView.as_view(), name="admin_horoscope_porutham"),
+    path("match-report/", AdminHoroscopePanelMatchReportView.as_view(), name="admin_horoscope_match_report"),
     path("sync/", AdminHoroscopePanelSyncView.as_view(), name="admin_horoscope_sync"),
     path("jathakam-pdfs/", AdminHoroscopePanelJathakamPdfsView.as_view(), name="admin_horoscope_jathakam_pdfs"),
 ]

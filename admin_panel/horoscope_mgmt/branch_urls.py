@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     BranchHoroscopePanelJathagamPdfDownloadView,
     BranchHoroscopePanelJathakamPdfsView,
+    BranchHoroscopePanelMatchReportView,
     BranchHoroscopePanelPoruthamView,
     BranchHoroscopePanelRecordByMatriView,
     BranchHoroscopePanelRecordDetailView,
@@ -25,5 +26,6 @@ urlpatterns = [
     ),
     path("records/<uuid:user_id>/", BranchHoroscopePanelRecordDetailView.as_view(), name="branch_horoscope_record_detail"),
     path("porutham/", BranchHoroscopePanelPoruthamView.as_view(), name="branch_horoscope_porutham"),
+    path("match-report/", BranchHoroscopePanelMatchReportView.as_view(), name="branch_horoscope_match_report"),
     path("jathakam-pdfs/", BranchHoroscopePanelJathakamPdfsView.as_view(), name="branch_horoscope_jathakam_pdfs"),
 ]

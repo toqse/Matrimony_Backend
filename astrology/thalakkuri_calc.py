@@ -294,10 +294,15 @@ def calculate_all(hp):
         'gati': '...', 'bhava': 0,
     }
 
-    # Bhava numbers (Placidus cusps)
-    sid_cusps = [(c - ayan) % 360 for c in cusps[1:13]]
+    # Bhava numbers (Placidus cusps). pyswisseph can return either a
+    # 12-item zero-indexed cusp sequence or a legacy 13-item sequence whose
+    # first item is unused; normalize before reading the next cusp.
+    cusp_values = list(cusps[1:13]) if len(cusps) >= 13 else list(cusps[:12])
+    sid_cusps = [(c - ayan) % 360 for c in cusp_values]
 
     def bhava_of(sid_lon):
+        if len(sid_cusps) < 12:
+            return '—'
         for i in range(12):
             j = (i + 1) % 12
             a = sid_cusps[i]
@@ -308,7 +313,7 @@ def calculate_all(hp):
             else:
                 if sid_lon >= a or sid_lon < b:
                     return i + 1
-        return 1
+        return '—'
 
     for p in planet_rows:
         try:
