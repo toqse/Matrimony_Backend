@@ -52,6 +52,9 @@ class StaffSerializer(serializers.ModelSerializer):
         write_only=True,
     )
     account_role = serializers.CharField(source="admin_user.role", read_only=True)
+    # Accept +91-prefixed input (normalized to 10 digits in validate_mobile). The model field is
+    # max_length=10, so without this override DRF rejects "+91XXXXXXXXXX" before normalization.
+    mobile = serializers.CharField(required=True, max_length=20)
 
     class Meta:
         model = StaffProfile

@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     CountryList, StateList, DistrictList, CityList,
-    ReligionList, MotherTongueList, HeightList, MaritalStatusList, IncomeRangeList,
+    ReligionList, MotherTongueList, HeightList, MaritalStatusList, ComplexionList, IncomeRangeList,
     EducationList, EducationSubjectList, OccupationList, EmploymentStatusList,
     ReligionViewSet, CasteViewSet, MotherTongueViewSet,
 )
@@ -20,6 +20,7 @@ urlpatterns = [
     path('cities/', CityList.as_view()),
     path('heights/', HeightList.as_view()),
     path('marital-status/', MaritalStatusList.as_view()),
+    path('complexions/', ComplexionList.as_view()),
     path('income-ranges/', IncomeRangeList.as_view()),
     path('educations/', EducationList.as_view()),
     path('education-subjects/', EducationSubjectList.as_view()),

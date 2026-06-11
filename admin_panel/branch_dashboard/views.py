@@ -178,6 +178,7 @@ class BranchStaffPerformanceView(APIView):
 
         staff_list = list(
             StaffProfile.objects.filter(branch=ab, is_deleted=False)
+            .exclude(admin_user_id=request.user.id)
             .order_by("name")
             .values("id", "name")
         )

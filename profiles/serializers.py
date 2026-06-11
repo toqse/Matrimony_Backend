@@ -505,9 +505,14 @@ class BasicDetailsReadSerializer(serializers.Serializer):
     name = serializers.CharField()
     gender = serializers.SerializerMethodField()
     dob = serializers.DateField(format='%d-%m-%Y', allow_null=True)
+    age = serializers.SerializerMethodField()
     email = serializers.EmailField(allow_blank=True)
     phone = serializers.SerializerMethodField()
     profile_for = serializers.CharField(allow_blank=True, allow_null=True)
+
+    def get_age(self, obj):
+        from matches.utils import age_from_dob
+        return age_from_dob(getattr(obj, 'dob', None))
 
     def get_phone(self, obj):
         from core.phone import to_e164_display

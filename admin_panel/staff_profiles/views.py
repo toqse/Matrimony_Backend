@@ -37,6 +37,7 @@ from admin_panel.staff_profiles.registration import (
     validate_core_create_fields,
 )
 from admin_panel.subscriptions.models import CustomerStaffAssignment
+from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
 from profiles.utils import get_profile_completion_data
 from profiles.models import UserPhotos, UserProfile
@@ -353,9 +354,6 @@ class StaffMyProfilesDetailView(APIView):
         profile, _ = UserProfile.objects.get_or_create(user=user)
         try:
             with transaction.atomic():
-                if "has_horoscope" in data:
-                    profile.has_horoscope = bool(data["has_horoscope"])
-                    profile.save(update_fields=["has_horoscope", "updated_at"])
                 for key, handler in SECTION_HANDLERS.items():
                     if key not in data:
                         continue
@@ -375,6 +373,7 @@ class StaffMyProfilesDetailView(APIView):
                             handler(user, payload)
                     else:
                         handler(user, payload)
+                apply_profile_edit_horoscope(user, profile, data)
         except DRFValidationError as e:
             return Response(
                 {

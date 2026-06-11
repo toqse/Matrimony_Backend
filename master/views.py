@@ -13,13 +13,13 @@ from core.permissions import ReadOnlyOrAdmin
 from .filters import CasteFilter
 from .models import (
     Country, State, District, City,
-    Religion, Caste, MotherTongue, Height, MaritalStatus, IncomeRange,
+    Religion, Caste, MotherTongue, Height, MaritalStatus, Complexion, IncomeRange,
     Education, EducationSubject, Occupation, EmploymentStatus,
 )
 from .serializers import (
     CountrySerializer, StateSerializer, DistrictSerializer, CitySerializer,
     ReligionSerializer, CasteSerializer, MotherTongueSerializer, HeightSerializer,
-    MaritalStatusSerializer, IncomeRangeSerializer,
+    MaritalStatusSerializer, ComplexionSerializer, IncomeRangeSerializer,
     EducationSerializer, EducationSubjectSerializer, OccupationSerializer,
     EmploymentStatusSerializer,
 )
@@ -142,6 +142,16 @@ class MaritalStatusList(generics.ListAPIView):
 
     def get_queryset(self):
         return MaritalStatus.objects.filter(is_active=True).order_by('name')
+
+
+class ComplexionList(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    serializer_class = ComplexionSerializer
+    pagination_class = MasterListPagination
+
+    def get_queryset(self):
+        return Complexion.objects.filter(is_active=True).order_by('name')
 
 
 class IncomeRangeList(generics.ListAPIView):

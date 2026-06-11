@@ -376,3 +376,90 @@ def apply_profile_creation_horoscope(
         birth_longitude=resolved_lon,
         birth_timezone=birth_timezone,
     )
+
+
+# Top-level keys (canonical + aliases) that signal horoscope intent in an
+# edit payload. Mirrors HOROSCOPE_FIELD_ALIASES plus the nested section key.
+_HOROSCOPE_EDIT_KEYS: frozenset[str] = frozenset(
+    {'has_horoscope', 'horoscope_details'}
+    | set(HOROSCOPE_FIELD_ALIASES.keys())
+    | {alias for aliases in HOROSCOPE_FIELD_ALIASES.values() for alias in aliases}
+)
+
+_HOROSCOPE_BIRTH_FIELDS = (
+    'birth_time',
+    'birth_place',
+    'birth_latitude',
+    'birth_longitude',
+    'birth_timezone',
+)
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'on')
+    return bool(value)
+
+
+def apply_profile_edit_horoscope(user, profile, data: dict[str, Any]):
+    """
+    Apply horoscope birth-input edits coming from an admin/staff/branch PATCH.
+
+    Reuses the same safe path as profile creation: validates with
+    ``HoroscopeInputSerializer`` and persists via ``apply_profile_creation_horoscope``
+    (which resets ``HoroscopeProfile.is_calculated`` to False and NEVER touches the
+    EXE-calculated output fields). The member's current ``dob`` is used for
+    validation.
+
+    Accepts a nested ``horoscope_details`` object and/or top-level alias keys
+    (e.g. ``time_of_birth``, ``place_of_birth``, ``latitude``). Returns the
+    ``HoroscopeProfile`` instance, or ``None`` when no horoscope data is applied.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    section = data.get('horoscope_details')
+    if not (any(key in data for key in _HOROSCOPE_EDIT_KEYS) or isinstance(section, dict)):
+        return None
+
+    payload: dict[str, Any] = {}
+    if isinstance(section, dict):
+        payload.update(section)
+    for key in _HOROSCOPE_EDIT_KEYS:
+        if key == 'horoscope_details':
+            continue
+        if key in data and data[key] not in (None, ''):
+            payload[key] = data[key]
+
+    normalized = normalize_horoscope_payload(payload)
+    has_birth_fields = any(
+        normalized.get(field) not in (None, '') for field in _HOROSCOPE_BIRTH_FIELDS
+    )
+
+    has_flag = 'has_horoscope' in normalized
+    if not has_birth_fields and not has_flag:
+        return None
+
+    # Plain flag toggle (no birth inputs supplied): preserve legacy behavior of
+    # only flipping the availability badge without re-validating birth details.
+    if not has_birth_fields:
+        profile.has_horoscope = _coerce_bool(normalized.get('has_horoscope'))
+        profile.save(update_fields=['has_horoscope', 'updated_at'])
+        return None
+
+    # Birth details supplied: default has_horoscope to True when omitted.
+    if 'has_horoscope' not in normalized:
+        normalized['has_horoscope'] = True
+
+    dob = getattr(user, 'dob', None)
+    horoscope_input = validate_horoscope_input(
+        normalized,
+        date_of_birth=dob.isoformat() if dob else None,
+    )
+    return apply_profile_creation_horoscope(
+        user=user,
+        profile=profile,
+        horoscope_input=horoscope_input,
+        name=getattr(user, 'name', None),
+        dob=dob,
+    )

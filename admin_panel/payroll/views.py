@@ -1029,6 +1029,18 @@ def _branch_manager_code_or_error(request):
     return code, None
 
 
+def _branch_payroll_qs_for_management(request):
+    """Branch payroll for management views — excludes the manager's own staff profile."""
+    code = _manager_branch_code(request.user)
+    if not code:
+        return SalaryRecord.objects.none()
+    qs = SalaryRecord.objects.select_related("staff", "branch", "approved_by").filter(branch__code=code)
+    manager_staff = _staff_profile_for_admin_user(request.user)
+    if manager_staff:
+        qs = qs.exclude(staff_id=manager_staff.id)
+    return qs
+
+
 def _salary_record_for_branch_manager(request, pk, *, wrong_branch_as_404: bool):
     code, err = _branch_manager_code_or_error(request)
     if err:
@@ -1055,6 +1067,23 @@ def _salary_record_for_branch_manager(request, pk, *, wrong_branch_as_404: bool)
                 "error": {
                     "code": 403,
                     "message": "You can only approve salary records for your own branch staff.",
+                },
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    manager_staff = _staff_profile_for_admin_user(request.user)
+    if manager_staff and obj.staff_id == manager_staff.id:
+        if wrong_branch_as_404:
+            return None, Response(
+                {"success": False, "error": {"code": 404, "message": "Salary record not found"}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return None, Response(
+            {
+                "success": False,
+                "error": {
+                    "code": 403,
+                    "message": "You cannot manage your own salary records here. Use My Salary.",
                 },
             },
             status=status.HTTP_403_FORBIDDEN,
@@ -1096,7 +1125,7 @@ class BranchPayrollSummaryAPIView(APIView):
         code, err = _branch_manager_code_or_error(request)
         if err:
             return err
-        qs_all = SalaryRecord.objects.filter(branch__code=code)
+        qs_all = _branch_payroll_qs_for_management(request)
         month_s = (request.query_params.get("month") or "").strip()
         if month_s:
             md, merr = parse_month_string_mm_yyyy(month_s)
@@ -1155,7 +1184,7 @@ class BranchPayrollListAPIView(APIView):
         code, err = _branch_manager_code_or_error(request)
         if err:
             return err
-        qs = _scoped_salary_queryset(request)
+        qs = _branch_payroll_qs_for_management(request)
         qs, resolved_month, ferr = _apply_branch_list_filters(request, qs)
         if ferr:
             return ferr

@@ -5,7 +5,7 @@ CRUD serializers for Religion, Caste, MotherTongue include id, name, is_active.
 from rest_framework import serializers
 from .models import (
     Country, State, District, City,
-    Religion, Caste, MotherTongue, Height, MaritalStatus, IncomeRange,
+    Religion, Caste, MotherTongue, Height, MaritalStatus, Complexion, IncomeRange,
     Education, EducationSubject, Occupation, EmploymentStatus,
 )
 
@@ -62,6 +62,12 @@ class MaritalStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = MaritalStatus
         fields = ['id', 'name']
+
+
+class ComplexionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Complexion
+        fields = ['id', 'name', 'is_active']
 
 
 class IncomeRangeSerializer(serializers.ModelSerializer):

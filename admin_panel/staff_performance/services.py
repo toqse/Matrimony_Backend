@@ -161,8 +161,11 @@ def branch_manager_scope(request):
     return master_bid, ab, None
 
 
-def _staff_queryset(ab, search: str | None):
+def _staff_queryset(ab, search: str | None, exclude_admin_user_id: int | None = None):
     qs = StaffProfile.objects.filter(branch=ab, is_deleted=False)
+    # Exclude the requesting branch manager's own staff profile from their reports.
+    if exclude_admin_user_id:
+        qs = qs.exclude(admin_user_id=exclude_admin_user_id)
     q = (search or "").strip()
     if q:
         qs = qs.filter(Q(name__icontains=q) | Q(emp_code__icontains=q))
@@ -175,11 +178,12 @@ def staff_performance_rows(
     start: date,
     end: date,
     search: str | None = None,
+    exclude_admin_user_id: int | None = None,
 ) -> list[dict]:
     """
     One row per staff member with all table fields (decimal fields as floats for JSON).
     """
-    staff_qs = _staff_queryset(ab, search)
+    staff_qs = _staff_queryset(ab, search, exclude_admin_user_id=exclude_admin_user_id)
     staff_list = list(staff_qs.values("id", "name", "monthly_target"))
     if not staff_list:
         return []
@@ -260,7 +264,13 @@ def staff_performance_rows(
     return rows
 
 
-def summary_kpis(master_bid: int, ab, start: date, end: date) -> dict:
+def summary_kpis(
+    master_bid: int,
+    ab,
+    start: date,
+    end: date,
+    exclude_admin_user_id: int | None = None,
+) -> dict:
     """
     Branch-level KPIs for the month (not per staff).
     """
@@ -281,7 +291,9 @@ def summary_kpis(master_bid: int, ab, start: date, end: date) -> dict:
     subscriptions_sold = subs_qs.count()
     branch_revenue = subs_qs.aggregate(v=Coalesce(Sum("total_amount"), Decimal("0")))["v"] or Decimal("0")
 
-    rows = staff_performance_rows(master_bid, ab, start, end, search=None)
+    rows = staff_performance_rows(
+        master_bid, ab, start, end, search=None, exclude_admin_user_id=exclude_admin_user_id
+    )
     rates = []
     for r in rows:
         t = r["target"]

@@ -108,6 +108,30 @@ def _build_profile_data_for_user(user, request=None, include_contact=False, incl
         data['family_details'] = FamilyDetailsReadSerializer(fam).data if fam else empty_family_details_read_data()
     else:
         data['family_details'] = empty_family_details_read_data()
+
+    # Horoscope birth inputs (for admin/staff/branch edit prefill). Exact time and
+    # coordinates are only exposed on contact-level reads to avoid leaking them on
+    # public previews.
+    data['horoscope_details'] = {
+        'has_horoscope': bool(profile and profile.has_horoscope),
+        'time_of_birth': (
+            profile.time_of_birth.strftime('%H:%M')
+            if (include_contact and profile and profile.time_of_birth)
+            else None
+        ),
+        'place_of_birth': (
+            (profile.place_of_birth or '') if (include_contact and profile) else ''
+        ),
+        'birth_latitude': (
+            profile.birth_latitude if (include_contact and profile) else None
+        ),
+        'birth_longitude': (
+            profile.birth_longitude if (include_contact and profile) else None
+        ),
+        'birth_timezone': (
+            profile.birth_timezone if (include_contact and profile) else None
+        ),
+    }
     return data
 
 

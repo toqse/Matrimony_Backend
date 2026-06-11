@@ -18,6 +18,7 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.subscriptions.models import CustomerStaffAssignment
+from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
 from profiles.models import UserProfile
 from profiles.utils import get_profile_completion_data
@@ -292,10 +293,8 @@ class AdminProfileDetailAPIView(APIView):
                 if "admin_verified" in data:
                     profile.admin_verified = bool(data["admin_verified"])
                     profile.save(update_fields=["admin_verified", "updated_at"])
-                if "has_horoscope" in data:
-                    profile.has_horoscope = bool(data["has_horoscope"])
-                    profile.save(update_fields=["has_horoscope", "updated_at"])
                 apply_profile_sections(user, data)
+                apply_profile_edit_horoscope(user, profile, data)
         except DRFValidationError as exc:
             return Response(
                 {"success": False, "error": {"code": 400, "message": _first_drf_error(exc)}},

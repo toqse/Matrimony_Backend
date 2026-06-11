@@ -63,7 +63,9 @@ class StaffPerformanceSummaryView(APIView):
         start, end, err_m = _month_range_from_request(request)
         if err_m:
             return err_m
-        data = summary_kpis(master_bid, ab, start, end)
+        data = summary_kpis(
+            master_bid, ab, start, end, exclude_admin_user_id=request.user.id
+        )
         return Response({"success": True, "data": data})
 
 
@@ -82,7 +84,9 @@ class StaffPerformanceChartView(APIView):
         start, end, err_m = _month_range_from_request(request)
         if err_m:
             return err_m
-        rows = staff_performance_rows(master_bid, ab, start, end, search=None)
+        rows = staff_performance_rows(
+            master_bid, ab, start, end, search=None, exclude_admin_user_id=request.user.id
+        )
         staff = [
             {
                 "staff_id": r["staff_id"],
@@ -118,7 +122,9 @@ class StaffPerformanceTargetsView(APIView):
         start, end, err_m = _month_range_from_request(request)
         if err_m:
             return err_m
-        rows = staff_performance_rows(master_bid, ab, start, end, search=None)
+        rows = staff_performance_rows(
+            master_bid, ab, start, end, search=None, exclude_admin_user_id=request.user.id
+        )
         staff = [
             {
                 "staff_id": r["staff_id"],
@@ -166,7 +172,9 @@ class StaffPerformanceListView(APIView):
         if err_m:
             return err_m
         search = (request.query_params.get("search") or "").strip() or None
-        rows = staff_performance_rows(master_bid, ab, start, end, search=search)
+        rows = staff_performance_rows(
+            master_bid, ab, start, end, search=search, exclude_admin_user_id=request.user.id
+        )
         table_rows = [_table_row_public(r) for r in rows]
         paginator = StandardPagination()
         page = paginator.paginate_queryset(table_rows, request)
@@ -215,7 +223,9 @@ class StaffPerformanceExportView(APIView):
         if err_m:
             return err_m
         search = (request.query_params.get("search") or "").strip() or None
-        rows = staff_performance_rows(master_bid, ab, start, end, search=search)
+        rows = staff_performance_rows(
+            master_bid, ab, start, end, search=search, exclude_admin_user_id=request.user.id
+        )
         table_rows = [_table_row_public(r) for r in rows]
 
         buffer = StringIO()

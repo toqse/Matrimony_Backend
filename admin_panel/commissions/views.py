@@ -404,24 +404,9 @@ class CommissionSlipAPIView(APIView):
             staff = _staff_profile_for_admin_user(request.user)
             if not staff or staff.id != obj.staff_id:
                 return Response({"success": False, "error": {"code": 403, "message": "Insufficient permissions"}}, status=403)
-        plan_name = ""
-        if obj.subscription_id and getattr(obj.subscription, "plan", None):
-            plan_name = obj.subscription.plan.name or ""
-        elif obj.plan_id and obj.plan:
-            plan_name = obj.plan.name or ""
-        lines = [
-            "Commission Slip",
-            f"Date: {obj.created_at.date()}",
-            f"Staff: {obj.staff.name} ({obj.staff.emp_code})",
-            f"Branch: {obj.branch.name}",
-            f"Customer: {obj.customer.name} ({obj.customer.matri_id})",
-            f"Plan: {plan_name or '-'}",
-            f"Sale Amount: {obj.sale_amount}",
-            f"Rate: {obj.commission_rate}%",
-            f"Commission: {obj.commission_amt}",
-            f"Status: {obj.status}",
-        ]
-        pdf = _build_simple_pdf(lines)
+        from .slip import build_commission_slip_pdf
+
+        pdf = build_commission_slip_pdf(obj, request=request)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="commission_{obj.id}_slip.pdf"'
         return resp
@@ -441,6 +426,18 @@ def _branch_manager_code_or_error(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     return code, None
+
+
+def _branch_commission_qs_for_management(request):
+    """Branch commissions for management views — excludes the manager's own staff profile."""
+    code = _manager_branch_code(request.user)
+    if not code:
+        return Commission.objects.none()
+    qs = Commission.objects.filter(branch__code=code)
+    manager_staff = _staff_profile_for_admin_user(request.user)
+    if manager_staff:
+        qs = qs.exclude(staff_id=manager_staff.id)
+    return qs
 
 
 def _commission_for_branch_manager(request, pk, *, wrong_branch_as_404: bool):
@@ -479,6 +476,23 @@ def _commission_for_branch_manager(request, pk, *, wrong_branch_as_404: bool):
             },
             status=status.HTTP_403_FORBIDDEN,
         )
+    manager_staff = _staff_profile_for_admin_user(request.user)
+    if manager_staff and obj.staff_id == manager_staff.id:
+        if wrong_branch_as_404:
+            return None, Response(
+                {"success": False, "error": {"code": 404, "message": "Commission not found"}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return None, Response(
+            {
+                "success": False,
+                "error": {
+                    "code": 403,
+                    "message": "You cannot manage your own commission records here. Use My Commissions.",
+                },
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
     return obj, None
 
 
@@ -492,7 +506,7 @@ class BranchCommissionSummaryAPIView(APIView):
         code, err = _branch_manager_code_or_error(request)
         if err:
             return err
-        qs = Commission.objects.filter(branch__code=code)
+        qs = _branch_commission_qs_for_management(request)
         _dec = DecimalField(max_digits=12, decimal_places=2)
         _z = Value(Decimal("0"), output_field=_dec)
         summary_row = qs.aggregate(
@@ -551,11 +565,10 @@ class BranchCommissionsListAPIView(_BaseCommissionListAPIView):
     permission_classes = [IsBranchManager]
 
     def _scoped_queryset(self, request):
-        qs = Commission.objects.select_related(
+        qs = _branch_commission_qs_for_management(request)
+        return qs.select_related(
             "staff", "branch", "customer", "subscription", "subscription__plan", "plan"
         )
-        code = _manager_branch_code(request.user)
-        return qs.filter(branch__code=code) if code else qs.none()
 
     def get(self, request):
         code, err = _branch_manager_code_or_error(request)
@@ -693,10 +706,9 @@ class BranchBulkApproveCommissionAPIView(AuditLogMixin, APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        qs = Commission.objects.filter(
+        qs = _branch_commission_qs_for_management(request).filter(
             id__in=ids,
             status=Commission.STATUS_PENDING,
-            branch__code=code,
         )
         count = qs.count()
         qs.update(status=Commission.STATUS_APPROVED, approved_by=request.user, updated_at=timezone.now())
@@ -718,24 +730,9 @@ class BranchCommissionSlipAPIView(APIView):
         obj, err = _commission_for_branch_manager(request, pk, wrong_branch_as_404=True)
         if err:
             return err
-        plan_name = ""
-        if obj.subscription_id and getattr(obj.subscription, "plan", None):
-            plan_name = obj.subscription.plan.name or ""
-        elif obj.plan_id and obj.plan:
-            plan_name = obj.plan.name or ""
-        lines = [
-            "Commission Slip",
-            f"Date: {obj.created_at.date()}",
-            f"Staff: {obj.staff.name} ({obj.staff.emp_code})",
-            f"Branch: {obj.branch.name}",
-            f"Customer: {obj.customer.name} ({obj.customer.matri_id})",
-            f"Plan: {plan_name or '-'}",
-            f"Sale Amount: {obj.sale_amount}",
-            f"Rate: {obj.commission_rate}%",
-            f"Commission: {obj.commission_amt}",
-            f"Status: {obj.status}",
-        ]
-        pdf = _build_simple_pdf(lines)
+        from .slip import build_commission_slip_pdf
+
+        pdf = build_commission_slip_pdf(obj, request=request)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="commission_{obj.id}_slip.pdf"'
         return resp

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import re
-from datetime import datetime
-
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
@@ -22,16 +19,22 @@ from admin_panel.audit_log.models import AuditLog
 from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
-from admin_panel.bulk_upload.services import import_profile_row, mobile_exists_in_db, normalize_mobile
-from admin_panel.commissions.views import _branch_manager_code_or_error
+from admin_panel.bulk_upload.services import normalize_mobile
+from admin_panel.commissions.views import (
+    _branch_manager_code_or_error,
+    _staff_profile_for_admin_user,
+)
 from admin_panel.permissions import IsBranchManager
 from admin_panel.staff_profiles.registration import (
     _first_drf_error,
     apply_profile_sections,
+    create_user_and_profile_sections,
     parse_request_data_and_files,
     save_profile_uploads,
+    validate_core_create_fields,
 )
 from admin_panel.subscriptions.models import CustomerStaffAssignment
+from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
 from profiles.models import UserPhotos, UserProfile
 from profiles.utils import get_profile_completion_data
@@ -381,10 +384,8 @@ class MyProfilesDetailView(APIView):
                 if "admin_verified" in data:
                     profile.admin_verified = bool(data["admin_verified"])
                     profile.save(update_fields=["admin_verified", "updated_at"])
-                if "has_horoscope" in data:
-                    profile.has_horoscope = bool(data["has_horoscope"])
-                    profile.save(update_fields=["has_horoscope", "updated_at"])
                 apply_profile_sections(user, data)
+                apply_profile_edit_horoscope(user, profile, data)
         except DRFValidationError as exc:
             return Response(
                 {
@@ -593,12 +594,14 @@ class MyProfilesSendEmailView(APIView):
 class MyProfilesCreateView(APIView):
     authentication_classes = [AdminJWTAuthentication]
     permission_classes = [IsAuthenticated, IsBranchManager]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def post(self, request):
         _, err = _branch_manager_code_or_error(request)
         if err:
             return err
-        if not getattr(request.user, "branch_id", None):
+        branch_pk = getattr(request.user, "branch_id", None)
+        if not branch_pk:
             return Response(
                 {
                     "success": False,
@@ -607,77 +610,15 @@ class MyProfilesCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        data = request.data
-        errors = {}
-        name = (data.get("name") or "").strip()
-        if not name:
-            errors["name"] = "Name is required."
+        try:
+            data, files = parse_request_data_and_files(request)
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        phone = (data.get("phone_number") or data.get("phone") or data.get("mobile") or "").strip()
-        if not phone:
-            errors["phone_number"] = "Phone number is required."
-            mobile = None
-        else:
-            from core.phone import normalize_phone_input, personal_mobile_in_use
-            from rest_framework import serializers as drf_serializers
-
-            try:
-                mobile = normalize_phone_input(phone)
-            except drf_serializers.ValidationError as exc:
-                detail = exc.detail
-                errors["phone_number"] = str(detail[0]) if isinstance(detail, list) else str(detail)
-            else:
-                in_use = personal_mobile_in_use(mobile)
-                if in_use:
-                    errors["phone_number"] = in_use
-
-        gender = (data.get("gender") or "").strip().upper()
-        if not gender:
-            errors["gender"] = "Gender is required."
-        elif gender not in {"M", "F", "O"}:
-            errors["gender"] = "Gender must be M, F, or O."
-
-        dob = (data.get("dob") or "").strip()
-        if not dob:
-            errors["dob"] = "Date of birth is required."
-            dob_iso = None
-        elif not re.match(r"^\d{2}-\d{2}-\d{4}$", dob):
-            errors["dob"] = "Invalid date format. Use DD-MM-YYYY."
-            dob_iso = None
-        else:
-            try:
-                dob_iso = datetime.strptime(dob, "%d-%m-%Y").date().isoformat()
-            except ValueError:
-                errors["dob"] = "Invalid date format. Use DD-MM-YYYY."
-                dob_iso = None
-
-        email = (data.get("email") or "").strip()
-        if email:
-            from django.core.exceptions import ValidationError
-            from django.core.validators import validate_email
-            try:
-                validate_email(email)
-            except ValidationError:
-                errors["email"] = "Invalid email address."
-
-        from astrology.services.horoscope_profile_service import (
-            HoroscopeInputSerializer,
-            apply_profile_creation_horoscope,
-        )
-
-        horoscope_input = {}
-        horo_serializer = HoroscopeInputSerializer(
-            data=data, context={"date_of_birth": dob_iso}
-        )
-        if horo_serializer.is_valid():
-            horoscope_input = dict(horo_serializer.validated_data)
-        else:
-            for field, msgs in horo_serializer.errors.items():
-                if isinstance(msgs, (list, tuple)) and msgs:
-                    errors[field] = str(msgs[0])
-                else:
-                    errors[field] = str(msgs)
-
+        errors, norm = validate_core_create_fields(data)
         if errors:
             first = next(iter(errors))
             return Response(
@@ -685,45 +626,27 @@ class MyProfilesCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        payload = dict(data)
-        payload["name"] = name
-        payload["mobile"] = mobile
-        payload["gender"] = gender
-        payload["dob"] = dob_iso
-        if email:
-            payload["email"] = email
+        # Assign the new member to the branch manager's own staff profile so that
+        # subsequent plan purchases auto-credit the manager's commission (same flow as staff).
+        manager_staff = _staff_profile_for_admin_user(request.user)
 
         try:
-            with transaction.atomic():
-                import_profile_row(payload, request.user.branch_id)
-        except Exception as exc:
+            user = create_user_and_profile_sections(
+                name=norm["name"],
+                mobile=norm["mobile"],
+                gender=norm["gender"],
+                dob_iso=norm["dob_iso"],
+                email=norm["email"],
+                branch_pk=branch_pk,
+                data=data,
+                files=files,
+                staff=manager_staff,
+            )
+        except DRFValidationError as exc:
             return Response(
-                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                {"success": False, "error": {"code": 400, "message": _first_drf_error(exc)}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        digits = mobile[-10:]
-        user = User.objects.filter(
-            Q(mobile=mobile) | Q(mobile=f"91{digits}") | Q(mobile=digits)
-        ).order_by("-created_at").first()
-        if not user:
-            return Response(
-                {"success": False, "error": {"code": 500, "message": "Profile created but user not found"}},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        # Horoscope support: persist birth inputs and create the horoscope_profile
-        # bridge record when has_horoscope is set (no calculation here).
-        try:
-            with transaction.atomic():
-                profile, _ = UserProfile.objects.get_or_create(user=user, defaults={})
-                apply_profile_creation_horoscope(
-                    user=user,
-                    profile=profile,
-                    horoscope_input=horoscope_input,
-                    name=user.name,
-                    dob=user.dob,
-                )
         except Exception as exc:
             return Response(
                 {"success": False, "error": {"code": 400, "message": str(exc)}},
@@ -747,6 +670,9 @@ class MyProfilesCreateView(APIView):
                     "matri_id": user.matri_id,
                     "name": user.name,
                     "phone": to_e164_display(user.mobile),
+                    "profile_completion_percentage": get_profile_completion_data(user)[
+                        "profile_completion_percentage"
+                    ],
                 },
             },
             status=status.HTTP_201_CREATED,

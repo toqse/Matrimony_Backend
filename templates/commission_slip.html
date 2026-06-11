@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Commission Slip — {{ staff_name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 14mm;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: "Helvetica", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #1f2937;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+        .slip {
+            width: 100%;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        /* ---------- Header ---------- */
+        .header {
+            display: flex;
+            align-items: center;
+            padding: 18px 22px 14px 22px;
+        }
+        .header .logo-box {
+            width: 78px;
+            height: 78px;
+            border: 1px dashed #cbd5e1;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            text-align: center;
+            margin-right: 18px;
+            flex-shrink: 0;
+            background: #f8fafc;
+            border-radius: 2px;
+        }
+        .header .logo-box img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .header .company {
+            flex: 1;
+        }
+        .header .company-name {
+            font-size: 18px;
+            font-weight: 700;
+            color: #0f172a;
+            margin: 0 0 2px 0;
+        }
+        .header .company-address {
+            font-size: 10px;
+            color: #6b7280;
+            margin: 0 0 8px 0;
+            white-space: pre-line;
+        }
+        .header .slip-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #111827;
+            margin: 6px 0 0 0;
+        }
+
+        /* ---------- Staff bar ---------- */
+        .employee-bar {
+            background: #f8e7ee;
+            border-top: 1px solid #ecc9d8;
+            border-bottom: 1px solid #ecc9d8;
+            padding: 14px 22px;
+        }
+        .employee-bar table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .employee-bar td {
+            padding: 4px 8px 4px 0;
+            vertical-align: top;
+            font-size: 10.5px;
+        }
+        .employee-bar .label {
+            color: #4b5563;
+            width: 120px;
+        }
+        .employee-bar .value {
+            color: #111827;
+            font-weight: 600;
+            padding-right: 24px;
+        }
+        .employee-bar .net-pay-amount {
+            font-size: 18px;
+            font-weight: 700;
+            color: #8b2357;
+            text-align: right;
+        }
+
+        /* ---------- Details ---------- */
+        .section-title {
+            background: #f6ebf0;
+            color: #111827;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 8px 22px;
+            border-bottom: 1px solid #ebd9e1;
+            border-top: 1px solid #ebd9e1;
+        }
+        .detail-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .detail-table th,
+        .detail-table td {
+            padding: 8px 22px;
+            font-size: 10.5px;
+        }
+        .detail-table th {
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            background: #fbf2f6;
+            border-bottom: 1px solid #ebd9e1;
+        }
+        .detail-table th.amount,
+        .detail-table td.amount {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .detail-table tr.row td {
+            border-bottom: 1px dashed #eef2f7;
+            color: #1f2937;
+        }
+        .detail-table tr.total td {
+            font-weight: 700;
+            color: #111827;
+            border-top: 1px solid #ecc9d8;
+            background: #fbf2f6;
+        }
+
+        /* ---------- Net payable ---------- */
+        .net-payable {
+            background: #f8e7ee;
+            border-top: 1px solid #ecc9d8;
+            text-align: center;
+            padding: 16px 22px 18px 22px;
+        }
+        .net-payable .title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #5d1438;
+            margin: 0 0 4px 0;
+        }
+        .net-payable .formula {
+            font-size: 10px;
+            color: #4b5563;
+            margin: 0 0 6px 0;
+        }
+        .net-payable .amount {
+            font-size: 22px;
+            font-weight: 700;
+            color: #8b2357;
+            margin: 2px 0 4px 0;
+        }
+        .net-payable .words {
+            font-size: 10px;
+            color: #4b5563;
+        }
+
+        /* ---------- Footer ---------- */
+        .footer {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 9.5px;
+            padding: 12px 22px 4px 22px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slip">
+        <div class="header">
+            <div class="logo-box">
+                {% if logo_url %}
+                <img src="{{ logo_url }}" alt="logo" />
+                {% else %}
+                Upload<br/>Logo
+                {% endif %}
+            </div>
+            <div class="company">
+                <p class="company-name">{{ company_name }}</p>
+                {% if company_address %}<p class="company-address">{{ company_address }}</p>{% endif %}
+                <p class="slip-title">Commission Slip</p>
+            </div>
+        </div>
+
+        <div class="employee-bar">
+            <table>
+                <tr>
+                    <td class="label">Staff Name</td>
+                    <td class="value">: {{ staff_name }}</td>
+                    <td class="net-pay-amount" rowspan="2">
+                        <div>{{ commission_amount }}</div>
+                        <div style="font-size:10px;color:#4b5563;font-weight:400;">Total Commission</div>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="label">Staff ID</td>
+                    <td class="value">: {{ staff_id }}</td>
+                </tr>
+                <tr>
+                    <td class="label">Branch</td>
+                    <td class="value">: {{ branch_name }}</td>
+                </tr>
+                <tr>
+                    <td class="label">Date</td>
+                    <td class="value">: {{ date }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section-title">Commission Details</div>
+        <table class="detail-table">
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th class="amount">Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="row">
+                    <td>Customer</td>
+                    <td class="amount">{{ customer }}</td>
+                </tr>
+                <tr class="row">
+                    <td>Plan</td>
+                    <td class="amount">{{ plan_name }}</td>
+                </tr>
+                <tr class="row">
+                    <td>Sale Amount</td>
+                    <td class="amount">{{ sale_amount }}</td>
+                </tr>
+                <tr class="row">
+                    <td>Commission Rate</td>
+                    <td class="amount">{{ commission_rate }}</td>
+                </tr>
+                <tr class="row">
+                    <td>Status</td>
+                    <td class="amount">{{ status_label }}</td>
+                </tr>
+                <tr class="total">
+                    <td>Commission Earned</td>
+                    <td class="amount">{{ commission_amount }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="net-payable">
+            <p class="title">Total Commission Payable</p>
+            <p class="formula">Sale Amount &times; Commission Rate</p>
+            <p class="amount">{{ commission_amount }}</p>
+            <p class="words">Amount in Words: {{ commission_amount_words }}</p>
+        </div>
+
+        <div class="footer">
+            -- This is a system-generated document. --
+        </div>
+    </div>
+</body>
+</html>
