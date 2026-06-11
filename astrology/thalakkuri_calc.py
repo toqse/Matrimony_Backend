@@ -156,16 +156,21 @@ def _nak_pada(lon):
 
 
 def _jd_to_local_time(jd, tz=5.5):
+    """Returns time as: 6മ 7മി 55സെക്കൻഡ്"""
     frac = ((jd + 0.5) % 1) * 24 + tz
     if frac >= 24:
         frac -= 24
     h = int(frac)
     m = int((frac - h) * 60)
     s = int(((frac - h) * 60 - m) * 60)
-    return f'{h}മ {m}മി {s}സെ'
+    return f'{h}മ {m}മി {s}സെക്കൻഡ്'
 
 
 def _get_dasa_display(days):
+    """
+    Format dasa balance in Malayalam style.
+    Example: 5വ 10മ 7ദിവസവും
+    """
     if not days or days <= 0:
         return '—'
     y = days / 365.25
@@ -180,7 +185,15 @@ def _get_dasa_display(days):
     if months >= 12:
         months = 0
         years += 1
-    return f'{years:02d}y {months:02d}m {day_r:02d}d'
+
+    parts = []
+    if years > 0:
+        parts.append(f'{years}വ')
+    if months > 0:
+        parts.append(f'{months}മ')
+    if day_r > 0:
+        parts.append(f'{day_r}ദിവസവും')
+    return ' '.join(parts) if parts else '—'
 
 
 # ── Main calculator ──────────────────────────────────────
@@ -423,7 +436,16 @@ def generate_thalakkuri_pdf(hp):
     ctx = calculate_all(hp)
     html = render_to_string('astrology/thalakkuri.html', ctx)
     try:
-        from weasyprint import HTML
-        return HTML(string=html).write_pdf(), 'pdf'
-    except Exception:
+        from weasyprint import HTML, CSS
+        font_css = CSS(string='''
+            @font-face {
+                font-family: "Noto Sans Malayalam";
+                src: local("Noto Sans Malayalam");
+            }
+            body { font-family: "Noto Sans Malayalam", serif; }
+        ''')
+        pdf = HTML(string=html, base_url=None).write_pdf(stylesheets=[font_css])
+        return pdf, 'pdf'
+    except Exception as e:
+        print(f'weasyprint error: {e}')
         return html.encode('utf-8'), 'html'

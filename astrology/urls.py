@@ -8,6 +8,7 @@ from .views import (
     HoroscopeProfileDetailView,
     HoroscopeProfileMeView,
     JathagamPDFView,
+    MatchReportMeView,
     PoruthamCheckView,
     UpdateBirthCoordinatesView,
 )
@@ -34,6 +35,11 @@ urlpatterns = [
         'porutham/',
         PoruthamCheckView.as_view(),
         name='porutham',
+    ),
+    path(
+        'match-report/',
+        MatchReportMeView.as_view(),
+        name='match_report_me',
     ),
     path(
         'pdf/order/',

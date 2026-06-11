@@ -279,6 +279,117 @@ class PoruthamCheckView(APIView):
         return Response({'success': True, 'data': result}, status=status.HTTP_200_OK)
 
 
+class MatchReportMeView(APIView):
+    """GET /api/v1/astrology/match-report/?partner_matri_id=
+
+    User-specific porutham match report. The bride/groom pair is the
+    authenticated user and the supplied partner. Returns a downloadable PDF.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from profiles.models import UserPhotos
+
+        from .match_report import generate_match_report_pdf
+        from .models import HoroscopeProfile
+
+        if get_user_plan_status(request.user) != 'active':
+            return Response(
+                plan_expired_response(request.user),
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        own_matri_id = (getattr(request.user, 'matri_id', '') or '').strip()
+        partner_matri_id = (request.query_params.get('partner_matri_id') or '').strip()
+        if not own_matri_id:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Your profile has no matri_id.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not partner_matri_id:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'partner_matri_id is required.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        user = request.user
+        partner = User.objects.filter(matri_id__iexact=partner_matri_id).first()
+        if not partner:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Partner not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Porutham requires a bride (female) and a groom (male). Map the two
+        # users to those roles by gender, defaulting to requester=bride.
+        if user.gender == 'M' or partner.gender == 'F':
+            bride_user, groom_user = partner, user
+        else:
+            bride_user, groom_user = user, partner
+
+        try:
+            bride_hp = bride_user.horoscope_profile
+            groom_hp = groom_user.horoscope_profile
+        except HoroscopeProfile.DoesNotExist:
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 400,
+                        'message': 'Horoscope not found for one or both profiles.',
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not bride_hp.pr_rasi or len(bride_hp.pr_rasi) < 11:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Bride horoscope not calculated yet.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not groom_hp.pr_rasi or len(groom_hp.pr_rasi) < 11:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Groom horoscope not calculated yet.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bride_photos = UserPhotos.objects.filter(user=bride_user).first()
+        groom_photos = UserPhotos.objects.filter(user=groom_user).first()
+        bride_photo = bride_photos.profile_photo if bride_photos else None
+        groom_photo = groom_photos.profile_photo if groom_photos else None
+
+        content, fmt = generate_match_report_pdf(
+            bride_hp,
+            groom_hp,
+            bride_user,
+            groom_user,
+            bride_photo=bride_photo,
+            groom_photo=groom_photo,
+        )
+
+        name = f'match_report_{own_matri_id}_{partner_matri_id}'.replace(' ', '_')
+        ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
+        resp = HttpResponse(content, content_type=ct)
+        resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+        return resp
+
+
 class AstrologyPdfOrderView(APIView):
     """POST: create Razorpay order for Jathakam or Thalakuri PDF."""
 
