@@ -129,8 +129,8 @@ class HoroscopeProfilePublicSerializer(serializers.ModelSerializer):
 
 
 class PoruthamCheckRequestSerializer(serializers.Serializer):
-    bride_id = serializers.IntegerField(min_value=1)
-    groom_id = serializers.IntegerField(min_value=1)
+    matri_id = serializers.CharField(max_length=20, trim_whitespace=True)
+    partner_matri_id = serializers.CharField(max_length=20, trim_whitespace=True)
 
 
 class PoruthamResultSerializer(serializers.Serializer):

@@ -161,25 +161,34 @@ class PoruthamCheckView(APIView):
         serializer = PoruthamCheckRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        from django.contrib.auth import get_user_model
+
         from .models import HoroscopeProfile, PoruthamResult
         from .porutham import calculate_porutham
 
+        User = get_user_model()
+        matri_id = serializer.validated_data['matri_id']
+        partner_matri_id = serializer.validated_data['partner_matri_id']
+
         try:
-            bride_profile = UserProfile.objects.select_related('user').get(
-                pk=serializer.validated_data['bride_id']
-            )
-            groom_profile = UserProfile.objects.select_related('user').get(
-                pk=serializer.validated_data['groom_id']
-            )
-        except UserProfile.DoesNotExist:
+            user = User.objects.get(matri_id=matri_id)
+            partner = User.objects.get(matri_id=partner_matri_id)
+        except User.DoesNotExist:
             return Response(
-                {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
+                {'success': False, 'error': {'code': 404, 'message': 'User not found.'}},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        # Porutham requires a bride (female) and a groom (male). Map the two
+        # users to those roles by gender, defaulting to requester=bride.
+        if user.gender == 'M' or partner.gender == 'F':
+            bride_user, groom_user = partner, user
+        else:
+            bride_user, groom_user = user, partner
+
         try:
-            bride_hp = bride_profile.user.horoscope_profile
-            groom_hp = groom_profile.user.horoscope_profile
+            bride_hp = bride_user.horoscope_profile
+            groom_hp = groom_user.horoscope_profile
         except HoroscopeProfile.DoesNotExist:
             return Response(
                 {
@@ -207,8 +216,8 @@ class PoruthamCheckView(APIView):
         result = calculate_porutham(bride_hp, groom_hp)
 
         PoruthamResult.objects.update_or_create(
-            bride=bride_profile.user,
-            groom=groom_profile.user,
+            bride=bride_user,
+            groom=groom_user,
             defaults={
                 'dinam': result['dinam'],
                 'ganam': result['ganam'],
@@ -233,6 +242,23 @@ class PoruthamCheckView(APIView):
         )
 
         consume_horoscope_match(request.user)
+
+        # Both partners' grahanila (planetary charts), placed below porutham.
+        result['grahanila'] = {
+            'bride': {
+                'matri_id': bride_user.matri_id,
+                'name': bride_user.name,
+                'gender': bride_user.gender,
+                'horoscope': HoroscopeProfilePublicSerializer(bride_hp).data,
+            },
+            'groom': {
+                'matri_id': groom_user.matri_id,
+                'name': groom_user.name,
+                'gender': groom_user.gender,
+                'horoscope': HoroscopeProfilePublicSerializer(groom_hp).data,
+            },
+        }
+
         return Response({'success': True, 'data': result}, status=status.HTTP_200_OK)
 
 
