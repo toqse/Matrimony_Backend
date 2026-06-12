@@ -792,18 +792,8 @@ class AstrologyPdfThalakuriDownloadView(APIView):
         from .thalakkuri_calc import generate_thalakkuri_pdf
 
         sig = (request.query_params.get('sig') or '').strip()
-        uid_raw = request.query_params.get('uid')
-        if not uid_raw:
-            return Response(
-                {
-                    'success': False,
-                    'error': {'code': 403, 'message': 'Invalid or missing download token.'},
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        try:
-            uid = int(uid_raw)
-        except (TypeError, ValueError):
+        uid = (request.query_params.get('uid') or '').strip()
+        if not uid:
             return Response(
                 {
                     'success': False,

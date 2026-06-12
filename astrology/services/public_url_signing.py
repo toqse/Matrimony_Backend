@@ -57,16 +57,16 @@ def verify_pdf_credit_access(token: str, credit_id: int) -> bool:
         return False
 
 
-def sign_thalakuri_demo_access(user_id: int) -> str:
+def sign_thalakuri_demo_access(user_id) -> str:
     """Signed query token for demo Thalakuri PDF download (no Razorpay credit)."""
     return TimestampSigner(salt=_THALAKURI_DEMO_SALT).sign(str(user_id))
 
 
-def verify_thalakuri_demo_access(token: str, user_id: int) -> bool:
+def verify_thalakuri_demo_access(token: str, user_id) -> bool:
     if not token:
         return False
     try:
         value = TimestampSigner(salt=_THALAKURI_DEMO_SALT).unsign(token, max_age=_max_age())
-        return int(value) == int(user_id)
-    except (BadSignature, SignatureExpired, ValueError):
+        return value == str(user_id)
+    except (BadSignature, SignatureExpired):
         return False
