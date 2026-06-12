@@ -41,6 +41,7 @@ from .services.razorpay_pdf_orders import (
     verify_payment_signature,
 )
 from .services.public_url_signing import (
+    sign_match_report_access,
     sign_pdf_credit_access,
     sign_thalakuri_demo_access,
     verify_pdf_credit_access,
@@ -260,6 +261,23 @@ class PoruthamCheckView(APIView):
                 or None
             )
 
+        # Downloadable PDF match report URL for this exact bride/groom pair.
+        # Signed so the link works without a JWT in the browser.
+        report_rel = reverse('astrology:match_report_me')
+        report_sig = sign_match_report_access(
+            bride_user.matri_id, groom_user.matri_id
+        )
+        report_query = urlencode(
+            {
+                'matri_id': bride_user.matri_id,
+                'partner_matri_id': groom_user.matri_id,
+                'sig': report_sig,
+            }
+        )
+        result['match_report_url'] = request.build_absolute_uri(
+            f'{report_rel}?{report_query}'
+        )
+
         # Both partners' grahanila (planetary charts), placed below porutham.
         result['grahanila'] = {
             'bride': {
@@ -282,50 +300,55 @@ class PoruthamCheckView(APIView):
 
 
 class MatchReportMeView(APIView):
-    """GET /api/v1/astrology/match-report/?partner_matri_id=
+    """GET /api/v1/astrology/match-report/?matri_id=&partner_matri_id=&sig=
 
-    User-specific porutham match report. The bride/groom pair is the
-    authenticated user and the supplied partner. Returns a downloadable PDF.
+    Public, signature-verified porutham match report download (no JWT needed).
+    The signed link is produced by the porutham endpoint.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get(self, request):
         from profiles.models import UserPhotos
 
         from .match_report import generate_match_report_pdf
         from .models import HoroscopeProfile
+        from .services.public_url_signing import verify_match_report_access
 
-        if get_user_plan_status(request.user) != 'active':
-            return Response(
-                plan_expired_response(request.user),
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        own_matri_id = (getattr(request.user, 'matri_id', '') or '').strip()
+        own_matri_id = (request.query_params.get('matri_id') or '').strip()
         partner_matri_id = (request.query_params.get('partner_matri_id') or '').strip()
-        if not own_matri_id:
+        sig = (request.query_params.get('sig') or '').strip()
+        if not own_matri_id or not partner_matri_id:
             return Response(
                 {
                     'success': False,
-                    'error': {'code': 400, 'message': 'Your profile has no matri_id.'},
+                    'error': {
+                        'code': 400,
+                        'message': 'matri_id and partner_matri_id are required.',
+                    },
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not partner_matri_id:
+        if not verify_match_report_access(sig, own_matri_id, partner_matri_id):
             return Response(
                 {
                     'success': False,
-                    'error': {'code': 400, 'message': 'partner_matri_id is required.'},
+                    'error': {'code': 403, 'message': 'Invalid or expired link.'},
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         from django.contrib.auth import get_user_model
 
         User = get_user_model()
-        user = request.user
+        user = User.objects.filter(matri_id__iexact=own_matri_id).first()
         partner = User.objects.filter(matri_id__iexact=partner_matri_id).first()
+        if not user:
+            return Response(
+                {'success': False, 'error': {'code': 404, 'message': 'Member not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         if not partner:
             return Response(
                 {'success': False, 'error': {'code': 404, 'message': 'Partner not found.'}},
@@ -333,7 +356,7 @@ class MatchReportMeView(APIView):
             )
 
         # Porutham requires a bride (female) and a groom (male). Map the two
-        # users to those roles by gender, defaulting to requester=bride.
+        # users to those roles by gender.
         if user.gender == 'M' or partner.gender == 'F':
             bride_user, groom_user = partner, user
         else:
