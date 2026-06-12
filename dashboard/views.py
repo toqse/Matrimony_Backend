@@ -14,7 +14,7 @@ from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
 from profiles.utils import get_profile_completion_data, filter_visible_profiles_queryset
 from plans.models import ProfileView, Interest, UserPlan
-from plans.services import _get_user_plan
+from plans.services import _get_user_plan, get_plan_info_for_response
 from user_settings.models import UserSettings
 from matches.utils import age_from_dob, compute_match_percentage
 from core.media import absolute_media_url
@@ -194,6 +194,8 @@ class DashboardSummaryView(APIView):
             qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
         new_matches = qs.distinct().count()
 
+        plan = get_plan_info_for_response(user)
+
         return Response({
             'success': True,
             'data': {
@@ -204,6 +206,7 @@ class DashboardSummaryView(APIView):
                 'interests_received': interests_received,
                 'interests_sent': interests_sent,
                 'new_matches': new_matches,
+                'plan': plan,
             },
         }, status=status.HTTP_200_OK)
 
