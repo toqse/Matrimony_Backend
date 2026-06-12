@@ -306,8 +306,11 @@ class UserPersonalSerializer(serializers.Serializer):
     has_children = serializers.BooleanField(required=False, allow_null=True)
     number_of_children = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     height = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    height_cm = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     weight = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
+    weight_kg = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     complexion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    blood_group = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def to_internal_value(self, data):
         data = dict(data) if not isinstance(data, dict) else data.copy()
@@ -357,16 +360,23 @@ class UserPersonalSerializer(serializers.Serializer):
         user = self.context['request'].user
         marital_status_id = validated_data.get('marital_status')
         height_cm = validated_data.get('height')
+        if height_cm is None:
+            height_cm = validated_data.get('height_cm')
         height_text = f'{height_cm} cm' if height_cm is not None else ''
+        weight = validated_data.get('weight')
+        if weight is None:
+            weight = validated_data.get('weight_kg')
         has_children = validated_data.get('has_children')
         number_of_children = validated_data.get('number_of_children')
         complexion = validated_data.get('complexion')
         defaults = {
             'has_children': has_children if has_children is not None else False,
-            'weight': validated_data.get('weight'),
+            'weight': weight,
             'colour': complexion or '',
             'height_text': height_text,
         }
+        if 'blood_group' in validated_data:
+            defaults['blood_group'] = validated_data.get('blood_group') or ''
         if number_of_children is not None:
             defaults['number_of_children'] = number_of_children
         if marital_status_id is not None:
