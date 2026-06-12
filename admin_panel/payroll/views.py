@@ -838,6 +838,17 @@ class GeneratePayrollAPIView(APIView):
                 {"success": False, "error": {"code": 400, "message": "Cannot generate salary for future months"}},
                 status=400,
             )
+        if SalaryRecord.objects.filter(month=md).exists():
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": 400,
+                        "message": "Payroll has already been generated for this month.",
+                    },
+                },
+                status=400,
+            )
         _, month_end = month_date_bounds(md)
         staff_qs = (
             StaffProfile.objects.filter(is_active=True, is_deleted=False)

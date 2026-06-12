@@ -42,7 +42,9 @@ from .services.razorpay_pdf_orders import (
 )
 from .services.public_url_signing import (
     sign_pdf_credit_access,
+    sign_thalakuri_demo_access,
     verify_pdf_credit_access,
+    verify_thalakuri_demo_access,
 )
 
 
@@ -406,11 +408,32 @@ class AstrologyPdfOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         product = ser.validated_data['product']
+        price = catalog_price_inr(product)
         try:
             out = create_order(
                 user_matri_id=getattr(request.user, 'matri_id', '') or '', product=product
             )
         except RazorpayNotConfiguredError as exc:
+            if product == AstrologyPdfCredit.PRODUCT_THALAKURI:
+                rel = reverse('astrology:astrology_pdf_thalakuri')
+                query = urlencode({
+                    'sig': sign_thalakuri_demo_access(request.user.id),
+                    'uid': request.user.id,
+                })
+                return Response(
+                    {
+                        'success': True,
+                        'data': {
+                            'demo': True,
+                            'product': product,
+                            'price_inr': float(price),
+                            'amount': amount_paise(product),
+                            'currency': 'INR',
+                            'download_url': request.build_absolute_uri(f'{rel}?{query}'),
+                        },
+                    },
+                    status=status.HTTP_200_OK,
+                )
             return Response(
                 {
                     'success': False,
@@ -426,7 +449,6 @@ class AstrologyPdfOrderView(APIView):
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
-        price = catalog_price_inr(product)
         return Response(
             {
                 'success': True,
@@ -766,16 +788,64 @@ class AstrologyPdfThalakuriDownloadView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response(
-            {
-                'success': False,
-                'error': {
-                    'code': 503,
-                    'message': 'Thalakuri PDF temporarily unavailable during system upgrade.',
+        from .models import HoroscopeProfile
+        from .thalakkuri_calc import generate_thalakkuri_pdf
+
+        sig = (request.query_params.get('sig') or '').strip()
+        uid_raw = request.query_params.get('uid')
+        if not uid_raw:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 403, 'message': 'Invalid or missing download token.'},
                 },
-            },
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            uid = int(uid_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 403, 'message': 'Invalid or missing download token.'},
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not verify_thalakuri_demo_access(sig, uid):
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 403, 'message': 'Invalid or expired download token.'},
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            hp = HoroscopeProfile.objects.get(user_id=uid)
+        except HoroscopeProfile.DoesNotExist:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 404, 'message': 'Horoscope profile not found.'},
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not hp.pr_rasi or len(hp.pr_rasi) < 11:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Horoscope not calculated yet.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content, fmt = generate_thalakkuri_pdf(hp)
+        name = f"thalakkuri_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
+        ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
+        resp = HttpResponse(content, content_type=ct)
+        resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+        return resp
 
 
 class ThalakkuriPDFView(APIView):
