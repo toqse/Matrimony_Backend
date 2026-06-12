@@ -71,7 +71,7 @@ DASA_LORD_ML = [
 LETTER_TO_SIGN = {c: i + 1 for i, c in enumerate('ABCDEFGHIJKL')}
 PLANET_ML_MAP = {
     'la': 'ല', 'su': 'ര', 'mo': 'ച', 'ma': 'കു', 'me': 'ബു',
-    'ju': 'ഗു', 've': 'ശു', 'sa': 'ശ', 'ra': 'രാ', 'ke': 'കേ', 'md': 'മ',
+    'ju': 'ഗു', 've': 'ശു', 'sa': 'മ', 'ra': 'സ', 'ke': 'ശി', 'md': 'മാ',
 }
 PLANETS_ORDER = ['la', 'su', 'mo', 'ma', 'me', 'ju', 've', 'sa', 'ra', 'ke', 'md']
 CHART_LAYOUT = [
@@ -168,11 +168,14 @@ def _jd_to_local_time(jd, tz=5.5):
 
 def _get_dasa_display(days):
     """
-    Format dasa balance in Malayalam style.
-    Example: 5വ 10മ 7ദിവസവും
+    Format remaining (shishta) dasa balance in Malayalam style.
+    Example: 0 വർഷം 1 മാസം 29 ദിവസം
+
+    Always returns a full "X വർഷം Y മാസം Z ദിവസം" string. When the balance is
+    null/empty/zero, returns "0 വർഷം 0 മാസം 0 ദിവസം" so the section is never hidden.
     """
     if not days or days <= 0:
-        return '—'
+        return '0 വർഷം 0 മാസം 0 ദിവസം'
     y = days / 365.25
     years = int(y)
     mo = (y - years) * 12
@@ -185,15 +188,7 @@ def _get_dasa_display(days):
     if months >= 12:
         months = 0
         years += 1
-
-    parts = []
-    if years > 0:
-        parts.append(f'{years}വ')
-    if months > 0:
-        parts.append(f'{months}മ')
-    if day_r > 0:
-        parts.append(f'{day_r}ദിവസവും')
-    return ' '.join(parts) if parts else '—'
+    return f'{years} വർഷം {months} മാസം {day_r} ദിവസം'
 
 
 # ── Main calculator ──────────────────────────────────────
@@ -224,8 +219,8 @@ def calculate_all(hp):
         (swe.MERCURY, 'ബു', 'Budhan'),
         (swe.JUPITER, 'ഗു', 'Guru'),
         (swe.VENUS, 'ശു', 'Sukran'),
-        (swe.SATURN, 'ശ', 'Sani'),
-        (swe.TRUE_NODE, 'രാ', 'Rahu'),
+        (swe.SATURN, 'മ', 'Sani'),
+        (swe.TRUE_NODE, 'സ', 'Rahu'),
     ]
 
     planet_rows = []
@@ -255,7 +250,7 @@ def calculate_all(hp):
     rasi, d, m, s = _lon_to_rasi_dms(k_sid)
     nak, pada = _nak_pada(k_sid)
     planet_rows.append({
-        'ml': 'കേ', 'en': 'Kethu',
+        'ml': 'ശി', 'en': 'Kethu',
         'rasi_ml': RASI_ML[rasi],
         'sphuta': f'{d:02d}:{m:02d}:{s:02d}',
         'nak_ml': NAK_ML[nak], 'nak_pada': pada,
@@ -300,7 +295,7 @@ def calculate_all(hp):
     rasi, d, m, s = _lon_to_rasi_dms(m_sid)
     nak, pada = _nak_pada(m_sid)
     maandi_row = {
-        'ml': 'മ', 'en': 'Maandi',
+        'ml': 'മാ', 'en': 'Maandi',
         'rasi_ml': RASI_ML[rasi],
         'sphuta': f'{d:02d}:{m:02d}:{s:02d}',
         'nak_ml': NAK_ML[nak], 'nak_pada': pada,

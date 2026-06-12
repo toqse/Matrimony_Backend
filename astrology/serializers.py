@@ -12,6 +12,7 @@ from .models import AstrologyPdfCredit, HoroscopeProfile
 
 
 class HoroscopeProfileSerializer(serializers.ModelSerializer):
+    pr_dob = serializers.DateField(format='%d-%m-%Y', read_only=True)
     star_display = serializers.SerializerMethodField()
     dasa_display = serializers.SerializerMethodField()
     lagnam_display = serializers.SerializerMethodField()
@@ -53,7 +54,7 @@ class HoroscopeProfileSerializer(serializers.ModelSerializer):
             'dasa_lord',
             'charts',
         ]
-        read_only_fields = fields
+        read_only_fields = [f for f in fields if f != 'pr_dob']
 
     def get_star_display(self, obj):
         return obj.star_name or star_name(obj.pr_star)

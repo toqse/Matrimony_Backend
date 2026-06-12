@@ -28,6 +28,30 @@ def _manager_branch_code(user) -> str | None:
     )
 
 
+def _resolve_branch_codes(branch_id: int) -> set[str]:
+    """Resolve a dropdown branch id to branch code(s).
+
+    The branch dropdown is served from the branch registry
+    (admin_panel.branches.Branch), while member rows link to master.Branch via
+    User.branch. The two tables share `code`, so we resolve the incoming id to a
+    code (preferring the registry table, falling back to master) and match on it.
+    """
+    from admin_panel.branches.models import Branch as AdminBranch
+
+    code = (
+        AdminBranch.objects.filter(pk=branch_id)
+        .values_list('code', flat=True)
+        .first()
+    )
+    if not code:
+        code = (
+            MasterBranch.objects.filter(pk=branch_id)
+            .values_list('code', flat=True)
+            .first()
+        )
+    return {code} if code else set()
+
+
 def scoped_member_users_queryset(request, *, mount: str):
     user = request.user
     role = normalize_admin_role(getattr(user, 'role', ''))
@@ -157,13 +181,32 @@ def build_record_row(
     }
 
 
-def _list_users_filtered(users_qs, *, search: str, branch_id: str | None):
+def _list_users_filtered(
+    users_qs, *, search: str, branch_id: str | None, gender: str | None = None
+):
     qs = users_qs
     if branch_id:
         try:
-            qs = qs.filter(branch_id=int(branch_id))
+            bid = int(branch_id)
         except (TypeError, ValueError):
-            pass
+            bid = None
+        if bid is not None:
+            # A member belongs to a branch via their direct branch FK
+            # (User.branch -> master.Branch) OR via their staff assignment
+            # (StaffProfile.branch -> admin_panel.branches.Branch). These are
+            # two different tables/id-spaces that share `code`, so we bridge on
+            # code (same as scoped_member_users_queryset).
+            codes = _resolve_branch_codes(bid)
+            if codes:
+                qs = qs.filter(
+                    Q(branch__code__in=codes)
+                    | Q(staff_assignment__staff__branch__code__in=codes)
+                ).distinct()
+            else:
+                qs = qs.filter(branch_id=bid).distinct()
+    g = (gender or '').strip().upper()
+    if g in {'M', 'F', 'O'}:
+        qs = qs.filter(gender=g)
     s = (search or '').strip()
     if s:
         qs = qs.filter(Q(matri_id__icontains=s) | Q(name__icontains=s))
@@ -187,8 +230,11 @@ def list_horoscope_records(
     page_size,
     request=None,
     mount: str | None = None,
+    gender: str | None = None,
 ):
-    qs = _list_users_filtered(users_qs, search=search, branch_id=branch_id)
+    qs = _list_users_filtered(
+        users_qs, search=search, branch_id=branch_id, gender=gender
+    )
     total, page_qs = paginate(qs, page, page_size)
     user_ids = [u.pk for u in page_qs]
     hp_map = {

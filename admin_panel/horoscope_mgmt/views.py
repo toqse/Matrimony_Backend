@@ -70,10 +70,12 @@ class HoroscopePanelRecordsView(APIView):
             page_size = 20
         search = (request.query_params.get("search") or "").strip()
         branch_id = request.query_params.get("branch_id")
+        gender = request.query_params.get("gender")
         data = horoscope_panel.list_horoscope_records(
             qs,
             search=search,
             branch_id=branch_id,
+            gender=gender,
             page=page,
             page_size=page_size,
             request=request,

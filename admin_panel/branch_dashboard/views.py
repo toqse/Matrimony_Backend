@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from accounts.models import User
 from admin_panel.auth.authentication import AdminJWTAuthentication
+from core.datetime_ranges import filter_created_in_date_range
 from admin_panel.commissions.models import Commission
 from admin_panel.enquiries.models import Enquiry
 from admin_panel.pagination import StandardPagination
@@ -67,24 +68,23 @@ class BranchDashboardSummaryView(APIView):
                 branch=ab, is_deleted=False, is_active=True
             ).count()
 
-        new_profiles_cur = User.objects.filter(
-            branch_id=master_bid,
-            created_at__date__gte=cur_start,
-            created_at__date__lt=next_start,
+        new_profiles_cur = filter_created_in_date_range(
+            User.objects.filter(branch_id=master_bid),
+            'created_at', cur_start, next_start,
         ).count()
-        new_profiles_prev = User.objects.filter(
-            branch_id=master_bid,
-            created_at__date__gte=prev_start,
-            created_at__date__lt=cur_start,
+        new_profiles_prev = filter_created_in_date_range(
+            User.objects.filter(branch_id=master_bid),
+            'created_at', prev_start, cur_start,
         ).count()
 
         def _txn_in_range(start_d, end_d):
-            return Transaction.objects.filter(
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-                user__branch_id=master_bid,
-                created_at__date__gte=start_d,
-                created_at__date__lt=end_d,
+            return filter_created_in_date_range(
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                    user__branch_id=master_bid,
+                ),
+                'created_at', start_d, end_d,
             )
 
         subs_txn_cur = _txn_in_range(cur_start, next_start).count()
@@ -92,11 +92,12 @@ class BranchDashboardSummaryView(APIView):
 
         def _revenue_in_range(start_d, end_d):
             return (
-                Transaction.objects.filter(
-                    payment_status=Transaction.STATUS_SUCCESS,
-                    user__branch_id=master_bid,
-                    created_at__date__gte=start_d,
-                    created_at__date__lt=end_d,
+                filter_created_in_date_range(
+                    Transaction.objects.filter(
+                        payment_status=Transaction.STATUS_SUCCESS,
+                        user__branch_id=master_bid,
+                    ),
+                    'created_at', start_d, end_d,
                 ).aggregate(v=Coalesce(Sum("total_amount"), Decimal("0")))["v"]
                 or Decimal("0")
             )
@@ -139,11 +140,13 @@ class BranchRevenueTrendView(APIView):
         end_exclusive = add_months(months[-1], 1)
 
         rows = (
-            Transaction.objects.filter(
-                payment_status=Transaction.STATUS_SUCCESS,
-                user__branch_id=master_bid,
+            filter_created_in_date_range(
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    user__branch_id=master_bid,
+                ),
+                'created_at', start, end_exclusive,
             )
-            .filter(created_at__date__gte=start, created_at__date__lt=end_exclusive)
             .annotate(month=TruncMonth("created_at"))
             .values("month")
             .annotate(total=Coalesce(Sum("total_amount"), Decimal("0")))

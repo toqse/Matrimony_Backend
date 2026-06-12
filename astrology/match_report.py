@@ -1,15 +1,19 @@
 """
-Horoscope Matching Report PDF — 3-page compatibility document.
-Rendered via WeasyPrint (HTML/CSS), same stack as Jathagam / Thalakkuri.
+Horoscope Matching Report PDF — Kerala-style 3-page compatibility document.
+
+Rendered with ReportLab via the framework-agnostic renderer in
+``horoscope_report.py`` (repo root). This module is the Django adapter: it maps
+``HoroscopeProfile`` / porutham data into the renderer's plain-dict contract.
+The same ``generate_match_report_pdf`` is used by the user site
+(``astrology.views.MatchReportMeView``) and the admin/staff/branch panels
+(``admin_panel.horoscope_mgmt``), so both surfaces share one report.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import sys
 from typing import Any
 
 from django.conf import settings
-from django.template.loader import render_to_string
 from django.utils import timezone
 
 from astrology.charts import (
@@ -20,59 +24,55 @@ from astrology.charts import (
     star_name,
 )
 from astrology.porutham import calculate_porutham
-from astrology.thalakkuri_calc import build_chart_rows
 
-PORUTHAM_ROWS: tuple[tuple[str, str], ...] = (
-    ('dinam', 'Dinam'),
-    ('ganam', 'Ganam'),
-    ('mahendra', 'Mahendram'),
-    ('sthree_deerga', 'Sthree Deergham'),
-    ('yoni', 'Yoni'),
-    ('rasi', 'Rasi'),
-    ('rasyadhipam', 'Rasyadhipathi'),
-    ('vasyam', 'Vasyam'),
-    ('rajju_dosham', 'Rajju'),
-    ('vedha_dosham', 'Vedha'),
+# key (porutham result) -> (English label, one-line significance)
+PORUTHAM_ROWS: tuple[tuple[str, str, str], ...] = (
+    ('dinam', 'Dinam', 'Health & longevity'),
+    ('ganam', 'Ganam', 'Temperament & nature'),
+    ('mahendra', 'Mahendram', 'Prosperity & progeny'),
+    ('sthree_deerga', 'Sthree Deergham', 'Long married life'),
+    ('yoni', 'Yoni', 'Physical compatibility'),
+    ('rasi', 'Rasi', 'Mental harmony'),
+    ('rasyadhipam', 'Rasyadhipathi', 'Ruling lords match'),
+    ('vasyam', 'Vasyam', 'Mutual attraction'),
+    ('rajju_dosham', 'Rajju', 'Life span protection'),
+    ('vedha_dosham', 'Vedha', 'Absence of affliction'),
 )
 
 
-def _score_color(score: int) -> str:
-    if score <= 3:
-        return '#c0392b'
-    if score <= 6:
-        return '#e67e22'
-    if score <= 8:
-        return '#1e8449'
-    return '#0b5d1e'
-
-
-def _photo_uri(photo_field) -> str | None:
-    if not photo_field or not getattr(photo_field, 'name', None):
-        return None
+def _import_renderer():
+    """Import the repo-root ``horoscope_report`` renderer, fixing sys.path."""
     try:
-        path = photo_field.path
-    except (ValueError, AttributeError):
-        return None
-    if path and os.path.exists(path):
-        return Path(path).as_uri()
-    return None
+        import horoscope_report  # noqa: WPS433
+    except ImportError:
+        base = str(getattr(settings, 'BASE_DIR', '') or '')
+        if base and base not in sys.path:
+            sys.path.insert(0, base)
+        import horoscope_report  # noqa: WPS433
+    return horoscope_report
 
 
-def _person_dict(hp, user, photo_field) -> dict[str, Any]:
+def _person_dict(hp, user, role: str) -> dict[str, Any]:
     name = (hp.pr_name or getattr(user, 'name', '') or '').strip()
     balance = format_dasa_balance(hp.pr_dasabalance)
+    horoscope_report = _import_renderer()
     return {
+        'role': role,
         'name': name,
-        'matri_id': getattr(user, 'matri_id', '') or '',
-        'initial': (name[0] if name else '?').upper(),
-        'photo_uri': _photo_uri(photo_field),
-        'nakshatra': hp.star_name or star_name(hp.pr_star),
-        'padam': hp.pr_pada if hp.pr_pada else '—',
-        'rasi': hp.rasi_sign or moon_rasi_name(hp.pr_rasi),
-        'lagnam': hp.lagnam or lagnam_name(hp.pr_rasi),
-        'dasa_balance': balance.get('balance_text', '') or '—',
-        'dasa_lord': dasa_lord(hp.pr_star) or '—',
-        'rasi_rows': build_chart_rows(hp.pr_rasi),
+        'am_id': getattr(user, 'matri_id', '') or '',
+        'nakshatra': hp.star_name or star_name(hp.pr_star) or '\u2014',
+        'padam': hp.pr_pada if hp.pr_pada else '\u2014',
+        'rasi': hp.rasi_sign or moon_rasi_name(hp.pr_rasi) or '\u2014',
+        'lagnam': hp.lagnam or lagnam_name(hp.pr_rasi) or '\u2014',
+        'dasa': balance.get('balance_text', '') or '\u2014',
+        'lord': dasa_lord(hp.pr_star) or '\u2014',
+        'placements': horoscope_report.placements_from_pr_rasi(hp.pr_rasi),
+        'amsa_placements': horoscope_report.placements_from_pr_rasi(
+            getattr(hp, 'pr_amsa', '') or ''
+        ),
+        'bhava_placements': horoscope_report.placements_from_pr_rasi(
+            getattr(hp, 'pr_bhav', '') or ''
+        ),
     }
 
 
@@ -81,23 +81,22 @@ def build_match_report_context(
     groom_hp,
     bride_user,
     groom_user,
-    bride_photo=None,
+    bride_photo=None,  # kept for signature compatibility; unused by ReportLab.
     groom_photo=None,
 ) -> dict[str, Any]:
     porutham = calculate_porutham(bride_hp, groom_hp)
     poruthams = porutham.get('poruthams') or {}
-    score = int(porutham.get('score') or 0)
     max_score = int(porutham.get('max_score') or 10)
-    matched_count = sum(1 for v in poruthams.values() if v)
+    matched_count = sum(1 for _key, _label, _sig in PORUTHAM_ROWS if poruthams.get(_key))
     unmatched_count = max_score - matched_count
 
-    porutham_table = [
+    rows = [
         {
-            'key': key,
-            'label': label,
+            'english': label,
+            'significance': significance,
             'matched': bool(poruthams.get(key)),
         }
-        for key, label in PORUTHAM_ROWS
+        for key, label, significance in PORUTHAM_ROWS
     ]
 
     bride_name = (bride_hp.pr_name or bride_user.name or '').strip()
@@ -105,18 +104,16 @@ def build_match_report_context(
     generated_at = timezone.localtime(timezone.now())
 
     return {
-        'bride_name': bride_name,
-        'groom_name': groom_name,
-        'generated_date': generated_at.strftime('%d-%m-%Y %H:%M'),
-        'score': score,
-        'max_score': max_score,
-        'overall_result': porutham.get('overall_result') or porutham.get('result') or '',
-        'matched_count': matched_count,
-        'unmatched_count': unmatched_count,
-        'score_color': _score_color(score),
-        'porutham_table': porutham_table,
-        'bride': _person_dict(bride_hp, bride_user, bride_photo),
-        'groom': _person_dict(groom_hp, groom_user, groom_photo),
+        'couple': f'{bride_name} & {groom_name}'.strip(' &'),
+        'date': generated_at.strftime('%d-%m-%Y %H:%M'),
+        'score': matched_count,
+        'max': max_score,
+        'overall': porutham.get('overall_result') or porutham.get('result') or '',
+        'matched': matched_count,
+        'unmatched': unmatched_count,
+        'rows': rows,
+        'bride': _person_dict(bride_hp, bride_user, 'BRIDE'),
+        'groom': _person_dict(groom_hp, groom_user, 'GROOM'),
     }
 
 
@@ -128,18 +125,11 @@ def generate_match_report_pdf(
     bride_photo=None,
     groom_photo=None,
 ) -> tuple[bytes, str]:
-    ctx = build_match_report_context(
+    report = build_match_report_context(
         bride_hp,
         groom_hp,
         bride_user,
         groom_user,
-        bride_photo=bride_photo,
-        groom_photo=groom_photo,
     )
-    html = render_to_string('astrology/match_report.html', ctx)
-    try:
-        from weasyprint import HTML
-        base = str(settings.MEDIA_ROOT) if settings.MEDIA_ROOT else None
-        return HTML(string=html, base_url=base).write_pdf(), 'pdf'
-    except Exception:
-        return html.encode('utf-8'), 'html'
+    horoscope_report = _import_renderer()
+    return horoscope_report.build_horoscope_report_pdf(report), 'pdf'

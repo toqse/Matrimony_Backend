@@ -15,6 +15,7 @@ from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.commissions.models import Commission
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.subscriptions.models import CustomerStaffAssignment
+from core.datetime_ranges import filter_created_in_date_range
 from plans.models import Transaction
 
 
@@ -111,51 +112,53 @@ def build_summary_payload(staff: StaffProfile) -> dict:
     prev_month_start = _add_months(month_start, -1)
 
     my_profiles_total = CustomerStaffAssignment.objects.filter(staff=staff).count()
-    curr_assignments = CustomerStaffAssignment.objects.filter(
-        staff=staff,
-        created_at__date__gte=month_start,
-        created_at__date__lt=next_month,
+    curr_assignments = filter_created_in_date_range(
+        CustomerStaffAssignment.objects.filter(staff=staff),
+        'created_at', month_start, next_month,
     ).count()
-    prev_assignments = CustomerStaffAssignment.objects.filter(
-        staff=staff,
-        created_at__date__gte=prev_month_start,
-        created_at__date__lt=month_start,
+    prev_assignments = filter_created_in_date_range(
+        CustomerStaffAssignment.objects.filter(staff=staff),
+        'created_at', prev_month_start, month_start,
     ).count()
     profiles_growth = curr_assignments - prev_assignments
 
-    curr_txns = Transaction.objects.filter(
-        payment_status=Transaction.STATUS_SUCCESS,
-        transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-        user__staff_assignment__staff=staff,
-        created_at__date__gte=month_start,
-        created_at__date__lt=next_month,
+    curr_txns = filter_created_in_date_range(
+        Transaction.objects.filter(
+            payment_status=Transaction.STATUS_SUCCESS,
+            transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+            user__staff_assignment__staff=staff,
+        ),
+        'created_at', month_start, next_month,
     )
-    prev_txns = Transaction.objects.filter(
-        payment_status=Transaction.STATUS_SUCCESS,
-        transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-        user__staff_assignment__staff=staff,
-        created_at__date__gte=prev_month_start,
-        created_at__date__lt=month_start,
+    prev_txns = filter_created_in_date_range(
+        Transaction.objects.filter(
+            payment_status=Transaction.STATUS_SUCCESS,
+            transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+            user__staff_assignment__staff=staff,
+        ),
+        'created_at', prev_month_start, month_start,
     )
     subscriptions_this_month = curr_txns.count()
     subscriptions_prev_month = prev_txns.count()
     subscriptions_growth = subscriptions_this_month - subscriptions_prev_month
 
     comm_curr = (
-        Commission.objects.filter(
-            staff=staff,
-            status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
-            created_at__date__gte=month_start,
-            created_at__date__lt=next_month,
+        filter_created_in_date_range(
+            Commission.objects.filter(
+                staff=staff,
+                status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
+            ),
+            'created_at', month_start, next_month,
         ).aggregate(v=Coalesce(Sum("commission_amt"), Decimal("0")))["v"]
         or Decimal("0")
     )
     comm_prev = (
-        Commission.objects.filter(
-            staff=staff,
-            status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
-            created_at__date__gte=prev_month_start,
-            created_at__date__lt=month_start,
+        filter_created_in_date_range(
+            Commission.objects.filter(
+                staff=staff,
+                status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
+            ),
+            'created_at', prev_month_start, month_start,
         ).aggregate(v=Coalesce(Sum("commission_amt"), Decimal("0")))["v"]
         or Decimal("0")
     )

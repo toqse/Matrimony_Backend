@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from core.datetime_ranges import filter_created_in_date_range, filter_created_on_date
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.auth.serializers import normalize_admin_role
@@ -96,30 +97,30 @@ class SummaryView(APIView):
             prev_month_start = _add_months(month_start, -1)
 
             my_profiles = CustomerStaffAssignment.objects.filter(staff=staff_profile).count()
-            curr_profiles = CustomerStaffAssignment.objects.filter(
-                staff=staff_profile,
-                created_at__date__gte=month_start,
-                created_at__date__lt=next_month,
+            curr_profiles = filter_created_in_date_range(
+                CustomerStaffAssignment.objects.filter(staff=staff_profile),
+                'created_at', month_start, next_month,
             ).count()
-            prev_profiles = CustomerStaffAssignment.objects.filter(
-                staff=staff_profile,
-                created_at__date__gte=prev_month_start,
-                created_at__date__lt=month_start,
+            prev_profiles = filter_created_in_date_range(
+                CustomerStaffAssignment.objects.filter(staff=staff_profile),
+                'created_at', prev_month_start, month_start,
             ).count()
 
-            curr_txns = Transaction.objects.filter(
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-                user__staff_assignment__staff=staff_profile,
-                created_at__date__gte=month_start,
-                created_at__date__lt=next_month,
+            curr_txns = filter_created_in_date_range(
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                    user__staff_assignment__staff=staff_profile,
+                ),
+                'created_at', month_start, next_month,
             )
-            prev_txns = Transaction.objects.filter(
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-                user__staff_assignment__staff=staff_profile,
-                created_at__date__gte=prev_month_start,
-                created_at__date__lt=month_start,
+            prev_txns = filter_created_in_date_range(
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                    user__staff_assignment__staff=staff_profile,
+                ),
+                'created_at', prev_month_start, month_start,
             )
 
             subscriptions_this_month = curr_txns.count()
@@ -128,20 +129,22 @@ class SummaryView(APIView):
             revenue_prev_month = prev_txns.aggregate(v=Coalesce(Sum("total_amount"), Decimal("0")))["v"] or Decimal("0")
 
             comm_curr = (
-                Commission.objects.filter(
-                    staff=staff_profile,
-                    status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
-                    created_at__date__gte=month_start,
-                    created_at__date__lt=next_month,
+                filter_created_in_date_range(
+                    Commission.objects.filter(
+                        staff=staff_profile,
+                        status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
+                    ),
+                    'created_at', month_start, next_month,
                 ).aggregate(v=Coalesce(Sum("commission_amt"), Decimal("0")))["v"]
                 or Decimal("0")
             )
             comm_prev = (
-                Commission.objects.filter(
-                    staff=staff_profile,
-                    status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
-                    created_at__date__gte=prev_month_start,
-                    created_at__date__lt=month_start,
+                filter_created_in_date_range(
+                    Commission.objects.filter(
+                        staff=staff_profile,
+                        status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
+                    ),
+                    'created_at', prev_month_start, month_start,
                 ).aggregate(v=Coalesce(Sum("commission_amt"), Decimal("0")))["v"]
                 or Decimal("0")
             )
@@ -169,18 +172,21 @@ class SummaryView(APIView):
         next_month = _add_months(month_start, 1)
 
         total_users = User.objects.count()
-        todays_registrations = User.objects.filter(created_at__date=today).count()
-        active_profiles = User.objects.filter(is_registration_profile_completed=True).count()
+        todays_registrations = filter_created_on_date(User.objects.all(), 'created_at', today).count()
+        active_profiles = User.objects.filter(
+            role="user", is_active=True, is_blocked=False
+        ).count()
 
         total_subscriptions = _active_subscription_qs(today).count()
 
         # MRR: treat as "current month plan revenue" (sum of successful plan_purchase total_amount)
         mrr = (
-            Transaction.objects.filter(
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-                created_at__date__gte=month_start,
-                created_at__date__lt=next_month,
+            filter_created_in_date_range(
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                ),
+                'created_at', month_start, next_month,
             ).aggregate(v=Coalesce(Sum("total_amount"), Decimal("0")))["v"]
             or Decimal("0")
         )
@@ -225,11 +231,12 @@ class MonthlyRevenueView(APIView):
             end_exclusive = _add_months(months[-1], 1)
 
             rows = (
-                Commission.objects.filter(
-                    staff=staff_profile,
-                    status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
-                    created_at__date__gte=start,
-                    created_at__date__lt=end_exclusive,
+                filter_created_in_date_range(
+                    Commission.objects.filter(
+                        staff=staff_profile,
+                        status__in=[Commission.STATUS_APPROVED, Commission.STATUS_PAID],
+                    ),
+                    'created_at', start, end_exclusive,
                 )
                 .annotate(month=TruncMonth("created_at"))
                 .values("month")
@@ -252,8 +259,10 @@ class MonthlyRevenueView(APIView):
         end_exclusive = _add_months(months[-1], 1)
 
         rows = (
-            Transaction.objects.filter(payment_status=Transaction.STATUS_SUCCESS)
-            .filter(created_at__date__gte=start, created_at__date__lt=end_exclusive)
+            filter_created_in_date_range(
+                Transaction.objects.filter(payment_status=Transaction.STATUS_SUCCESS),
+                'created_at', start, end_exclusive,
+            )
             .annotate(month=TruncMonth("created_at"))
             .values("month")
             .annotate(total=Coalesce(Sum("total_amount"), Decimal("0")))
@@ -282,11 +291,13 @@ class SubscriptionGrowthView(APIView):
         end_exclusive = _add_months(months[-1], 1)
 
         rows = (
-            Transaction.objects.filter(
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+            filter_created_in_date_range(
+                Transaction.objects.filter(
+                    payment_status=Transaction.STATUS_SUCCESS,
+                    transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+                ),
+                'created_at', start, end_exclusive,
             )
-            .filter(created_at__date__gte=start, created_at__date__lt=end_exclusive)
             .annotate(month=TruncMonth("created_at"))
             .values("month")
             .annotate(count=Count("id"))
@@ -318,7 +329,7 @@ class BranchPerformanceView(APIView):
             .order_by()
         )
         # Django <5 doesn't support Count(filter=None) for conditional; do separate query for today:
-        today_users = User.objects.filter(created_at__date=today).values("branch_id").annotate(c=Count("id"))
+        today_users = filter_created_on_date(User.objects.all(), 'created_at', today).values("branch_id").annotate(c=Count("id"))
         today_by_branch = {r["branch_id"]: int(r["c"]) for r in today_users}
 
         users_by_branch = {r["branch_id"]: int(r["total_users"]) for r in users}

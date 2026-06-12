@@ -317,7 +317,7 @@ def get_plan_info_for_response(user):
     return {
         'is_plan_active': True,
         'plan_name': p.name,
-        'valid_until': up.valid_until.isoformat() if up.valid_until else None,
+        'valid_until': up.valid_until.strftime('%d-%m-%Y') if up.valid_until else None,
         'profile_views_remaining': _rem(p.profile_view_limit, up.profile_views_used, getattr(up, 'profile_view_bonus', 0) or 0),
         'interests_remaining': _rem(p.interest_limit, up.interests_used, getattr(up, 'interest_bonus', 0) or 0),
         'chat_remaining': _rem(p.chat_limit, up.chat_used, getattr(up, 'chat_bonus', 0) or 0),

@@ -86,16 +86,42 @@ class EnquiryMoveSerializer(serializers.Serializer):
 
 
 class EnquiryAssignSerializer(serializers.Serializer):
-    staff_id = serializers.IntegerField()
+    # Accepts either a numeric AdminUser id (e.g. 2) or an employee code
+    # (e.g. "EMP005"). Normalizes to the AdminUser pk in validated_data.
+    staff_id = serializers.CharField(
+        error_messages={
+            "blank": "Staff is required.",
+            "required": "Staff is required.",
+            "null": "Staff is required.",
+        }
+    )
 
     def validate_staff_id(self, value):
         from admin_panel.auth.models import AdminUser
+        from admin_panel.staff_mgmt.models import StaffProfile
 
-        try:
-            AdminUser.objects.get(id=value, is_active=True)
-        except AdminUser.DoesNotExist:
+        raw = str(value).strip()
+        if not raw:
+            raise serializers.ValidationError("Staff is required.")
+
+        admin_user = None
+
+        if raw.isdigit():
+            admin_user = AdminUser.objects.filter(id=int(raw), is_active=True).first()
+
+        if admin_user is None:
+            sp = (
+                StaffProfile.objects.select_related("admin_user")
+                .filter(emp_code__iexact=raw, is_deleted=False)
+                .first()
+            )
+            if sp and sp.admin_user_id and sp.admin_user.is_active:
+                admin_user = sp.admin_user
+
+        if admin_user is None:
             raise serializers.ValidationError("Staff not found or inactive.")
-        return value
+
+        return admin_user.pk
 
 
 class EnquiryNoteCreateSerializer(serializers.Serializer):
