@@ -68,17 +68,33 @@ def _match_list_response(request, *, home_slider=False):
     """
     qs = _match_queryset(request)
 
-    # Apply viewer's stored partner religion/caste preference (matches depend on it)
+    # Parse age / religion / caste query params once (explicit filters override saved prefs)
+    try:
+        age_min = int(request.query_params.get('age_min')) if request.query_params.get('age_min') else None
+    except (TypeError, ValueError):
+        age_min = None
+    try:
+        age_max = int(request.query_params.get('age_max')) if request.query_params.get('age_max') else None
+    except (TypeError, ValueError):
+        age_max = None
+    has_age_filter = age_min is not None or age_max is not None
+
+    religion_id = _optional_fk_id(request.query_params.get('religion_id'))
+    caste_id = _optional_fk_id(request.query_params.get('caste_id'))
+    has_religion_caste_filter = religion_id is not None or caste_id is not None
+
+    # Saved partner preferences apply only when the corresponding query param is absent
     viewer_rel = UserReligion.objects.filter(user=request.user).first()
     if viewer_rel:
-        qs = apply_partner_preference(qs, viewer_rel)
-        qs = apply_partner_age_preference(qs, viewer_rel)
+        if not has_religion_caste_filter:
+            qs = apply_partner_preference(qs, viewer_rel)
+        if not has_age_filter:
+            qs = apply_partner_age_preference(qs, viewer_rel)
     # Profile visibility: hidden -> exclude; premium_only -> show only to viewers with active plan
     qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
     viewer_has_plan = _get_user_plan(request.user) is not None
     if not viewer_has_plan:
         qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
-    # Query params religion_id/caste_id further narrow (intersection)
     qs = qs.distinct()
 
     # Search: name, matri_id, education, occupation
@@ -91,16 +107,8 @@ def _match_list_response(request, *, home_slider=False):
             Q(user_education__occupation__name__icontains=search)
         ).distinct()
 
-    # Age filter
-    try:
-        age_min = int(request.query_params.get('age_min')) if request.query_params.get('age_min') else None
-    except (TypeError, ValueError):
-        age_min = None
-    try:
-        age_max = int(request.query_params.get('age_max')) if request.query_params.get('age_max') else None
-    except (TypeError, ValueError):
-        age_max = None
-    if age_min is not None or age_max is not None:
+    # Age filter (explicit query params only; saved preference applied above when absent)
+    if has_age_filter:
         dob_min, dob_max = dob_range_for_age(age_min, age_max)
         if dob_min is not None:
             qs = qs.filter(dob__gte=dob_min)
@@ -124,10 +132,8 @@ def _match_list_response(request, *, home_slider=False):
         qs = qs.filter(user_personal__height__value_cm__lte=height_max)
 
     # Optional filters (FK ids; skip 0/any so "Any" in UI does not filter to id=0)
-    religion_id = _optional_fk_id(request.query_params.get('religion_id'))
     if religion_id is not None:
         qs = qs.filter(user_religion__religion_id=religion_id)
-    caste_id = _optional_fk_id(request.query_params.get('caste_id'))
     if caste_id is not None:
         qs = qs.filter(user_religion__caste_fk_id=caste_id)
     education_id = _optional_fk_id(request.query_params.get('education_id'))
