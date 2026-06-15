@@ -140,6 +140,19 @@ def _match_list_response(request, *, home_slider=False):
     if marital_status_id is not None:
         qs = qs.filter(user_personal__marital_status_id=marital_status_id)
 
+    country_id = _optional_fk_id(request.query_params.get('country_id'))
+    if country_id is not None:
+        qs = qs.filter(user_location__country_id=country_id)
+    state_id = _optional_fk_id(request.query_params.get('state_id'))
+    if state_id is not None:
+        qs = qs.filter(user_location__state_id=state_id)
+    district_id = _optional_fk_id(request.query_params.get('district_id'))
+    if district_id is not None:
+        qs = qs.filter(user_location__district_id=district_id)
+    city_id = _optional_fk_id(request.query_params.get('city_id'))
+    if city_id is not None:
+        qs = qs.filter(user_location__city_id=city_id)
+
     # Only with profile photo
     if _wants_profile_with_photo(request):
         qs = qs.filter(user_photos__profile_photo__isnull=False)
@@ -320,7 +333,8 @@ class MatchListView(APIView):
     """
     GET /api/v1/matches/
     Query params: page, limit, search, age_min, age_max, height_min, height_max,
-    religion_id, caste_id, education_id, occupation_id, marital_status, profile_with_photo, sort_by.
+    religion_id, caste_id, education_id, occupation_id, marital_status,
+    country_id, state_id, district_id, city_id, profile_with_photo, sort_by.
     Ordering is by sort_by only (not by ProfileView). Use GET /api/v1/matches/home-slider/ for unviewed-first ordering.
     """
     permission_classes = [IsAuthenticated]
