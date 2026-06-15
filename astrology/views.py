@@ -261,6 +261,17 @@ class PoruthamCheckView(APIView):
                 or None
             )
 
+        def _place_of_birth(user):
+            profile = getattr(user, 'user_profile', None)
+            return (getattr(profile, 'place_of_birth', '') or '').strip()
+
+        def _grahanila_horoscope_payload(hp, user):
+            payload = HoroscopeProfilePublicSerializer(hp).data
+            payload['pr_dob'] = hp.pr_dob.isoformat() if hp.pr_dob else None
+            payload['pr_tob'] = hp.pr_tob.isoformat() if hp.pr_tob else None
+            payload['place_of_birth'] = _place_of_birth(user)
+            return payload
+
         # Downloadable PDF match report URL for this exact bride/groom pair.
         # Signed so the link works without a JWT in the browser.
         report_rel = reverse('astrology:match_report_me')
@@ -285,14 +296,14 @@ class PoruthamCheckView(APIView):
                 'name': bride_user.name,
                 'gender': bride_user.gender,
                 'profile_photo': _profile_photo(bride_user),
-                'horoscope': HoroscopeProfilePublicSerializer(bride_hp).data,
+                'horoscope': _grahanila_horoscope_payload(bride_hp, bride_user),
             },
             'groom': {
                 'matri_id': groom_user.matri_id,
                 'name': groom_user.name,
                 'gender': groom_user.gender,
                 'profile_photo': _profile_photo(groom_user),
-                'horoscope': HoroscopeProfilePublicSerializer(groom_hp).data,
+                'horoscope': _grahanila_horoscope_payload(groom_hp, groom_user),
             },
         }
 
