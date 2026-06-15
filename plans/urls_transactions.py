@@ -4,6 +4,7 @@ from .views_transactions import (
     TransactionSummaryView,
     TransactionListView,
     TransactionCountView,
+    TransactionOverviewView,
     TransactionDetailView,
 )
 
@@ -11,5 +12,6 @@ urlpatterns = [
     path('', TransactionListView.as_view()),
     path('summary/', TransactionSummaryView.as_view()),
     path('count/', TransactionCountView.as_view()),
+    path('overview/', TransactionOverviewView.as_view()),
     path('<str:transaction_id>/', TransactionDetailView.as_view()),
 ]
