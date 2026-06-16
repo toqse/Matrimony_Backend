@@ -4,6 +4,8 @@ Direct Python conversion of VB source code.
 DO NOT modify the logic of any function.
 """
 
+from datetime import date, datetime, timedelta
+
 # ── Grade constants ───────────────────────────────────────────
 UTHAMAM   = 1
 MADHYAMAM = 2
@@ -411,6 +413,150 @@ def calc_papatha(arr):
     return tp
 
 
+# ── Papasamyam ────────────────────────────────────────────────
+# NOTE: The pasted VB source provides CalcPapatha (the per-chart papa score,
+# ported above as ``calc_papatha``) but no bride/groom comparison routine, so
+# the rule below follows the standard Kerala convention. Swap the body when the
+# precise VB logic is supplied.
+
+
+def papa_samyam(bride_papatha, groom_papatha):
+    """
+    Papasamyam — balance of malefic (papa) strength between the two charts.
+    Returns True (favourable) when the groom's papa is greater than or equal to
+    the bride's, i.e. the bride does not carry the heavier affliction.
+    Reuses the existing ``calc_papatha`` scores.
+    """
+    return float(groom_papatha or 0) >= float(bride_papatha or 0)
+
+
+# ── Dasa Sandhi (VB dsandhipor / dasa_sandhi / dasas) ─────────
+# Vimshottari dasha sequence as used by the VB engine: (name, years).
+# 1-indexed to mirror VB DasaName(RowId, ...); index 0 is unused.
+DASA_TABLE = [
+    ('', 0),
+    ('BUDHAN', 17),
+    ('KETHU', 7),
+    ('SUKRAN', 20),
+    ('RAVI', 6),
+    ('CHANDRAN', 10),
+    ('KUJAN', 7),
+    ('RAHU', 18),
+    ('GURU', 16),
+    ('SANI', 19),
+]
+
+# VB builds d_array(1..15): row 1 (running dasha) + 14 following dashas.
+DASA_ROWS = 15
+DASA_DAYS_PER_YEAR = 365.25
+
+
+def _to_date(value):
+    """Coerce a date/datetime to a plain date; return None otherwise."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def build_dasa_end_dates(starcode, sistadura, dob):
+    """
+    VB ``dasas`` + ``get_dasa1``: list of dasha END dates, 1-indexed (idx 0
+    unused). Row 1 = the dasha running at birth, ending at ``dob + sistadura``
+    days (the sishta balance). Rows 2..15 = following dashas in Vimshottari
+    order, each Int(365.25 * years) long. Returns None if inputs are unusable.
+    """
+    dob = _to_date(dob)
+    if dob is None or starcode is None or sistadura is None:
+        return None
+    try:
+        starcode = int(starcode)
+        sistadura = int(sistadura)
+    except (TypeError, ValueError):
+        return None
+
+    # get_dasa1: dasa_ord = (starcode Mod 9) + 1
+    dasacode = (starcode % 9) + 1
+    ends = [None] * (DASA_ROWS + 1)
+    ends[1] = dob + timedelta(days=sistadura)
+    for i in range(2, DASA_ROWS + 1):
+        dasacode = (dasacode % 9) + 1
+        years = DASA_TABLE[dasacode][1]
+        ends[i] = ends[i - 1] + timedelta(days=int(DASA_DAYS_PER_YEAR * years))
+    return ends
+
+
+def _dasa_sandhi_text(s_star, s_dob, s_sista, p_star, p_dob, p_sista, today=None):
+    """
+    VB ``dasa_sandhi``: returns a non-empty string (the colliding dasha-change
+    dates) when bride and groom dasha junctions fall within 365 days of each
+    other within the next 70 years; returns '' when there is no sandhi.
+    """
+    today = _to_date(today) or date.today()
+    s_dob = _to_date(s_dob)
+    p_dob = _to_date(p_dob)
+    s_arr = build_dasa_end_dates(s_star, s_sista, s_dob)
+    p_arr = build_dasa_end_dates(p_star, p_sista, p_dob)
+    if s_arr is None or p_arr is None:
+        return ''
+
+    seventy_years = 70 * DASA_DAYS_PER_YEAR
+
+    # Advance bride counter to the first dasha boundary after today.
+    cntr1 = 1
+    s_d_date = s_dob
+    while s_d_date <= today:
+        cntr1 += 1
+        if cntr1 > DASA_ROWS:
+            return ''
+        s_d_date = s_arr[cntr1]
+
+    # Advance groom counter to the first dasha boundary after today.
+    cntr2 = 1
+    p_d_date = p_dob
+    while p_d_date <= today:
+        cntr2 += 1
+        if cntr2 > DASA_ROWS:
+            return ''
+        p_d_date = p_arr[cntr2]
+
+    stcntr2 = cntr2
+
+    while (s_d_date - s_dob).days <= seventy_years:
+        if cntr1 > DASA_ROWS:
+            break
+        s_d_date = s_arr[cntr1]
+        cntr2 = stcntr2 if cntr2 <= stcntr2 + 2 else cntr2 - 2
+        if cntr2 > DASA_ROWS:
+            break
+        p_d_date = p_arr[cntr2]
+        while (
+            (p_d_date - p_dob).days < seventy_years
+            and (p_d_date - s_d_date).days < 500
+        ):
+            if cntr2 > DASA_ROWS:
+                break
+            p_d_date = p_arr[cntr2]
+            if abs((s_d_date - p_d_date).days) < 365:
+                return f'{s_d_date.isoformat()} {p_d_date.isoformat()}'
+            cntr2 += 1
+        cntr1 += 1
+
+    return ''
+
+
+def dasa_sandhi(s_star, s_dob, s_sista, p_star, p_dob, p_sista, today=None):
+    """
+    VB ``dsandhipor``: ``dasa_sandhi(...) = ""``. Returns True (favourable /
+    safe) when there is NO dasa sandhi between the two charts, matching the
+    convention used by the other dosham booleans here (True = compatible).
+    """
+    return _dasa_sandhi_text(
+        s_star, s_dob, s_sista, p_star, p_dob, p_sista, today
+    ) == ''
+
+
 # ── Main calculation function ─────────────────────────────────
 
 def calculate_porutham(bride_hp, groom_hp):
@@ -450,6 +596,18 @@ def calculate_porutham(bride_hp, groom_hp):
         'groom_papatha': calc_papatha(p_arr),
     }
 
+    results['papa_samyam'] = papa_samyam(
+        results['bride_papatha'], results['groom_papatha']
+    )
+    results['dasa_sandhi'] = dasa_sandhi(
+        getattr(bride_hp, 'pr_star', None),
+        getattr(bride_hp, 'pr_dob', None),
+        getattr(bride_hp, 'pr_dasabalance', None),
+        getattr(groom_hp, 'pr_star', None),
+        getattr(groom_hp, 'pr_dob', None),
+        getattr(groom_hp, 'pr_dasabalance', None),
+    )
+
     grade_keys = [
         'dinam', 'ganam', 'mahendra', 'sthree_deerga', 'yoni',
         'rasi', 'rasyadhipam', 'vasyam', 'rajju_dosham', 'vedha_dosham',
@@ -463,15 +621,19 @@ def calculate_porutham(bride_hp, groom_hp):
     results['has_dosha'] = (
         any(results[k] == NEECHAM for k in ['rajju_dosham', 'vedha_dosham'])
         or results['chovva_dosham'] is False
+        or results['papa_samyam'] is False
+        or results['dasa_sandhi'] is False
     )
 
+    # max_score stays at 10 (uthamam_count). Papasamyam / dasa-sandhi do not add
+    # to the count but demote the overall grade by one tier each when they fail.
+    tiers = ['Not Recommended', 'Average', 'Good', 'Excellent']
     u = results['uthamam_count']
-    results['overall_result'] = (
-        'Excellent'       if u >= 8 else
-        'Good'            if u >= 6 else
-        'Average'         if u >= 4 else
-        'Not Recommended'
+    base_tier = 3 if u >= 8 else 2 if u >= 6 else 1 if u >= 4 else 0
+    demotion = (0 if results['papa_samyam'] else 1) + (
+        0 if results['dasa_sandhi'] else 1
     )
+    results['overall_result'] = tiers[max(0, base_tier - demotion)]
 
     # Grade strings for API response
     grade_map = {UTHAMAM: 'uthamam', MADHYAMAM: 'madhyamam',
@@ -480,6 +642,27 @@ def calculate_porutham(bride_hp, groom_hp):
 
     # Boolean pass/fail (Uthamam only = True)
     results['poruthams'] = {k: results[k] == UTHAMAM for k in grade_keys}
+
+    # Ready-to-render dosham/compatibility checks. Each `matched` is a boolean so
+    # the UI can show a tick (True) / cross (False) exactly like the porutham
+    # rows (Vedha / Rajju / Rasi). True = favourable in every case.
+    results['dosha_checks'] = [
+        {
+            'key': 'chovva_dosham',
+            'label': 'Chovva Dosham',
+            'matched': results['chovva_dosham'] is True,
+        },
+        {
+            'key': 'papa_samyam',
+            'label': 'Papa Samyam',
+            'matched': bool(results['papa_samyam']),
+        },
+        {
+            'key': 'dasa_sandhi',
+            'label': 'Dasa Sandhi',
+            'matched': bool(results['dasa_sandhi']),
+        },
+    ]
 
     results['score']     = results['uthamam_count']
     results['max_score'] = 10

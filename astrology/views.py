@@ -233,6 +233,7 @@ class PoruthamCheckView(APIView):
                 'rajju_dosham': result['rajju_dosham'],
                 'vedha_dosham': result['vedha_dosham'],
                 'chovva_dosham': result['chovva_dosham'],
+                'dasa_sandhi': result['dasa_sandhi'],
                 'bride_papatha': result['bride_papatha'],
                 'groom_papatha': result['groom_papatha'],
                 'total_porutham_count': result['total_porutham_count'],

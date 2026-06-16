@@ -31,6 +31,7 @@ class VbPoruthamSmokeTests(unittest.TestCase):
             'dinam', 'ganam', 'mahendra', 'sthree_deerga', 'yoni',
             'rasi', 'rasyadhipam', 'vasyam', 'rajju_dosham', 'vedha_dosham',
             'chovva_dosham', 'bride_papatha', 'groom_papatha',
+            'papa_samyam', 'dasa_sandhi',
             'poruthams', 'score', 'max_score', 'result', 'overall_result',
         ):
             self.assertIn(k, out)

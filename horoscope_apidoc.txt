@@ -257,9 +257,22 @@ Success 200 — **`data`** is a **single flat object** (not wrapped in `Porutham
   `dinam`, `ganam`, `mahendra`, `sthree_deerga`, `yoni`, `rasi`, `rasyadhipam`, `vasyam`, `rajju_dosham`, `vedha_dosham`
 - **`chovva_dosham`**: boolean or `null` if charts insufficient.
 - **`bride_papatha`**, **`groom_papatha`**: floats.
+- **`papa_samyam`**: boolean. `true` (favourable) when `groom_papatha >= bride_papatha`
+  (bride does not carry the heavier affliction).
+- **`dasa_sandhi`**: boolean (VB `dsandhipor` port). `true` (favourable / safe) when there is
+  **no** dasa sandhi: the engine builds both partners' Vimshottari mahadasha timelines from
+  `pr_star`, `pr_dob` and the sishta balance `pr_dasabalance`, then scans the next 70 years; if any
+  bride/groom dasha-change dates fall within 365 days of each other it is a sandhi (`false`). Also
+  persisted on `PoruthamResult`.
+- **`dosha_checks`**: ready-to-render array for the "Dosha & Compatibility" UI block. Each item is
+  `{ "key", "label", "matched" }` where `matched` is a boolean, so the frontend can show a
+  tick (`true`) / cross (`false`) exactly like the porutham rows (Vedha / Rajju / Rasi).
+  Currently: `chovva_dosham` (Chovva Dosham), `papa_samyam` (Papa Samyam), `dasa_sandhi` (Dasa Sandhi).
+  `true` = favourable in every case.
 - **Counts:** `uthamam_count`, `madhyamam_count`, `adhamam_count`, `total_porutham_count`
-- **`has_dosha`**: boolean summary flag.
-- **`overall_result`**: string such as `Excellent` | `Good` | `Average` | `Not Recommended`
+- **`has_dosha`**: boolean summary flag (also set when `papa_samyam` or `dasa_sandhi` fails).
+- **`overall_result`**: string such as `Excellent` | `Good` | `Average` | `Not Recommended`.
+  `max_score` stays **10**; a failing `papa_samyam` and/or `dasa_sandhi` each demote the grade by one tier.
 - **Backward-compatible keys:**
   - **`poruthams`**: object with the **10** keys above mapped to **boolean** (`true` = that koota is Uthamam only).
   - **`score`**: float, equals **`uthamam_count`**

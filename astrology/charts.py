@@ -120,7 +120,8 @@ def format_dasa_balance(days: int | None) -> dict[str, Any]:
     """
     Format pr_dasabalance (days) as y/m/d text matching the Windows EXE panel.
 
-    Uses 365.25-day years and 365.25/12-day months (matches EXE e.g. 2459 -> 06y 08m 24d).
+    Uses 365.25-day years and 365.25/12-day months with inclusive day counting
+    (matches EXE e.g. 4991 -> 13y 07m 30d, 3599 -> 09y 10m 08d).
     """
     if days is None or days <= 0:
         return {
@@ -130,13 +131,17 @@ def format_dasa_balance(days: int | None) -> dict[str, Any]:
             'balance_text': '',
         }
 
-    years = int(days // DASA_YEAR_DAYS)
+    years = int(days / DASA_YEAR_DAYS)
     rem_days = days - years * DASA_YEAR_DAYS
-    months = int(rem_days // DASA_MONTH_DAYS)
-    rem_day = round(rem_days - months * DASA_MONTH_DAYS) + 1
+    months = int(rem_days / DASA_MONTH_DAYS)
+    # EXE uses inclusive day counting: floor the fractional day, then +1.
+    rem_day = int(rem_days - months * DASA_MONTH_DAYS) + 1
     if rem_day > 30:
         rem_day -= 30
         months += 1
+    if months >= 12:
+        months -= 12
+        years += 1
     return {
         'years': years,
         'months': months,

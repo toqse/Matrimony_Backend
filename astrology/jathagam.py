@@ -4,6 +4,8 @@ Direct conversion from VB source. Do not modify logic.
 """
 from django.template.loader import render_to_string
 
+from .charts import format_dasa_balance
+
 PLANET_ML = {
     'la': 'ല', 'su': 'ര', 'mo': 'ച', 'ma': 'കു',
     'me': 'ബു', 'ju': 'ഗു', 've': 'ശു', 'sa': 'ശ',
@@ -39,19 +41,7 @@ LETTER_TO_SIGN = {c: i + 1 for i, c in enumerate('ABCDEFGHIJKL')}
 def get_dasa_display(days):
     if not days or days <= 0:
         return '00y 00m 00d'
-    y = days / 365.25
-    years = int(y)
-    m = (y - years) * 12
-    months = int(m)
-    d = (m - months) * 30.4375
-    day_rem = round(d) + 1
-    if day_rem > 30:
-        day_rem -= 30
-        months += 1
-    if months >= 12:
-        months = 0
-        years += 1
-    return f'{years:02d}y {months:02d}m {day_rem:02d}d'
+    return format_dasa_balance(days)['balance_text']
 
 
 def decode_chart(chart_str):

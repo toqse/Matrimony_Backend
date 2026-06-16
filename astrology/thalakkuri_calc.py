@@ -174,21 +174,12 @@ def _get_dasa_display(days):
     Always returns a full "X വർഷം Y മാസം Z ദിവസം" string. When the balance is
     null/empty/zero, returns "0 വർഷം 0 മാസം 0 ദിവസം" so the section is never hidden.
     """
+    from .charts import format_dasa_balance
+
     if not days or days <= 0:
         return '0 വർഷം 0 മാസം 0 ദിവസം'
-    y = days / 365.25
-    years = int(y)
-    mo = (y - years) * 12
-    months = int(mo)
-    d = (mo - months) * 30.4375
-    day_r = round(d) + 1
-    if day_r > 30:
-        day_r -= 30
-        months += 1
-    if months >= 12:
-        months = 0
-        years += 1
-    return f'{years} വർഷം {months} മാസം {day_r} ദിവസം'
+    b = format_dasa_balance(days)
+    return f"{b['years']} വർഷം {b['months']} മാസം {b['days']} ദിവസം"
 
 
 # ── Main calculator ──────────────────────────────────────
