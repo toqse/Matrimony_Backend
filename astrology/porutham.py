@@ -415,19 +415,24 @@ def calc_papatha(arr):
 
 # ── Papasamyam ────────────────────────────────────────────────
 # NOTE: The pasted VB source provides CalcPapatha (the per-chart papa score,
-# ported above as ``calc_papatha``) but no bride/groom comparison routine, so
-# the rule below follows the standard Kerala convention. Swap the body when the
-# precise VB logic is supplied.
+# ported above as ``calc_papatha``) but NO bride/groom comparison routine. The
+# rule below follows the traditional "samyam" (balance) meaning: the two charts'
+# papa (affliction) strength must be close. The exact EXE threshold is unknown,
+# so it lives in this one tunable constant — calibrate against EXE samples (or
+# swap the function body) when the precise rule is supplied.
+# Known data point: bride 25.5 vs groom 50.5 (|diff| = 25) -> EXE FAIL.
+PAPA_SAMYAM_TOLERANCE = 10.0
 
 
 def papa_samyam(bride_papatha, groom_papatha):
     """
     Papasamyam — balance of malefic (papa) strength between the two charts.
-    Returns True (favourable) when the groom's papa is greater than or equal to
-    the bride's, i.e. the bride does not carry the heavier affliction.
-    Reuses the existing ``calc_papatha`` scores.
+    Returns True (favourable) when the two papa scores are within
+    ``PAPA_SAMYAM_TOLERANCE`` of each other. Reuses the ``calc_papatha`` scores.
     """
-    return float(groom_papatha or 0) >= float(bride_papatha or 0)
+    return abs(
+        float(bride_papatha or 0) - float(groom_papatha or 0)
+    ) <= PAPA_SAMYAM_TOLERANCE
 
 
 # ── Dasa Sandhi (VB dsandhipor / dasa_sandhi / dasas) ─────────
@@ -625,13 +630,18 @@ def calculate_porutham(bride_hp, groom_hp):
         or results['dasa_sandhi'] is False
     )
 
-    # max_score stays at 10 (uthamam_count). Papasamyam / dasa-sandhi do not add
-    # to the count but demote the overall grade by one tier each when they fail.
+    # max_score stays at 10 (uthamam_count). The three dosha checks (Kuja/Chovva,
+    # Papasamyam, Dasa Sandhi) do NOT change the 10-porutham count/score; they
+    # only demote the overall grade by one tier each when they fail. A check is
+    # "failed" only when explicitly False (chovva_dosham is None when charts are
+    # insufficient -> not counted as a failure).
     tiers = ['Not Recommended', 'Average', 'Good', 'Excellent']
     u = results['uthamam_count']
     base_tier = 3 if u >= 8 else 2 if u >= 6 else 1 if u >= 4 else 0
-    demotion = (0 if results['papa_samyam'] else 1) + (
-        0 if results['dasa_sandhi'] else 1
+    demotion = (
+        (1 if results['chovva_dosham'] is False else 0)
+        + (1 if results['papa_samyam'] is False else 0)
+        + (1 if results['dasa_sandhi'] is False else 0)
     )
     results['overall_result'] = tiers[max(0, base_tier - demotion)]
 

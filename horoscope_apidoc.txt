@@ -257,8 +257,11 @@ Success 200 — **`data`** is a **single flat object** (not wrapped in `Porutham
   `dinam`, `ganam`, `mahendra`, `sthree_deerga`, `yoni`, `rasi`, `rasyadhipam`, `vasyam`, `rajju_dosham`, `vedha_dosham`
 - **`chovva_dosham`**: boolean or `null` if charts insufficient.
 - **`bride_papatha`**, **`groom_papatha`**: floats.
-- **`papa_samyam`**: boolean. `true` (favourable) when `groom_papatha >= bride_papatha`
-  (bride does not carry the heavier affliction).
+- **`papa_samyam`**: boolean. `true` (favourable) when the two charts' papa (affliction) scores are
+  *balanced* — i.e. `abs(bride_papatha - groom_papatha) <= PAPA_SAMYAM_TOLERANCE` (default `10.0`,
+  a tunable constant in `astrology/porutham.py`). The legacy VB had no bride/groom comparison
+  routine, so this tolerance follows the traditional "samyam" (balance) meaning and is calibrated
+  against EXE samples.
 - **`dasa_sandhi`**: boolean (VB `dsandhipor` port). `true` (favourable / safe) when there is
   **no** dasa sandhi: the engine builds both partners' Vimshottari mahadasha timelines from
   `pr_star`, `pr_dob` and the sishta balance `pr_dasabalance`, then scans the next 70 years; if any
@@ -270,9 +273,13 @@ Success 200 — **`data`** is a **single flat object** (not wrapped in `Porutham
   Currently: `chovva_dosham` (Chovva Dosham), `papa_samyam` (Papa Samyam), `dasa_sandhi` (Dasa Sandhi).
   `true` = favourable in every case.
 - **Counts:** `uthamam_count`, `madhyamam_count`, `adhamam_count`, `total_porutham_count`
-- **`has_dosha`**: boolean summary flag (also set when `papa_samyam` or `dasa_sandhi` fails).
+- **`has_dosha`**: boolean summary flag (set when any of `chovva_dosham`, `papa_samyam`, or
+  `dasa_sandhi` fails, or a rajju/vedha neecham is present).
 - **`overall_result`**: string such as `Excellent` | `Good` | `Average` | `Not Recommended`.
-  `max_score` stays **10**; a failing `papa_samyam` and/or `dasa_sandhi` each demote the grade by one tier.
+  The headline grade is derived from the 10-porutham `uthamam_count`, then demoted by one tier for
+  **each** of the three dosha checks that fails (Chovva/Kuja, Papam Samyam, Dasa Sandhi). The 10
+  porutham grades, `poruthams`, counts, and `score`/`max_score` (**10**) are NOT affected by these
+  three checks — only `overall_result` and `has_dosha` are.
 - **Backward-compatible keys:**
   - **`poruthams`**: object with the **10** keys above mapped to **boolean** (`true` = that koota is Uthamam only).
   - **`score`**: float, equals **`uthamam_count`**
