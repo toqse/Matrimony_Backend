@@ -27,6 +27,7 @@ from admin_panel.my_profiles.views import (
     _subscription_label,
     _wishlist_actor_for_panel_user,
 )
+from admin_panel.profile_filters import apply_profile_list_filters
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from admin_panel.staff_profiles.registration import (
@@ -254,9 +255,7 @@ class StaffMyProfilesListView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        search = (request.query_params.get("search") or "").strip()
-        if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(matri_id__icontains=search))
+        qs = apply_profile_list_filters(qs, request)
 
         wishlist_actor = _wishlist_actor_for_panel_user(request.user)
         wishlist_user_ids = set()

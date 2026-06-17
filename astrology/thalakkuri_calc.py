@@ -169,17 +169,73 @@ def _jd_to_local_time(jd, tz=5.5):
 def _get_dasa_display(days):
     """
     Format remaining (shishta) dasa balance in Malayalam style.
-    Example: 0 വർഷം 1 മാസം 29 ദിവസം
+    Example: 09 വർഷം 08 മാസം 15 ദിവസം
 
-    Always returns a full "X വർഷം Y മാസം Z ദിവസം" string. When the balance is
-    null/empty/zero, returns "0 വർഷം 0 മാസം 0 ദിവസം" so the section is never hidden.
+    Always returns a full zero-padded string. When the balance is
+    null/empty/zero, returns "00 വർഷം 00 മാസം 00 ദിവസം".
     """
     from .charts import format_dasa_balance
 
     if not days or days <= 0:
-        return '0 വർഷം 0 മാസം 0 ദിവസം'
+        return '00 വർഷം 00 മാസം 00 ദിവസം'
     b = format_dasa_balance(days)
-    return f"{b['years']} വർഷം {b['months']} മാസം {b['days']} ദിവസം"
+    return (
+        f"{b['years']:02d} വർഷം {b['months']:02d} മാസം {b['days']:02d} ദിവസം"
+    )
+
+
+def _ml_rasi_from_chart(chart_str, planet_index):
+    """Malayalam rasi name at 1-indexed planet position in pr_rasi string."""
+    if not chart_str or len(chart_str) < planet_index:
+        return ''
+    sign = LETTER_TO_SIGN.get(chart_str[planet_index - 1].upper())
+    if not sign or not (1 <= sign <= 12):
+        return ''
+    return RASI_ML[sign - 1]
+
+
+def _format_tob_ampm(tob):
+    """12-hour clock with AM/PM for chart centre panel (matches admin UI)."""
+    if not tob:
+        return ''
+    if hasattr(tob, 'hour'):
+        h, m = tob.hour, tob.minute
+    else:
+        parts = str(tob).split(':')
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+    ampm = 'AM' if h < 12 else 'PM'
+    h12 = h % 12 or 12
+    return f'{h12:02d}:{m:02d} {ampm}'
+
+
+def _build_rasi_center(hp, star_ml, star_pada, dasa_lord, dasa_disp):
+    """Centre panel for Rasi chart — same fields as admin SouthIndianChart."""
+    pada = star_pada if star_pada not in (None, '', '—') else None
+    star_line = star_ml or ''
+    if star_line and pada:
+        star_line = f'{star_line} - പാദം {pada}'
+
+    lagnam_ml = _ml_rasi_from_chart(hp.pr_rasi, 1)
+    moon_rasi_ml = _ml_rasi_from_chart(hp.pr_rasi, 3)
+    lagna_rasi_parts = []
+    if lagnam_ml:
+        lagna_rasi_parts.append(f'ലഗ്നം: {lagnam_ml}')
+    if moon_rasi_ml:
+        lagna_rasi_parts.append(f'രാശി: {moon_rasi_ml}')
+    lagna_rasi_line = ' - '.join(lagna_rasi_parts)
+
+    dob_str = hp.pr_dob.strftime('%d-%m-%Y') if hp.pr_dob else ''
+
+    return {
+        'name': (hp.pr_name or '').strip(),
+        'dob': dob_str,
+        'tob': _format_tob_ampm(hp.pr_tob),
+        'star_line': star_line,
+        'dasa_lord': dasa_lord or '',
+        'dasa_disp': dasa_disp or '',
+        'lagna_rasi_line': lagna_rasi_line,
+    }
 
 
 # ── Main calculator ──────────────────────────────────────
@@ -379,12 +435,10 @@ def calculate_all(hp):
     amsa_rows = build_chart_rows(hp.pr_amsa)
     bhav_rows = build_chart_rows(hp.pr_bhav)
 
-    # Center cell data for Rasi chart
-    rasi_center = {
-        'star_ml': star_ml,
-        'dasa_disp': dasa_disp,
-        'dasa_lord': dasa_lord,
-    }
+    # Center cell data for Rasi chart (matches admin porutham chart centre panel)
+    rasi_center = _build_rasi_center(
+        hp, star_ml, star_pada, dasa_lord, dasa_disp,
+    )
 
     return {
         'hp': hp,

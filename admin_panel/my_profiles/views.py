@@ -19,6 +19,7 @@ from admin_panel.audit_log.models import AuditLog
 from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
+from admin_panel.profile_filters import apply_profile_list_filters
 from admin_panel.bulk_upload.services import normalize_mobile
 from admin_panel.commissions.views import (
     _branch_manager_code_or_error,
@@ -77,9 +78,14 @@ def _my_profiles_base_queryset():
             "user_religion__religion",
             "user_religion__caste_fk",
             "user_location",
+            "user_location__district",
             "user_personal",
+            "user_personal__marital_status",
             "user_education",
+            "user_education__highest_education",
+            "user_education__occupation",
             "user_photos",
+            "horoscope_profile",
             "staff_assignment__staff__branch",
         )
         .distinct()
@@ -284,17 +290,7 @@ class MyProfilesListView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        search = (request.query_params.get("search") or "").strip()
-        if search:
-            search_filter = (
-                Q(name__icontains=search)
-                | Q(matri_id__icontains=search)
-                | Q(mobile__icontains=search)
-            )
-            digits_only = "".join(ch for ch in search if ch.isdigit())
-            if digits_only and digits_only != search:
-                search_filter |= Q(mobile__icontains=digits_only)
-            qs = qs.filter(search_filter)
+        qs = apply_profile_list_filters(qs, request)
 
         wishlist_actor = _wishlist_actor_for_panel_user(request.user)
         wishlist_user_ids = set()

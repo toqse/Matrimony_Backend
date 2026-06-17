@@ -413,26 +413,22 @@ def calc_papatha(arr):
     return tp
 
 
-# ── Papasamyam ────────────────────────────────────────────────
-# NOTE: The pasted VB source provides CalcPapatha (the per-chart papa score,
-# ported above as ``calc_papatha``) but NO bride/groom comparison routine. The
-# rule below follows the traditional "samyam" (balance) meaning: the two charts'
-# papa (affliction) strength must be close. The exact EXE threshold is unknown,
-# so it lives in this one tunable constant — calibrate against EXE samples (or
-# swap the function body) when the precise rule is supplied.
-# Known data point: bride 25.5 vs groom 50.5 (|diff| = 25) -> EXE FAIL.
-PAPA_SAMYAM_TOLERANCE = 10.0
+# ── Papasamyam (VB papadosh) ──────────────────────────────────
+# VB: papadosh = Uthamam when 0 <= P_Papatha - S_Papatha <= 18, else Neecham.
+# Only evaluated when both chart strings are present (see calculate_porutham).
 
 
 def papa_samyam(bride_papatha, groom_papatha):
     """
-    Papasamyam — balance of malefic (papa) strength between the two charts.
-    Returns True (favourable) when the two papa scores are within
-    ``PAPA_SAMYAM_TOLERANCE`` of each other. Reuses the ``calc_papatha`` scores.
+    VB papadosh — groom must carry equal or greater (but not excessive) papa
+    than the bride. Returns True (favourable) when
+    ``0 <= groom_papatha - bride_papatha <= 18``.
+    Returns None when either score is unavailable.
     """
-    return abs(
-        float(bride_papatha or 0) - float(groom_papatha or 0)
-    ) <= PAPA_SAMYAM_TOLERANCE
+    if bride_papatha is None or groom_papatha is None:
+        return None
+    diff = float(groom_papatha) - float(bride_papatha)
+    return 0 <= diff <= 18
 
 
 # ── Dasa Sandhi (VB dsandhipor / dasa_sandhi / dasas) ─────────
@@ -597,13 +593,19 @@ def calculate_porutham(bride_hp, groom_hp):
         'rajju_dosham':  rajju_dosham(s_star, p_star),
         'vedha_dosham':  vedha_dosham(s_star, p_star),
         'chovva_dosham': chovva_dosham(bride_hp.pr_rasi, groom_hp.pr_rasi),
-        'bride_papatha': calc_papatha(s_arr),
-        'groom_papatha': calc_papatha(p_arr),
     }
 
-    results['papa_samyam'] = papa_samyam(
-        results['bride_papatha'], results['groom_papatha']
-    )
+    if s_arr and p_arr:
+        results['bride_papatha'] = calc_papatha(s_arr)
+        results['groom_papatha'] = calc_papatha(p_arr)
+        results['papa_samyam'] = papa_samyam(
+            results['bride_papatha'], results['groom_papatha']
+        )
+    else:
+        results['bride_papatha'] = None
+        results['groom_papatha'] = None
+        results['papa_samyam'] = None
+
     results['dasa_sandhi'] = dasa_sandhi(
         getattr(bride_hp, 'pr_star', None),
         getattr(bride_hp, 'pr_dob', None),

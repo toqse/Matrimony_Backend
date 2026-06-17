@@ -21,6 +21,8 @@ class AdminProfileListSerializer(serializers.Serializer):
     religion = serializers.CharField(allow_blank=True)
     caste = serializers.CharField(allow_blank=True)
     marital_status = serializers.CharField(allow_blank=True)
+    pr_star = serializers.IntegerField(allow_null=True, required=False)
+    star = serializers.CharField(allow_blank=True, required=False)
     plan = serializers.CharField(allow_blank=True)
     assigned_staff = serializers.CharField(allow_blank=True, allow_null=True)
     verified = serializers.BooleanField()

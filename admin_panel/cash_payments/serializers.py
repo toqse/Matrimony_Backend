@@ -3,6 +3,19 @@ from rest_framework import serializers
 from plans.models import Transaction
 
 
+def payment_method_display(obj):
+    pm = (obj.payment_method or "").lower()
+    if pm == Transaction.PAYMENT_RAZORPAY:
+        return "Razorpay (Online)"
+    if pm == Transaction.PAYMENT_STRIPE:
+        return "Card / Net Banking (Online)"
+    if pm == Transaction.PAYMENT_UPI:
+        return "UPI"
+    if pm == Transaction.PAYMENT_MANUAL:
+        return "Manual / Cash"
+    return obj.payment_method or "Unknown"
+
+
 def payment_mode_label(obj):
     if obj.payment_method == Transaction.PAYMENT_MANUAL:
         return "cash"
@@ -65,9 +78,12 @@ class PaymentTableSerializer(serializers.Serializer):
 
 class PaymentDetailSerializer(PaymentTableSerializer):
     rejection_reason = serializers.SerializerMethodField()
-    payment_method = serializers.CharField(read_only=True)
+    payment_method = serializers.SerializerMethodField()
     payment_status = serializers.CharField(read_only=True)
     transaction_type = serializers.CharField(read_only=True)
+
+    def get_payment_method(self, obj):
+        return payment_method_display(obj)
 
     def get_rejection_reason(self, obj):
         review = getattr(obj, "payment_review", None)

@@ -310,9 +310,11 @@ def get_plan_info_for_response(user):
         service_charge_total = Decimal('0')
 
     plan_price = p.price or Decimal('0')
-    # "Remaining" shown in UI/cards is the amount after paying plan price.
-    service_charge_remaining = max(Decimal('0'), service_charge_total - plan_price)
     service_charge_paid = getattr(up, 'service_charge_paid', 0) or 0
+    # Amount still owed on the service charge (after any partial payments).
+    service_charge_remaining = max(Decimal('0'), service_charge_total - service_charge_paid)
+    # Remaining registration path shown on plan cards (before first service payment).
+    plan_card_remaining = max(Decimal('0'), service_charge_total - plan_price)
 
     return {
         'is_plan_active': True,
@@ -325,7 +327,7 @@ def get_plan_info_for_response(user):
         'horoscope_remaining': _rem(p.horoscope_match_limit, up.horoscope_used, getattr(up, 'horoscope_bonus', 0) or 0),
         'service_charge': float(service_charge_total),
         'plan_price': float(plan_price),
-        'total_price': float(service_charge_remaining),
+        'total_price': float(plan_card_remaining),
         'service_charge_remaining': float(service_charge_remaining),
         'service_charge_paid': float(service_charge_paid),
     }
@@ -402,3 +404,244 @@ def get_interest_ui_state_for_viewer(viewer, profile_user):
         return 'pending', False
     m = bulk_interest_ui_states_for_viewer(viewer.pk, [profile_user.pk])
     return m.get(profile_user.pk, ('pending', False))
+
+
+# --- Plan purchase & service charge (Razorpay + legacy manual) ---
+
+PAYMENT_OPTION_PLAN_ONLY = 'plan_only'
+PAYMENT_OPTION_FULL = 'full'
+
+RAZORPAY_PURPOSE_PLAN_PURCHASE = 'plan_purchase'
+RAZORPAY_PURPOSE_SERVICE_CHARGE = 'service_charge'
+
+
+def get_service_charge_for_user(user) -> 'Decimal':
+    from decimal import Decimal
+    from .models import ServiceCharge
+
+    gender = getattr(user, 'gender', None) or 'M'
+    try:
+        return ServiceCharge.objects.get(gender=gender).amount
+    except ServiceCharge.DoesNotExist:
+        return Decimal('0')
+
+
+def compute_plan_purchase_amounts(user, plan, payment_option: str):
+    """
+    Return (amount_to_charge, service_charge_total, service_charge_paid_after, payment_message_prefix).
+    """
+    from decimal import Decimal
+
+    service_charge_total = get_service_charge_for_user(user)
+    plan_price = plan.price or Decimal('0')
+    remaining_amount = max(service_charge_total - plan_price, Decimal('0'))
+
+    if payment_option == PAYMENT_OPTION_FULL:
+        return (
+            remaining_amount,
+            service_charge_total,
+            service_charge_total,
+            'Plan purchased with full payment.',
+        )
+    return (
+        plan_price,
+        service_charge_total,
+        plan_price,
+        'Plan purchased. Remaining service charge can be paid later.',
+    )
+
+
+def compute_service_charge_remaining(user):
+    """Return (user_plan, remaining_decimal) or raise UserPlan.DoesNotExist."""
+    from decimal import Decimal
+    from .models import UserPlan
+
+    user_plan = UserPlan.objects.select_related('plan').get(user=user, is_active=True)
+    service_charge_total = user_plan.service_charge or Decimal('0')
+    service_charge_paid = user_plan.service_charge_paid or Decimal('0')
+    remaining = service_charge_total - service_charge_paid
+    return user_plan, remaining
+
+
+def activate_plan_purchase(
+    *,
+    user,
+    plan,
+    payment_option: str,
+    payment_method: str,
+    razorpay_payment_id: str = '',
+):
+    """
+    Create/update UserPlan and record a successful plan-purchase Transaction.
+    Returns (user_plan, txn, response_extra_dict).
+    """
+    from decimal import Decimal
+    from django.db import transaction as db_transaction
+    from django.utils import timezone
+
+    from .models import Transaction, UserPlan
+
+    today = timezone.now().date()
+    amount_paid, service_charge_total, service_charge_paid, payment_message = (
+        compute_plan_purchase_amounts(user, plan, payment_option)
+    )
+
+    with db_transaction.atomic():
+        any_up = (
+            UserPlan.objects
+            .select_for_update()
+            .select_related('plan')
+            .filter(user=user)
+            .first()
+        )
+        old_up = (
+            any_up
+            if (any_up and any_up.is_active and (any_up.valid_until is None or any_up.valid_until >= today))
+            else None
+        )
+
+        plan_price = plan.price or Decimal('0')
+        valid_from = today
+
+        if old_up:
+            def _remaining(plan_limit, bonus, used):
+                if plan_limit == 0:
+                    return 0
+                effective = (plan_limit or 0) + (bonus or 0)
+                return max(0, effective - (used or 0))
+
+            carry_profile = _remaining(
+                old_up.plan.profile_view_limit,
+                getattr(old_up, 'profile_view_bonus', 0),
+                old_up.profile_views_used,
+            )
+            carry_interest = _remaining(
+                old_up.plan.interest_limit,
+                getattr(old_up, 'interest_bonus', 0),
+                old_up.interests_used,
+            )
+            carry_chat = _remaining(
+                old_up.plan.chat_limit,
+                getattr(old_up, 'chat_bonus', 0),
+                old_up.chat_used,
+            )
+            carry_contact = _remaining(
+                old_up.plan.contact_view_limit,
+                getattr(old_up, 'contact_view_bonus', 0),
+                old_up.contact_views_used,
+            )
+            carry_horo = _remaining(
+                old_up.plan.horoscope_match_limit,
+                getattr(old_up, 'horoscope_bonus', 0),
+                old_up.horoscope_used,
+            )
+            valid_until = (old_up.valid_until or today) + timezone.timedelta(days=plan.duration_days)
+            payment_message = 'Plan upgraded successfully with carry forward.'
+        else:
+            carry_profile = carry_interest = carry_chat = carry_contact = carry_horo = 0
+            valid_until = valid_from + timezone.timedelta(days=plan.duration_days)
+
+        user_plan, _ = UserPlan.objects.update_or_create(
+            user=user,
+            defaults={
+                'plan': plan,
+                'price_paid': plan_price,
+                'service_charge': service_charge_total,
+                'service_charge_paid': service_charge_paid,
+                'valid_from': valid_from,
+                'valid_until': valid_until,
+                'is_active': True,
+                'profile_view_bonus': carry_profile,
+                'interest_bonus': carry_interest,
+                'chat_bonus': carry_chat,
+                'horoscope_bonus': carry_horo,
+                'contact_view_bonus': carry_contact,
+                'profile_views_used': 0,
+                'interests_used': 0,
+                'chat_used': 0,
+                'horoscope_used': 0,
+                'contact_views_used': 0,
+            },
+        )
+
+        txn = Transaction.objects.create(
+            user=user,
+            plan=plan,
+            amount=amount_paid,
+            service_charge=service_charge_total,
+            total_amount=amount_paid,
+            payment_method=payment_method,
+            payment_status=Transaction.STATUS_SUCCESS,
+            transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+            transaction_id=(razorpay_payment_id or '').strip(),
+        )
+
+    service_charge_remaining = service_charge_total - service_charge_paid
+    extra = {
+        'message': payment_message,
+        'payment_option': payment_option,
+        'amount_paid': float(amount_paid),
+        'service_charge_remaining': float(service_charge_remaining),
+        'valid_until': valid_until.isoformat(),
+        'carry_forward': {
+            'profile_views': int(carry_profile),
+            'interests': int(carry_interest),
+            'chats': int(carry_chat),
+            'contacts': int(carry_contact),
+            'horoscope': int(carry_horo),
+        },
+    }
+    return user_plan, txn, extra
+
+
+def pay_remaining_service_charge(
+    *,
+    user,
+    payment_method: str,
+    razorpay_payment_id: str = '',
+):
+    """Record payment of remaining service charge. Returns (user_plan, txn, amount_paid)."""
+    from decimal import Decimal
+    from django.db import transaction as db_transaction
+
+    from .models import Transaction
+
+    user_plan, remaining = compute_service_charge_remaining(user)
+    if remaining <= 0:
+        return user_plan, None, Decimal('0')
+
+    service_charge_total = user_plan.service_charge or Decimal('0')
+
+    with db_transaction.atomic():
+        from .models import UserPlan
+
+        user_plan = UserPlan.objects.select_for_update().get(pk=user_plan.pk)
+        service_charge_paid = user_plan.service_charge_paid or Decimal('0')
+        remaining = (user_plan.service_charge or Decimal('0')) - service_charge_paid
+        if remaining <= 0:
+            return user_plan, None, Decimal('0')
+
+        txn = Transaction.objects.create(
+            user=user,
+            plan=user_plan.plan,
+            amount=remaining,
+            service_charge=remaining,
+            total_amount=remaining,
+            payment_method=payment_method,
+            payment_status=Transaction.STATUS_SUCCESS,
+            transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+            transaction_id=(razorpay_payment_id or '').strip(),
+        )
+        user_plan.service_charge_paid = service_charge_total
+        user_plan.save(update_fields=['service_charge_paid', 'updated_at'])
+
+    return user_plan, txn, remaining
+
+
+def plan_purchase_response_data(txn, plan, extra: dict) -> dict:
+    """Build API response payload after successful plan purchase."""
+    return {
+        'transaction_id': txn.id,
+        'plan_name': plan.name,
+        **extra,
+    }

@@ -7,12 +7,14 @@ from plans.models import Transaction, UserPlan
 def _payment_mode_label(txn: Transaction) -> str:
     pm = (txn.payment_method or "").lower()
     tid = (txn.transaction_id or "").lower()
+    if pm == Transaction.PAYMENT_RAZORPAY:
+        return "Razorpay (Online)"
     if pm == Transaction.PAYMENT_UPI:
         return "UPI"
-    if pm in {Transaction.PAYMENT_RAZORPAY, Transaction.PAYMENT_STRIPE}:
+    if pm == Transaction.PAYMENT_STRIPE:
         if "netbank" in tid:
             return "Netbanking"
-        return "Card"
+        return "Card (Online)"
     if "netbank" in tid:
         return "Netbanking"
     return "Cash"

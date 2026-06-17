@@ -22,6 +22,8 @@ from astrology.services.horoscope_profile_service import apply_profile_edit_horo
 from master.models import Branch as MasterBranch
 from profiles.models import UserProfile
 from profiles.utils import get_profile_completion_data
+from astrology.charts import star_name as nakshatra_name_from_number
+from admin_panel.profile_filters import apply_profile_list_filters, apply_profile_status_filter
 from profiles.views import _build_profile_data_for_user
 
 from admin_panel.audit_log.mixins import AuditLogMixin
@@ -131,6 +133,11 @@ def _build_list_row(user: User) -> dict:
             caste_name = rel.caste
     marital = pers.marital_status.name if pers and pers.marital_status_id else ""
     gender_display = user.get_gender_display() if user.gender else ""
+    horoscope = getattr(user, "horoscope_profile", None)
+    pr_star = horoscope.pr_star if horoscope else None
+    star_display = ""
+    if horoscope:
+        star_display = (horoscope.star_name or "").strip() or nakshatra_name_from_number(pr_star)
     return {
         "matri_id": user.matri_id or "",
         "name": user.name or "",
@@ -139,6 +146,8 @@ def _build_list_row(user: User) -> dict:
         "religion": religion_name,
         "caste": caste_name,
         "marital_status": marital,
+        "pr_star": pr_star,
+        "star": star_display,
         "plan": plan_name,
         "assigned_staff": staff_name,
         "verified": bool(profile and profile.admin_verified),
@@ -175,44 +184,23 @@ class AdminProfileListAPIView(APIView):
             "user_religion__religion",
             "user_religion__caste_fk",
             "user_personal__marital_status",
+            "user_location__district",
+            "user_education__highest_education",
+            "user_education__occupation",
+            "user_photos",
+            "horoscope_profile",
             "staff_assignment__staff",
         )
 
-        search = (request.query_params.get("search") or "").strip()
-        if search:
-            search_filter = (
-                Q(name__icontains=search)
-                | Q(matri_id__icontains=search)
-                | Q(mobile__icontains=search)
+        filter_by = (request.query_params.get("filter") or "all").strip()
+        qs, ferr = apply_profile_status_filter(qs, filter_by)
+        if ferr:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": ferr}},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            digits_only = "".join(ch for ch in search if ch.isdigit())
-            if digits_only and digits_only != search:
-                search_filter |= Q(mobile__icontains=digits_only)
-            qs = qs.filter(search_filter)
 
-        gender = (request.query_params.get("gender") or "").strip().upper()
-        if gender in {"M", "F", "O"}:
-            qs = qs.filter(gender=gender)
-
-        religion_id = request.query_params.get("religion_id")
-        if religion_id:
-            qs = qs.filter(user_religion__religion_id=religion_id)
-
-        plan = (request.query_params.get("plan") or "").strip()
-        if plan.isdigit():
-            qs = qs.filter(user_plan__plan_id=int(plan))
-        elif plan:
-            qs = qs.filter(user_plan__plan__name__iexact=plan)
-
-        verified = (request.query_params.get("verified") or "").strip().lower()
-        if verified in {"true", "1", "yes"}:
-            qs = qs.filter(user_profile__admin_verified=True)
-        elif verified in {"false", "0", "no"}:
-            qs = qs.filter(Q(user_profile__admin_verified=False) | Q(user_profile__isnull=True))
-
-        staff_id = request.query_params.get("staff_id")
-        if staff_id:
-            qs = qs.filter(staff_assignment__staff_id=staff_id)
+        qs = apply_profile_list_filters(qs, request)
 
         if (request.query_params.get("show_inactive") or "").strip().lower() not in {"1", "true", "yes"}:
             qs = qs.filter(is_active=True)

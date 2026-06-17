@@ -28,6 +28,10 @@ from .services import (
     can_send_interest,
     can_chat,
     can_view_contact,
+    activate_plan_purchase,
+    pay_remaining_service_charge,
+    plan_purchase_response_data,
+    compute_service_charge_remaining,
     get_plan_info_for_response,
     has_unlocked_profile,
     is_plan_expired,
@@ -99,12 +103,15 @@ class PlanListView(APIView):
         out = []
         for plan in plans:
             total = service_charge - (plan.price or Decimal('0'))
+            plan_price = plan.price or Decimal('0')
             out.append({
                 'id': plan.id,
                 'name': plan.name,
-                'price': float(plan.price or 0),
+                'price': float(plan_price),
                 'service_charge': float(service_charge),
                 'total_price': float(total),
+                'first_payment': float(plan_price),
+                'service_charge_remaining': float(max(total, Decimal('0'))),
                 'duration_days': plan.duration_days,
                 'profile_view_limit': plan.profile_view_limit,
                 'interest_limit': plan.interest_limit,
@@ -174,6 +181,13 @@ class WebsitePlanListView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+ONLINE_PAYMENT_METHODS = frozenset({
+    Transaction.PAYMENT_RAZORPAY,
+    Transaction.PAYMENT_STRIPE,
+    Transaction.PAYMENT_UPI,
+})
+
+
 class PlanPurchaseView(APIView):
     """
     POST /api/v1/plans/purchase/
@@ -206,121 +220,33 @@ class PlanPurchaseView(APIView):
         plan_id = ser.validated_data['plan_id']
         payment_method = ser.validated_data['payment_method']
         payment_option = ser.validated_data['payment_option']
+
+        if payment_method in ONLINE_PAYMENT_METHODS:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 400,
+                    'message': (
+                        'Online payments must use Razorpay checkout. '
+                        'POST /api/v1/plans/order/ then /api/v1/plans/verify/.'
+                    ),
+                },
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         plan = Plan.objects.get(pk=plan_id)
         user = request.user
-        today = timezone.now().date()
 
-        with transaction.atomic():
-            # Lock the user's plan row (if any) to avoid concurrent upgrade double-counting.
-            any_up = (
-                UserPlan.objects
-                .select_for_update()
-                .select_related('plan')
-                .filter(user=user)
-                .first()
-            )
-            # Carry-forward applies only if still active and not expired.
-            old_up = any_up if (any_up and any_up.is_active and (any_up.valid_until is None or any_up.valid_until >= today)) else None
-
-            gender = getattr(user, 'gender', None) or 'M'
-            try:
-                sc = ServiceCharge.objects.get(gender=gender)
-                service_charge_total = sc.amount
-            except ServiceCharge.DoesNotExist:
-                service_charge_total = Decimal('0')
-
-            plan_price = plan.price or Decimal('0')
-            # remaining = service_charge - plan_price (the amount still owed after registration fee)
-            remaining_amount = max(service_charge_total - plan_price, Decimal('0'))
-
-            if payment_option == PlanPurchaseSerializer.PAYMENT_OPTION_FULL:
-                # User pays the remaining service charge upfront
-                amount_paid = remaining_amount
-                service_charge_paid = service_charge_total
-                payment_message = 'Plan purchased with full payment.'
-            else:
-                # plan_only: user pays only the registration/plan fee now
-                amount_paid = plan_price
-                service_charge_paid = Decimal('0')
-                payment_message = 'Plan purchased. Remaining service charge can be paid later.'
-
-            valid_from = today
-            if old_up:
-                # Carry forward remaining quotas from old plan and extend validity.
-                def _remaining(plan_limit, bonus, used):
-                    if plan_limit == 0:
-                        return 0  # unlimited plans can't be carried forward as a finite bonus
-                    effective = (plan_limit or 0) + (bonus or 0)
-                    return max(0, effective - (used or 0))
-
-                carry_profile = _remaining(old_up.plan.profile_view_limit, getattr(old_up, 'profile_view_bonus', 0), old_up.profile_views_used)
-                carry_interest = _remaining(old_up.plan.interest_limit, getattr(old_up, 'interest_bonus', 0), old_up.interests_used)
-                carry_chat = _remaining(old_up.plan.chat_limit, getattr(old_up, 'chat_bonus', 0), old_up.chat_used)
-                carry_contact = _remaining(old_up.plan.contact_view_limit, getattr(old_up, 'contact_view_bonus', 0), old_up.contact_views_used)
-                carry_horo = _remaining(old_up.plan.horoscope_match_limit, getattr(old_up, 'horoscope_bonus', 0), old_up.horoscope_used)
-
-                valid_until = (old_up.valid_until or today) + timezone.timedelta(days=plan.duration_days)
-                payment_message = 'Plan upgraded successfully with carry forward.'
-            else:
-                carry_profile = carry_interest = carry_chat = carry_contact = carry_horo = 0
-                valid_until = valid_from + timezone.timedelta(days=plan.duration_days)
-
-            UserPlan.objects.update_or_create(
-                user=user,
-                defaults={
-                    'plan': plan,
-                    'price_paid': plan_price,
-                    'service_charge': service_charge_total,
-                    'service_charge_paid': service_charge_paid,
-                    'valid_from': valid_from,
-                    'valid_until': valid_until,
-                    'is_active': True,
-                    'profile_view_bonus': carry_profile,
-                    'interest_bonus': carry_interest,
-                    'chat_bonus': carry_chat,
-                    'horoscope_bonus': carry_horo,
-                    'contact_view_bonus': carry_contact,
-                    'profile_views_used': 0,
-                    'interests_used': 0,
-                    'chat_used': 0,
-                    'horoscope_used': 0,
-                    'contact_views_used': 0,
-                },
-            )
-
-            # After UserPlan exists so commission signal can link subscription (see admin_panel.commissions.signals).
-            txn = Transaction.objects.create(
-                user=user,
-                plan=plan,
-                amount=amount_paid,
-                service_charge=service_charge_total,
-                total_amount=amount_paid,
-                payment_method=payment_method,
-                payment_status=Transaction.STATUS_SUCCESS,
-                transaction_type=Transaction.TYPE_PLAN_PURCHASE,
-                transaction_id='',
-            )
-
-        service_charge_remaining = service_charge_total - service_charge_paid
+        _, txn, extra = activate_plan_purchase(
+            user=user,
+            plan=plan,
+            payment_option=payment_option,
+            payment_method=payment_method,
+        )
 
         return Response({
             'success': True,
-            'message': payment_message,
-            'data': {
-                'transaction_id': txn.id,
-                'plan_name': plan.name,
-                'payment_option': payment_option,
-                'amount_paid': float(amount_paid),
-                'service_charge_remaining': float(service_charge_remaining),
-                'valid_until': valid_until.isoformat(),
-                'carry_forward': {
-                    'profile_views': int(carry_profile),
-                    'interests': int(carry_interest),
-                    'chats': int(carry_chat),
-                    'contacts': int(carry_contact),
-                    'horoscope': int(carry_horo),
-                },
-            },
+            'message': extra.pop('message'),
+            'data': plan_purchase_response_data(txn, plan, extra),
         }, status=status.HTTP_201_CREATED)
 
 
@@ -342,40 +268,44 @@ class PayRemainingServiceView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         payment_method = ser.validated_data['payment_method']
         user = request.user
+
+        if payment_method in ONLINE_PAYMENT_METHODS:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 400,
+                    'message': (
+                        'Online payments must use Razorpay checkout. '
+                        'POST /api/v1/plans/pay-remaining-service/order/ then .../verify/.'
+                    ),
+                },
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            user_plan = UserPlan.objects.get(user=user, is_active=True)
+            _, remaining = compute_service_charge_remaining(user)
         except UserPlan.DoesNotExist:
             return Response({
                 'success': False,
                 'error': {'code': 404, 'message': 'No active plan found. Purchase a plan first.'},
             }, status=status.HTTP_404_NOT_FOUND)
-        service_charge_total = user_plan.service_charge or Decimal('0')
-        service_charge_paid = user_plan.service_charge_paid or Decimal('0')
-        remaining = service_charge_total - service_charge_paid
+
         if remaining <= 0:
             return Response({
                 'success': True,
                 'message': 'No remaining service charge to pay.',
                 'data': {'amount_paid': 0, 'service_charge_remaining': 0},
             }, status=status.HTTP_200_OK)
-        txn = Transaction.objects.create(
+
+        _, txn, amount_paid = pay_remaining_service_charge(
             user=user,
-            plan=user_plan.plan,
-            amount=remaining,
-            service_charge=remaining,
-            total_amount=remaining,
             payment_method=payment_method,
-            payment_status=Transaction.STATUS_SUCCESS,
-            transaction_id='',
         )
-        user_plan.service_charge_paid = service_charge_total
-        user_plan.save(update_fields=['service_charge_paid', 'updated_at'])
         return Response({
             'success': True,
             'message': 'Remaining service charge paid successfully.',
             'data': {
                 'transaction_id': txn.id,
-                'amount_paid': float(remaining),
+                'amount_paid': float(amount_paid),
                 'service_charge_remaining': 0,
             },
         }, status=status.HTTP_201_CREATED)

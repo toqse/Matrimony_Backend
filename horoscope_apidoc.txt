@@ -257,11 +257,9 @@ Success 200 — **`data`** is a **single flat object** (not wrapped in `Porutham
   `dinam`, `ganam`, `mahendra`, `sthree_deerga`, `yoni`, `rasi`, `rasyadhipam`, `vasyam`, `rajju_dosham`, `vedha_dosham`
 - **`chovva_dosham`**: boolean or `null` if charts insufficient.
 - **`bride_papatha`**, **`groom_papatha`**: floats.
-- **`papa_samyam`**: boolean. `true` (favourable) when the two charts' papa (affliction) scores are
-  *balanced* — i.e. `abs(bride_papatha - groom_papatha) <= PAPA_SAMYAM_TOLERANCE` (default `10.0`,
-  a tunable constant in `astrology/porutham.py`). The legacy VB had no bride/groom comparison
-  routine, so this tolerance follows the traditional "samyam" (balance) meaning and is calibrated
-  against EXE samples.
+- **`papa_samyam`**: boolean or `null` if charts insufficient. `true` (favourable) when
+  ``0 <= groom_papatha - bride_papatha <= 18`` (VB `papadosh` rule). The groom's papa
+  score must be at least the bride's, but not more than 18 points higher.
 - **`dasa_sandhi`**: boolean (VB `dsandhipor` port). `true` (favourable / safe) when there is
   **no** dasa sandhi: the engine builds both partners' Vimshottari mahadasha timelines from
   `pr_star`, `pr_dob` and the sishta balance `pr_dasabalance`, then scans the next 70 years; if any

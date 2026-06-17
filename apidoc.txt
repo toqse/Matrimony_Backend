@@ -5584,16 +5584,68 @@ LIST AVAILABLE PLANS
       }
     }
 
-PLAN PURCHASE API
+PLAN PURCHASE API (Razorpay — recommended)
+  POST /api/v1/plans/order/
+  Auth: Required (JWT).
+  Body (JSON):
+    {
+      "plan_id": 3,
+      "payment_option": "plan_only"
+    }
+  payment_option: "plan_only" (pay plan.price registration fee) or "full" (pay remaining service charge upfront).
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "plan_id": 3,
+        "payment_option": "plan_only",
+        "amount_inr": 1499,
+        "order_id": "order_xxx",
+        "amount": 149900,
+        "currency": "INR",
+        "key_id": "rzp_test_xxx"
+      }
+    }
+  Client opens Razorpay Checkout with order_id, amount, currency, key_id; then calls verify.
+
+  POST /api/v1/plans/verify/
+  Auth: Required (JWT).
+  Body (JSON):
+    {
+      "plan_id": 3,
+      "payment_option": "plan_only",
+      "razorpay_order_id": "order_xxx",
+      "razorpay_payment_id": "pay_xxx",
+      "razorpay_signature": "..."
+    }
+  Verifies HMAC signature, confirms captured payment amount, activates UserPlan and Transaction (payment_method=razorpay).
+  Response 201: same shape as legacy purchase success below.
+
+PAY REMAINING SERVICE (Razorpay)
+  POST /api/v1/plans/pay-remaining-service/order/
+  Auth: Required (JWT). Body: {} or empty.
+  Response 200: { "success": true, "data": { "amount_inr": 13501, "order_id", "amount", "currency", "key_id" } }
+
+  POST /api/v1/plans/pay-remaining-service/verify/
+  Auth: Required (JWT).
+  Body (JSON):
+    {
+      "razorpay_order_id": "order_xxx",
+      "razorpay_payment_id": "pay_xxx",
+      "razorpay_signature": "..."
+    }
+  Response 201: { "success": true, "message": "Remaining service charge paid successfully.", "data": { "transaction_id", "amount_paid", "service_charge_remaining": 0 } }
+
+PLAN PURCHASE API (legacy manual — online methods rejected)
   POST /api/v1/plans/purchase/
   Auth: Required (JWT).
   Body (JSON):
     {
       "plan_id": 3,
-      "payment_method": "razorpay",
+      "payment_method": "manual",
       "payment_option": "plan_only"
     }
-  payment_method: one of "razorpay", "stripe", "upi", "manual".
+  payment_method: "manual" only for direct activation. Online methods (razorpay, stripe, upi) return 400 — use order/verify flow above.
   payment_option (optional, default="plan_only"):
     plan_only — User pays only the plan registration fee (plan.price).
                 The remaining service charge (service_charge - plan.price) can be paid
@@ -5631,13 +5683,14 @@ PLAN PURCHASE API
     }
   Error 400: Invalid plan_id, payment_method or payment_option. Error 401: Unauthorized.
 
-PAY REMAINING SERVICE (for legacy plans with partial payment)
+PAY REMAINING SERVICE (legacy manual — online methods rejected)
   POST /api/v1/plans/pay-remaining-service/
   Auth: Required (JWT).
   Body (JSON):
     {
-      "payment_method": "razorpay"
+      "payment_method": "manual"
     }
+  payment_method: "manual" only. Online methods return 400 — use pay-remaining-service/order and .../verify above.
   Backend: User must have an active UserPlan. Pays any remaining service charge (service_charge - service_charge_paid). Creates Transaction for remaining amount, updates UserPlan.service_charge_paid to full service charge. For new purchases (full payment upfront), remaining is 0.
   Response 201:
     {

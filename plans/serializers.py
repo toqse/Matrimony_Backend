@@ -87,6 +87,44 @@ class PayRemainingServiceSerializer(serializers.Serializer):
     )
 
 
+class PlanOrderSerializer(serializers.Serializer):
+    """Body for POST /api/v1/plans/order/."""
+    plan_id = serializers.IntegerField()
+    payment_option = serializers.ChoiceField(
+        choices=[PlanPurchaseSerializer.PAYMENT_OPTION_PLAN_ONLY, PlanPurchaseSerializer.PAYMENT_OPTION_FULL],
+        default=PlanPurchaseSerializer.PAYMENT_OPTION_PLAN_ONLY,
+    )
+
+    def validate_plan_id(self, value):
+        if not Plan.objects.filter(pk=value, is_active=True).exists():
+            raise serializers.ValidationError('Invalid or inactive plan.')
+        return value
+
+
+class PlanVerifySerializer(serializers.Serializer):
+    """Body for POST /api/v1/plans/verify/."""
+    razorpay_order_id = serializers.CharField(max_length=255)
+    razorpay_payment_id = serializers.CharField(max_length=255)
+    razorpay_signature = serializers.CharField(max_length=512)
+    plan_id = serializers.IntegerField()
+    payment_option = serializers.ChoiceField(
+        choices=[PlanPurchaseSerializer.PAYMENT_OPTION_PLAN_ONLY, PlanPurchaseSerializer.PAYMENT_OPTION_FULL],
+        default=PlanPurchaseSerializer.PAYMENT_OPTION_PLAN_ONLY,
+    )
+
+    def validate_plan_id(self, value):
+        if not Plan.objects.filter(pk=value, is_active=True).exists():
+            raise serializers.ValidationError('Invalid or inactive plan.')
+        return value
+
+
+class ServiceChargeVerifySerializer(serializers.Serializer):
+    """Body for POST /api/v1/plans/pay-remaining-service/verify/."""
+    razorpay_order_id = serializers.CharField(max_length=255)
+    razorpay_payment_id = serializers.CharField(max_length=255)
+    razorpay_signature = serializers.CharField(max_length=512)
+
+
 class TransactionSerializer(serializers.ModelSerializer):
     """Transaction list/detail (admin or user's own)."""
     plan_name = serializers.CharField(source='plan.name', read_only=True)

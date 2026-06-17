@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from astrology.porutham import PAPA_SAMYAM_TOLERANCE, papa_samyam
+from astrology.porutham import papa_samyam
 from astrology.services.porutham_service import calculate_porutham
 
 
@@ -46,22 +46,27 @@ class VbPoruthamSmokeTests(unittest.TestCase):
         self.assertLessEqual(out['uthamam_count'], 10)
 
 
-class PapaSamyamToleranceTests(unittest.TestCase):
+class PapaSamyamVbTests(unittest.TestCase):
     def test_equal_scores_pass(self):
         self.assertTrue(papa_samyam(20.0, 20.0))
 
-    def test_within_tolerance_pass(self):
-        self.assertTrue(papa_samyam(20.0, 20.0 + PAPA_SAMYAM_TOLERANCE))
+    def test_upper_bound_pass(self):
+        self.assertTrue(papa_samyam(20.0, 38.0))
+
+    def test_above_upper_bound_fail(self):
+        self.assertFalse(papa_samyam(20.0, 39.0))
 
     def test_known_exe_fail_case(self):
-        # bride 25.5 vs groom 50.5 (|diff| = 25) -> EXE FAIL
+        # bride 25.5 vs groom 50.5 (diff = 25) -> EXE FAIL
         self.assertFalse(papa_samyam(25.5, 50.5))
 
-    def test_symmetric(self):
-        self.assertEqual(papa_samyam(50.5, 25.5), papa_samyam(25.5, 50.5))
+    def test_bride_higher_papatha_fail(self):
+        # VB is asymmetric: groom must not have less papa than bride
+        self.assertFalse(papa_samyam(50.0, 30.0))
 
-    def test_none_inputs_pass(self):
-        self.assertTrue(papa_samyam(None, None))
+    def test_none_inputs_return_none(self):
+        self.assertIsNone(papa_samyam(None, None))
+        self.assertIsNone(papa_samyam(20.0, None))
 
 
 class DoshaGradeDemotionTests(unittest.TestCase):

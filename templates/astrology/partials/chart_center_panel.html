@@ -1,0 +1,21 @@
+{% if chart_center.name %}
+  <div class="center-name">{{ chart_center.name }}</div>
+{% endif %}
+{% if chart_center.dob %}
+  <div class="center-line">ജനന തീയതി: {{ chart_center.dob }}</div>
+{% endif %}
+{% if chart_center.tob %}
+  <div class="center-line">ജനന സമയം: {{ chart_center.tob }}</div>
+{% endif %}
+{% if chart_center.star_line %}
+  <div class="center-line">{{ chart_center.star_line }}</div>
+{% endif %}
+{% if chart_center.dasa_lord %}
+  <div class="center-line">നാഥൻ: {{ chart_center.dasa_lord }}</div>
+{% endif %}
+{% if chart_center.dasa_disp %}
+  <div class="center-line">ദശ: {{ chart_center.dasa_disp }}</div>
+{% endif %}
+{% if chart_center.lagna_rasi_line %}
+  <div class="center-line">{{ chart_center.lagna_rasi_line }}</div>
+{% endif %}
