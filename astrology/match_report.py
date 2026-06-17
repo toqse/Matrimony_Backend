@@ -17,6 +17,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from astrology.charts import (
+    build_chart_center_for_hp,
     dasa_lord,
     format_dasa_balance,
     lagnam_name,
@@ -73,6 +74,7 @@ def _person_dict(hp, user, role: str) -> dict[str, Any]:
         'bhava_placements': horoscope_report.placements_from_pr_rasi(
             getattr(hp, 'pr_bhav', '') or ''
         ),
+        'chart_center': build_chart_center_for_hp(hp),
     }
 
 
@@ -90,11 +92,23 @@ def build_match_report_context(
     matched_count = sum(1 for _key, _label, _sig in PORUTHAM_ROWS if poruthams.get(_key))
     unmatched_count = max_score - matched_count
 
+    grades = porutham.get('grades') or {}
+
+    def _points_for(key: str) -> float:
+        grade = grades.get(key, '')
+        if grade == 'uthamam':
+            return 1.0
+        if grade == 'madhyamam':
+            return 0.5
+        return 0.0
+
     rows = [
         {
             'english': label,
             'significance': significance,
             'matched': bool(poruthams.get(key)),
+            'grade': grades.get(key, ''),
+            'points': _points_for(key),
         }
         for key, label, significance in PORUTHAM_ROWS
     ]

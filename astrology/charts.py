@@ -171,3 +171,19 @@ def build_horoscope_charts(hp) -> dict[str, Any]:
             **balance,
         },
     }
+
+
+def build_chart_center_for_hp(hp) -> dict[str, str]:
+    """Malayalam centre-panel fields for chart PDFs (matches admin porutham UI)."""
+    from astrology.thalakkuri_calc import (
+        DASA_LORD_ML,
+        NAK_ML,
+        _build_rasi_center,
+        _get_dasa_display,
+    )
+
+    star_num = hp.pr_star or 0
+    star_ml = NAK_ML[star_num - 1] if 1 <= star_num <= 27 else ''
+    dasa_lord_ml = DASA_LORD_ML[star_num] if 1 <= star_num <= 27 else ''
+    dasa_disp = _get_dasa_display(hp.pr_dasabalance)
+    return _build_rasi_center(hp, star_ml, hp.pr_pada, dasa_lord_ml, dasa_disp)

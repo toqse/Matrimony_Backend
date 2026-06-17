@@ -42,6 +42,7 @@ MID_GREY = HexColor("#D4C9B8")
 GREEN_MATCH = HexColor("#2E7D32")
 RED_NO = HexColor("#C62828")
 TEXT_GREY = HexColor("#7A7167")
+TEXT_BLACK = HexColor("#000000")
 
 # --------------------------------------------------------------------------- #
 # Fonts — Malayalam from Noto, everything else Helvetica
@@ -486,10 +487,76 @@ def _draw_section_title(c: canvas.Canvas, text: str, top_y: float) -> float:
     return top_y - 16
 
 
+def _truncate_centred(c: canvas.Canvas, text: str, font: str, size: float, max_w: float) -> str:
+    """Truncate text so it fits within max_w when drawn centred."""
+    if not text:
+        return ''
+    c.setFont(font, size)
+    if c.stringWidth(text, font, size) <= max_w:
+        return text
+    ell = '…'
+    trimmed = text
+    while trimmed and c.stringWidth(trimmed + ell, font, size) > max_w:
+        trimmed = trimmed[:-1]
+    return (trimmed + ell) if trimmed else ell
+
+
+def _draw_chart_center_panel(
+    c: canvas.Canvas,
+    cx: float,
+    cy: float,
+    inner_w: float,
+    panel: dict | None,
+    *,
+    fallback: str = '',
+    compact: bool = False,
+) -> None:
+    """Porutham-style centre details: name, DOB, TOB, star, dasa lord, dasa, lagna–rasi."""
+    if not panel:
+        if fallback:
+            size = 8.5 if compact else 11
+            _centred(c, cx, cy, fallback, MAL_BOLD, size, DARK_MAROON)
+        return
+
+    max_w = inner_w - 8
+    name_size = 7.0 if compact else 8.5
+    line_size = 5.5 if compact else 6.8
+    rows: list[tuple[str, str, float, object]] = []
+    if panel.get('name'):
+        rows.append((panel['name'], MAL_BOLD, name_size, DARK_MAROON))
+    if panel.get('dob'):
+        rows.append((f'ജനന തീയതി: {panel["dob"]}', MAL, line_size, TEXT_BLACK))
+    if panel.get('tob'):
+        rows.append((f'ജനന സമയം: {panel["tob"]}', MAL, line_size, TEXT_BLACK))
+    if panel.get('star_line'):
+        rows.append((panel['star_line'], MAL, line_size, TEXT_BLACK))
+    if panel.get('dasa_lord'):
+        rows.append((f'നാഥൻ: {panel["dasa_lord"]}', MAL, line_size, TEXT_BLACK))
+    if panel.get('dasa_disp'):
+        rows.append((f'ദശ: {panel["dasa_disp"]}', MAL, line_size, TEXT_BLACK))
+    if panel.get('lagna_rasi_line'):
+        rows.append((panel['lagna_rasi_line'], MAL, line_size, TEXT_BLACK))
+
+    if not rows:
+        if fallback:
+            size = 8.5 if compact else 11
+            _centred(c, cx, cy, fallback, MAL_BOLD, size, DARK_MAROON)
+        return
+
+    line_gap = 7.0 if compact else 9.0
+    total_h = (len(rows) - 1) * line_gap
+    y = cy + total_h / 2
+    for text, font, size, color in rows:
+        shown = _truncate_centred(c, text, font, size, max_w)
+        _centred(c, cx, y, shown, font, size, color)
+        y -= line_gap
+
+
 def _draw_single_chart(
     c: canvas.Canvas,
     placements: dict,
-    center_label: str,
+    chart_center: dict | None,
+    center_fallback: str,
     chart_x: float,
     chart_top: float,
     size: float,
@@ -497,7 +564,7 @@ def _draw_single_chart(
     fs_house: float,
     fs_rasi: float,
     fs_planet: float,
-    fs_center: float,
+    compact_center: bool = False,
 ) -> None:
     """Draw one South-Indian 4x4 chart at (chart_x, chart_top) with side ``size``."""
     cell = size / 4
@@ -508,17 +575,22 @@ def _draw_single_chart(
     c.setLineWidth(2)
     c.roundRect(chart_x, chart_bottom, size, size, 5, stroke=1, fill=0)
 
-    # Inner 2x2 centre block (rows 1-2, cols 1-2) — labelled with the chart name.
+    # Inner 2x2 centre block — birth details (same as admin porutham charts).
     inner_x = chart_x + cell
     inner_y = chart_bottom + cell
     inner_w = cell * 2
-    c.setFillColor(LIGHT_GOLD)
+    c.setFillColor(white)
     c.setStrokeColor(MAROON)
     c.setLineWidth(1)
     c.rect(inner_x, inner_y, inner_w, inner_w, stroke=1, fill=1)
-    _centred(
-        c, inner_x + inner_w / 2, inner_y + inner_w / 2 - fs_center * 0.35,
-        center_label, MAL_BOLD, fs_center, DARK_MAROON,
+    _draw_chart_center_panel(
+        c,
+        inner_x + inner_w / 2,
+        inner_y + inner_w / 2,
+        inner_w,
+        chart_center,
+        fallback=center_fallback,
+        compact=compact_center,
     )
 
     # Outer cells: house number, Malayalam rasi name, planet glyphs.
@@ -558,20 +630,20 @@ def _draw_titled_chart(
     c: canvas.Canvas, chart_def: tuple, person: dict, top_y: float, size: float
 ) -> float:
     """Draw a centred, titled chart; return the y just below it."""
-    title, center_mal, key = chart_def
+    title, center_fallback, key = chart_def
     chart_x = CONTENT_X + (CONTENT_W - size) / 2
     _centred(c, chart_x + size / 2, top_y - 13, title, "Helvetica-Bold", 11, DARK_MAROON)
     _draw_single_chart(
         c,
         person.get(key, {}),
-        center_mal,
+        person.get('chart_center'),
+        center_fallback,
         chart_x,
         top_y - CHART_TITLE_H,
         size,
         fs_house=7,
         fs_rasi=7,
         fs_planet=11,
-        fs_center=13,
     )
     return top_y - CHART_TITLE_H - size
 
@@ -658,7 +730,8 @@ SAMPLE_REPORT = {
     "matched": 5,
     "unmatched": 5,
     "rows": [
-        {"english": e, "significance": s, "matched": m} for e, s, m in _SAMPLE_ROWS
+        {"english": e, "significance": s, "matched": m, "points": 1.0 if m else 0.0}
+        for e, s, m in _SAMPLE_ROWS
     ],
     "bride": {
         "role": "BRIDE",
@@ -682,6 +755,15 @@ SAMPLE_REPORT = {
             (0, 0): ["La", "Cha"], (0, 3): ["Gu"], (1, 3): ["Ke"], (2, 0): ["Ku"],
             (3, 1): ["Bu", "Shu"], (3, 2): ["Sha"], (3, 3): ["Ra", "Ma"],
         },
+        "chart_center": {
+            "name": "anju",
+            "dob": "01-01-1990",
+            "tob": "10:30 AM",
+            "star_line": "വിശാഖം - പാദം 3",
+            "dasa_lord": "ഗുരു",
+            "dasa_disp": "05 വർഷം 00 മാസം 09 ദിവസം",
+            "lagna_rasi_line": "ലഗ്നം: കന്നി - രാശി: തുലാം",
+        },
     },
     "groom": {
         "role": "GROOM",
@@ -704,6 +786,15 @@ SAMPLE_REPORT = {
         "bhava_placements": {
             (0, 0): ["La"], (1, 0): ["Ma", "Shu"], (1, 3): ["Gu", "Cha"], (2, 3): ["Ku"],
             (3, 0): ["Bu", "Sha"], (3, 2): ["Ra"], (3, 3): ["Ke"],
+        },
+        "chart_center": {
+            "name": "arun as",
+            "dob": "27-10-1986",
+            "tob": "10:30 AM",
+            "star_line": "ആയില്യം - പാദം 3",
+            "dasa_lord": "ബുധൻ",
+            "dasa_disp": "05 വർഷം 10 മാസം 07 ദിവസം",
+            "lagna_rasi_line": "ലഗ്നം: മകരം - രാശി: കർക്കടകം",
         },
     },
 }
