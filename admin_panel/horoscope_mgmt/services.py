@@ -181,8 +181,19 @@ def build_record_row(
     }
 
 
+def _porutham_eligible_users_qs(qs):
+    """Users whose HoroscopeProfile passes HoroscopeProfile.is_exe_done()."""
+    return qs.filter(
+        horoscope_profile__pr_rasi__isnull=False,
+    ).exclude(
+        horoscope_profile__pr_rasi='',
+    ).filter(
+        horoscope_profile__pr_star__isnull=False,
+    )
+
+
 def _list_users_filtered(
-    users_qs, *, search: str, branch_id: str | None, gender: str | None = None
+    users_qs, *, search: str, branch_id: str | None, gender: str | None = None, exe_done: bool = False
 ):
     qs = users_qs
     if branch_id:
@@ -207,6 +218,8 @@ def _list_users_filtered(
     g = (gender or '').strip().upper()
     if g in {'M', 'F', 'O'}:
         qs = qs.filter(gender=g)
+    if exe_done:
+        qs = _porutham_eligible_users_qs(qs)
     s = (search or '').strip()
     if s:
         qs = qs.filter(Q(matri_id__icontains=s) | Q(name__icontains=s))
@@ -231,9 +244,10 @@ def list_horoscope_records(
     request=None,
     mount: str | None = None,
     gender: str | None = None,
+    exe_done: bool = False,
 ):
     qs = _list_users_filtered(
-        users_qs, search=search, branch_id=branch_id, gender=gender
+        users_qs, search=search, branch_id=branch_id, gender=gender, exe_done=exe_done
     )
     total, page_qs = paginate(qs, page, page_size)
     user_ids = [u.pk for u in page_qs]

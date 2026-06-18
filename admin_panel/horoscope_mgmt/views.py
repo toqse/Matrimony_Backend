@@ -71,6 +71,8 @@ class HoroscopePanelRecordsView(APIView):
         search = (request.query_params.get("search") or "").strip()
         branch_id = request.query_params.get("branch_id")
         gender = request.query_params.get("gender")
+        exe_done_raw = (request.query_params.get("exe_done") or "").strip().lower()
+        exe_done = exe_done_raw in {"1", "true", "yes"}
         data = horoscope_panel.list_horoscope_records(
             qs,
             search=search,
@@ -80,6 +82,7 @@ class HoroscopePanelRecordsView(APIView):
             page_size=page_size,
             request=request,
             mount=self.mount,
+            exe_done=exe_done,
         )
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 

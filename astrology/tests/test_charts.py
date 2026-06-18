@@ -3,6 +3,7 @@ from django.test import SimpleTestCase
 from astrology.charts import (
     build_horoscope_charts,
     dasa_lord,
+    days_to_ymd,
     decode_chart,
     format_dasa_balance,
 )
@@ -81,6 +82,18 @@ class DasaTests(SimpleTestCase):
         self.assertEqual(result['months'], 8)
         self.assertEqual(result['days'], 25)
         self.assertEqual(result['balance_text'], '06y 08m 25d')
+
+    def test_days_to_ymd_vb_examples(self):
+        """VB DaysToYMD reference values from the Horoscope Generator EXE."""
+        self.assertEqual(days_to_ymd(491), (1, 4, 5))
+        self.assertEqual(days_to_ymd(2459), (6, 8, 25))
+        self.assertEqual(days_to_ymd(365), (0, 11, 31))
+        self.assertEqual(days_to_ymd(366), (1, 0, 1))
+
+    def test_days_to_ymd_exe_panel_sample(self):
+        """10y 06m 29d — matches desktop Horoscope Generator for profile 8008."""
+        self.assertEqual(days_to_ymd(3863), (10, 6, 29))
+        self.assertEqual(format_dasa_balance(3863)['balance_text'], '10y 06m 29d')
 
     def test_format_dasa_balance_none(self):
         result = format_dasa_balance(None)

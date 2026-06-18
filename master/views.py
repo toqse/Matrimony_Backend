@@ -87,9 +87,26 @@ class CityList(generics.ListAPIView):
 
     def get_queryset(self):
         qs = City.objects.filter(is_active=True).select_related('district').order_by('name')
-        district_id = self.request.query_params.get('district_id')
-        if district_id:
-            qs = qs.filter(district_id=district_id)
+        district_ids = []
+        seen = set()
+        for raw in self.request.query_params.getlist('district_id'):
+            for part in str(raw).split(','):
+                s = part.strip()
+                if s.isdigit():
+                    val = int(s)
+                    if val not in seen:
+                        seen.add(val)
+                        district_ids.append(val)
+        for raw in self.request.query_params.getlist('district_ids'):
+            for part in str(raw).split(','):
+                s = part.strip()
+                if s.isdigit():
+                    val = int(s)
+                    if val not in seen:
+                        seen.add(val)
+                        district_ids.append(val)
+        if district_ids:
+            qs = qs.filter(district_id__in=district_ids)
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(name__icontains=search)

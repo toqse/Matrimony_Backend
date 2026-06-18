@@ -116,12 +116,26 @@ def moon_rasi_name(encoded: str | None) -> str:
     return _rasi_name_from_chart(encoded, 3)
 
 
+def days_to_ymd(days: int) -> tuple[int, int, int]:
+    """
+    Port of VB ``DaysToYMD``: convert total days to (years, months, days).
+
+    Uses 365.25-day years and ``365.25 / 12``-day months with VB ``Int()``
+    truncation at each step (not floating remainders).
+    """
+    bal_days = days
+    years = int(bal_days / DASA_YEAR_DAYS)
+    bal_days = bal_days - int(years * DASA_YEAR_DAYS)
+    months = int(bal_days / DASA_MONTH_DAYS)
+    bal_days = bal_days - int(months * DASA_MONTH_DAYS)
+    return years, months, bal_days
+
+
 def format_dasa_balance(days: int | None) -> dict[str, Any]:
     """
     Format pr_dasabalance (days) as y/m/d text matching the Windows EXE panel.
 
-    Uses 365.25-day years and 365.25/12-day months with inclusive day counting
-    (matches EXE e.g. 4991 -> 13y 07m 30d, 3599 -> 09y 10m 08d).
+    Delegates to :func:`days_to_ymd` (VB ``DaysToYMD``).
     """
     if days is None or days <= 0:
         return {
@@ -131,17 +145,7 @@ def format_dasa_balance(days: int | None) -> dict[str, Any]:
             'balance_text': '',
         }
 
-    years = int(days / DASA_YEAR_DAYS)
-    rem_days = days - years * DASA_YEAR_DAYS
-    months = int(rem_days / DASA_MONTH_DAYS)
-    # EXE uses inclusive day counting: floor the fractional day, then +1.
-    rem_day = int(rem_days - months * DASA_MONTH_DAYS) + 1
-    if rem_day > 30:
-        rem_day -= 30
-        months += 1
-    if months >= 12:
-        months -= 12
-        years += 1
+    years, months, rem_day = days_to_ymd(days)
     return {
         'years': years,
         'months': months,

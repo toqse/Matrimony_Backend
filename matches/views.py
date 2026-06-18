@@ -41,6 +41,28 @@ def _optional_fk_id(raw):
         return None
 
 
+def _optional_fk_id_list(request, *param_names):
+    """Parse comma-separated or repeated query params into a deduped int list."""
+    seen = set()
+    ids = []
+    for name in param_names:
+        for raw in request.query_params.getlist(name):
+            if raw is None:
+                continue
+            for part in str(raw).split(','):
+                s = part.strip().lower()
+                if not s or s in ('0', 'any', 'null', 'none'):
+                    continue
+                try:
+                    val = int(s)
+                except (TypeError, ValueError):
+                    continue
+                if val not in seen:
+                    seen.add(val)
+                    ids.append(val)
+    return ids
+
+
 def _wants_profile_with_photo(request):
     v = request.query_params.get('profile_with_photo')
     if v is None:
@@ -152,12 +174,12 @@ def _match_list_response(request, *, home_slider=False):
     state_id = _optional_fk_id(request.query_params.get('state_id'))
     if state_id is not None:
         qs = qs.filter(user_location__state_id=state_id)
-    district_id = _optional_fk_id(request.query_params.get('district_id'))
-    if district_id is not None:
-        qs = qs.filter(user_location__district_id=district_id)
-    city_id = _optional_fk_id(request.query_params.get('city_id'))
-    if city_id is not None:
-        qs = qs.filter(user_location__city_id=city_id)
+    city_ids = _optional_fk_id_list(request, 'city_ids', 'city_id')
+    district_ids = _optional_fk_id_list(request, 'district_ids', 'district_id')
+    if city_ids:
+        qs = qs.filter(user_location__city_id__in=city_ids)
+    elif district_ids:
+        qs = qs.filter(user_location__district_id__in=district_ids)
 
     # Only with profile photo
     if _wants_profile_with_photo(request):
@@ -340,7 +362,9 @@ class MatchListView(APIView):
     GET /api/v1/matches/
     Query params: page, limit, search, age_min, age_max, height_min, height_max,
     religion_id, caste_id, education_id, occupation_id, marital_status,
-    country_id, state_id, district_id, city_id, profile_with_photo, sort_by.
+    country_id, state_id, district_id(s), city_id(s), profile_with_photo, sort_by.
+    district_ids / city_ids accept comma-separated lists; repeated district_id / city_id also work.
+    When cities are provided they take priority over districts.
     Ordering is by sort_by only (not by ProfileView). Use GET /api/v1/matches/home-slider/ for unviewed-first ordering.
     """
     permission_classes = [IsAuthenticated]

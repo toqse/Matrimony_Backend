@@ -6,7 +6,11 @@ from django.test import RequestFactory, TestCase
 from accounts.models import User
 from admin_panel.auth.models import AdminUser
 from admin_panel.branches.models import Branch as PanelBranch
-from admin_panel.horoscope_mgmt.services import panel_porutham, scoped_member_users_queryset
+from admin_panel.horoscope_mgmt.services import (
+    list_horoscope_records,
+    panel_porutham,
+    scoped_member_users_queryset,
+)
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.models import HoroscopeProfile
@@ -173,3 +177,74 @@ class HoroscopePanelPoruthamPayloadTests(TestCase):
         self.assertIn("poruthams", result)
         self.assertIn("score", result)
         self.assertIn("overall_result", result)
+
+
+class HoroscopePanelExeDoneFilterTests(TestCase):
+    """list_horoscope_records exe_done filter matches panel_porutham eligibility."""
+
+    def setUp(self):
+        self.master_br = MasterBranch.objects.create(name="Exe Filter Branch", code="HP_EX_01")
+        self.admin_super = AdminUser.objects.create(
+            mobile="9000000088",
+            name="Admin Exe Filter",
+            role=AdminUser.ROLE_ADMIN,
+        )
+
+        def _female(name: str, mobile: str):
+            u = User.objects.create_user(
+                mobile=mobile,
+                password="x",
+                name=name,
+                role="user",
+                gender="F",
+            )
+            u.is_active = True
+            u.branch = self.master_br
+            u.save()
+            UserProfile.objects.get_or_create(user=u, defaults={})
+            return u
+
+        self.eligible_user = _female("Exe Done Bride", "+919876543501")
+        self.awaiting_user = _female("Awaiting Exe Bride", "+919876543502")
+
+        HoroscopeProfile.objects.update_or_create(
+            user=self.eligible_user,
+            defaults={
+                "pr_rasi": _rasi_string(2),
+                "pr_star": 3,
+                "pr_pada": 1,
+                "pr_name": "Exe Done Bride",
+            },
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=self.awaiting_user,
+            defaults={
+                "pr_rasi": "",
+                "pr_star": None,
+                "pr_name": "Awaiting Exe Bride",
+            },
+        )
+
+    def test_list_without_exe_done_includes_all_members(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        data = list_horoscope_records(qs, search="", branch_id=None, page=1, page_size=50, gender="F")
+        profile_ids = {row["profile_id"] for row in data["results"]}
+        self.assertIn(UserProfile.objects.get(user=self.eligible_user).pk, profile_ids)
+        self.assertIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)
+
+    def test_list_with_exe_done_returns_only_eligible_profiles(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        data = list_horoscope_records(
+            qs,
+            search="",
+            branch_id=None,
+            page=1,
+            page_size=50,
+            gender="F",
+            exe_done=True,
+        )
+        profile_ids = {row["profile_id"] for row in data["results"]}
+        self.assertIn(UserProfile.objects.get(user=self.eligible_user).pk, profile_ids)
+        self.assertNotIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)
