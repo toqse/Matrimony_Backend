@@ -199,7 +199,8 @@ def record_staff_plan_purchase(
         service_charge_total = Decimal("0")
 
     amount_paid = amount
-    service_charge_paid = Decimal("0")
+    # plan_only: registration fee counts toward bureau service charge
+    service_charge_paid = amount_paid
 
     with db_transaction.atomic():
         any_up = (

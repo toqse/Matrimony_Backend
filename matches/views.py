@@ -23,6 +23,7 @@ from user_settings.models import UserSettings
 from wishlist.models import Wishlist
 
 from .services import apply_partner_age_preference, apply_partner_preference
+from .rotation import annotate_daily_rotation_rank
 from .utils import age_from_dob, dob_range_for_age, build_user_match_score_sql_expression
 from .serializers import MatchListProfileSerializer, format_last_seen
 from core.media import absolute_media_url
@@ -102,8 +103,10 @@ def _match_list_response(request, *, home_slider=False):
     has_age_filter = age_min is not None or age_max is not None
 
     religion_id = _optional_fk_id(request.query_params.get('religion_id'))
-    caste_id = _optional_fk_id(request.query_params.get('caste_id'))
-    has_religion_caste_filter = religion_id is not None or caste_id is not None
+    caste_ids = _optional_fk_id_list(request, 'caste_ids', 'caste_id')
+    education_ids = _optional_fk_id_list(request, 'education_ids', 'education_id')
+    occupation_ids = _optional_fk_id_list(request, 'occupation_ids', 'occupation_id')
+    has_religion_caste_filter = religion_id is not None or bool(caste_ids)
 
     # Saved partner preferences apply only when the corresponding query param is absent
     viewer_rel = UserReligion.objects.filter(user=request.user).first()
@@ -156,14 +159,12 @@ def _match_list_response(request, *, home_slider=False):
     # Optional filters (FK ids; skip 0/any so "Any" in UI does not filter to id=0)
     if religion_id is not None:
         qs = qs.filter(user_religion__religion_id=religion_id)
-    if caste_id is not None:
-        qs = qs.filter(user_religion__caste_fk_id=caste_id)
-    education_id = _optional_fk_id(request.query_params.get('education_id'))
-    if education_id is not None:
-        qs = qs.filter(user_education__highest_education_id=education_id)
-    occupation_id = _optional_fk_id(request.query_params.get('occupation_id'))
-    if occupation_id is not None:
-        qs = qs.filter(user_education__occupation_id=occupation_id)
+    if caste_ids:
+        qs = qs.filter(user_religion__caste_fk_id__in=caste_ids)
+    if education_ids:
+        qs = qs.filter(user_education__highest_education_id__in=education_ids)
+    if occupation_ids:
+        qs = qs.filter(user_education__occupation_id__in=occupation_ids)
     marital_status_id = _optional_fk_id(request.query_params.get('marital_status'))
     if marital_status_id is not None:
         qs = qs.filter(user_personal__marital_status_id=marital_status_id)
@@ -204,6 +205,8 @@ def _match_list_response(request, *, home_slider=False):
     )
     qs = qs.annotate(relevance_score=F('match_score'))
 
+    qs = annotate_daily_rotation_rank(qs)
+
     if home_slider:
         qs = qs.annotate(
             view_last_at=Subquery(
@@ -214,18 +217,18 @@ def _match_list_response(request, *, home_slider=False):
                 output_field=DateTimeField(),
             ),
         )
-        # Unviewed first; among viewed, oldest last_viewed_at first (re-calling POST /view/ bumps last_viewed_at to now).
-        qs = qs.order_by('is_viewed', 'view_last_at', '-created_at', 'pk')
+        # Unviewed first; among viewed, oldest view first; then daily rotation within each group.
+        qs = qs.order_by('is_viewed', 'view_last_at', 'daily_rotation_rank', 'pk')
     else:
         sort_by = request.query_params.get('sort_by', 'newest')
         if sort_by == 'newest':
-            qs = qs.order_by('-created_at', 'pk')
+            qs = qs.order_by('daily_rotation_rank', 'pk')
         elif sort_by == 'best_match':
-            qs = qs.order_by('-match_score', 'pk')
+            qs = qs.order_by('-match_score', 'daily_rotation_rank', 'pk')
         elif sort_by == 'most_relevant':
-            qs = qs.order_by('-relevance_score', 'pk')
+            qs = qs.order_by('-relevance_score', 'daily_rotation_rank', 'pk')
         else:
-            qs = qs.order_by('-created_at', 'pk')
+            qs = qs.order_by('daily_rotation_rank', 'pk')
 
     # Pagination
     try:
@@ -361,9 +364,10 @@ class MatchListView(APIView):
     """
     GET /api/v1/matches/
     Query params: page, limit, search, age_min, age_max, height_min, height_max,
-    religion_id, caste_id, education_id, occupation_id, marital_status,
+    religion_id, caste_id(s), education_id(s), occupation_id(s), marital_status,
     country_id, state_id, district_id(s), city_id(s), profile_with_photo, sort_by.
-    district_ids / city_ids accept comma-separated lists; repeated district_id / city_id also work.
+    caste_ids / education_ids / occupation_ids / district_ids / city_ids accept
+    comma-separated lists; repeated singular param names also work.
     When cities are provided they take priority over districts.
     Ordering is by sort_by only (not by ProfileView). Use GET /api/v1/matches/home-slider/ for unviewed-first ordering.
     """

@@ -71,6 +71,45 @@ def _astrology_pdf_verify_success_data(
     }
 
 
+def get_purchased_pdf_credit(user, product: str) -> AstrologyPdfCredit | None:
+    """Latest successful PDF purchase credit for unlimited re-download."""
+    return (
+        AstrologyPdfCredit.objects.filter(
+            user=user,
+            product=product,
+            transaction__payment_status=Transaction.STATUS_SUCCESS,
+        )
+        .select_related('transaction')
+        .order_by('-created_at')
+        .first()
+    )
+
+
+def _already_purchased_order_payload(
+    request, credit: AstrologyPdfCredit, *, price
+) -> dict:
+    return {
+        'already_purchased': True,
+        'product': credit.product,
+        'price_inr': float(price),
+        'credit_id': credit.pk,
+        'download_url': _pdf_public_download_url(request, credit),
+        'amount': amount_paise(credit.product),
+        'currency': 'INR',
+    }
+
+
+def _thalakuri_pdf_http_response(hp) -> HttpResponse:
+    from .thalakkuri_calc import generate_thalakkuri_pdf
+
+    content, fmt = generate_thalakkuri_pdf(hp)
+    name = f"thalakkuri_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
+    ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
+    resp = HttpResponse(content, content_type=ct)
+    resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+    return resp
+
+
 class HoroscopeProfileMeView(APIView):
     """GET /api/v1/astrology/horoscope/me/"""
 
@@ -444,6 +483,19 @@ class AstrologyPdfOrderView(APIView):
             )
         product = ser.validated_data['product']
         price = catalog_price_inr(product)
+
+        existing_credit = get_purchased_pdf_credit(request.user, product)
+        if existing_credit:
+            return Response(
+                {
+                    'success': True,
+                    'data': _already_purchased_order_payload(
+                        request, existing_credit, price=price
+                    ),
+                },
+                status=status.HTTP_200_OK,
+            )
+
         try:
             out = create_order(
                 user_matri_id=getattr(request.user, 'matri_id', '') or '', product=product
@@ -824,11 +876,56 @@ class AstrologyPdfThalakuriDownloadView(APIView):
 
     def get(self, request):
         from .models import HoroscopeProfile
-        from .thalakkuri_calc import generate_thalakkuri_pdf
 
         sig = (request.query_params.get('sig') or '').strip()
+        credit_id_raw = (request.query_params.get('credit_id') or '').strip()
         uid = (request.query_params.get('uid') or '').strip()
-        if not uid:
+
+        user_id = None
+        if credit_id_raw and sig:
+            try:
+                credit_id = int(credit_id_raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {
+                        'success': False,
+                        'error': {'code': 403, 'message': 'Invalid or missing download token.'},
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if not verify_pdf_credit_access(sig, credit_id):
+                return Response(
+                    {
+                        'success': False,
+                        'error': {'code': 403, 'message': 'Invalid or expired download token.'},
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            try:
+                credit = AstrologyPdfCredit.objects.get(
+                    pk=credit_id,
+                    product=AstrologyPdfCredit.PRODUCT_THALAKURI,
+                )
+            except AstrologyPdfCredit.DoesNotExist:
+                return Response(
+                    {
+                        'success': False,
+                        'error': {'code': 404, 'message': 'Download credit not found.'},
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            user_id = credit.user_id
+        elif uid and sig:
+            if not verify_thalakuri_demo_access(sig, uid):
+                return Response(
+                    {
+                        'success': False,
+                        'error': {'code': 403, 'message': 'Invalid or expired download token.'},
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            user_id = uid
+        else:
             return Response(
                 {
                     'success': False,
@@ -836,17 +933,9 @@ class AstrologyPdfThalakuriDownloadView(APIView):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if not verify_thalakuri_demo_access(sig, uid):
-            return Response(
-                {
-                    'success': False,
-                    'error': {'code': 403, 'message': 'Invalid or expired download token.'},
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
 
         try:
-            hp = HoroscopeProfile.objects.get(user_id=uid)
+            hp = HoroscopeProfile.objects.get(user_id=user_id)
         except HoroscopeProfile.DoesNotExist:
             return Response(
                 {
@@ -865,12 +954,7 @@ class AstrologyPdfThalakuriDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        content, fmt = generate_thalakkuri_pdf(hp)
-        name = f"thalakkuri_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
-        ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
-        resp = HttpResponse(content, content_type=ct)
-        resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
-        return resp
+        return _thalakuri_pdf_http_response(hp)
 
 
 class ThalakkuriPDFView(APIView):

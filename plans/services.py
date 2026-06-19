@@ -25,6 +25,24 @@ def _get_user_plan(user):
     return up
 
 
+def _effective_service_charge_paid(user_plan, *, repair_legacy=False):
+    """
+    Bureau fee credited so far. plan_only purchases count the registration fee
+    (price_paid) toward service charge. Legacy rows may have price_paid set but
+    service_charge_paid stuck at 0 (e.g. staff-recorded sales before fix).
+    """
+    from decimal import Decimal
+
+    paid = Decimal(str(getattr(user_plan, 'service_charge_paid', None) or 0))
+    price_paid = Decimal(str(getattr(user_plan, 'price_paid', None) or 0))
+    if paid <= 0 and price_paid > 0:
+        if repair_legacy:
+            user_plan.service_charge_paid = price_paid
+            user_plan.save(update_fields=['service_charge_paid', 'updated_at'])
+        return price_paid
+    return paid
+
+
 def user_has_active_plan(user):
     """True when the user has a valid, non-expired active subscription (same as get_user_plan_status == 'active')."""
     return get_user_plan_status(user) == 'active'
@@ -310,8 +328,8 @@ def get_plan_info_for_response(user):
         service_charge_total = Decimal('0')
 
     plan_price = p.price or Decimal('0')
-    service_charge_paid = getattr(up, 'service_charge_paid', 0) or 0
-    # Amount still owed on the service charge (after any partial payments).
+    service_charge_paid = _effective_service_charge_paid(up, repair_legacy=True)
+    # Amount still owed on the service charge (after plan registration / partial payments).
     service_charge_remaining = max(Decimal('0'), service_charge_total - service_charge_paid)
     # Remaining registration path shown on plan cards (before first service payment).
     plan_card_remaining = max(Decimal('0'), service_charge_total - plan_price)
@@ -458,7 +476,7 @@ def compute_service_charge_remaining(user):
 
     user_plan = UserPlan.objects.select_related('plan').get(user=user, is_active=True)
     service_charge_total = user_plan.service_charge or Decimal('0')
-    service_charge_paid = user_plan.service_charge_paid or Decimal('0')
+    service_charge_paid = _effective_service_charge_paid(user_plan, repair_legacy=True)
     remaining = service_charge_total - service_charge_paid
     return user_plan, remaining
 
@@ -616,7 +634,7 @@ def pay_remaining_service_charge(
         from .models import UserPlan
 
         user_plan = UserPlan.objects.select_for_update().get(pk=user_plan.pk)
-        service_charge_paid = user_plan.service_charge_paid or Decimal('0')
+        service_charge_paid = _effective_service_charge_paid(user_plan, repair_legacy=True)
         remaining = (user_plan.service_charge or Decimal('0')) - service_charge_paid
         if remaining <= 0:
             return user_plan, None, Decimal('0')

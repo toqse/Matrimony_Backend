@@ -16,6 +16,7 @@ from profiles.utils import get_profile_completion_data, filter_visible_profiles_
 from plans.models import ProfileView, Interest, UserPlan
 from plans.services import _get_user_plan, get_plan_info_for_response
 from user_settings.models import UserSettings
+from matches.rotation import annotate_daily_rotation_rank
 from matches.utils import age_from_dob, compute_match_percentage
 from core.media import absolute_media_url
 
@@ -236,7 +237,8 @@ class NewMatchesView(APIView):
             'user_religion', 'user_religion__religion',
             'user_education', 'user_education__highest_education', 'user_education__occupation',
             'user_photos', 'user_location', 'user_location__state', 'user_location__city',
-        ).distinct().order_by('-created_at')[:limit]
+        ).distinct()
+        qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')[:limit]
 
         data = [_build_profile_card(request, u, user, include_extended=False) for u in qs]
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
@@ -293,7 +295,8 @@ class SuggestionsView(APIView):
             'user_religion', 'user_religion__religion',
             'user_education', 'user_education__highest_education', 'user_education__occupation',
             'user_photos', 'user_location', 'user_location__state', 'user_location__city',
-        ).distinct().order_by('-created_at')
+        ).distinct()
+        qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')
         total = qs.count()
         start = (page - 1) * page_size
         page_qs = qs[start:start + page_size]
@@ -330,7 +333,8 @@ class TodayPicksView(APIView):
         qs = qs.select_related(
             'user_education', 'user_education__occupation',
             'user_photos',
-        ).distinct().order_by('-created_at')[:6]
+        ).distinct()
+        qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')[:6]
 
         data = []
         for u in qs:
