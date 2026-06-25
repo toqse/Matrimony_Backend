@@ -18,7 +18,7 @@ def normalize_parent_status(value):
     low = s.lower()
     if low == "alive":
         return PARENT_STATUS_ALIVE
-    if low == "late":
+    if low in ("late", "deceased"):
         return PARENT_STATUS_LATE
     if s in PARENT_STATUS_VALUES:
         return s

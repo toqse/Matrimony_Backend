@@ -28,16 +28,16 @@ from astrology.porutham import calculate_porutham
 
 # key (porutham result) -> (English label, one-line significance)
 PORUTHAM_ROWS: tuple[tuple[str, str, str], ...] = (
-    ('dinam', 'Dinam', 'Health & longevity'),
-    ('ganam', 'Ganam', 'Temperament & nature'),
-    ('mahendra', 'Mahendram', 'Prosperity & progeny'),
-    ('sthree_deerga', 'Sthree Deergham', 'Long married life'),
-    ('yoni', 'Yoni', 'Physical compatibility'),
     ('rasi', 'Rasi', 'Mental harmony'),
-    ('rasyadhipam', 'Rasyadhipathi', 'Ruling lords match'),
+    ('rasyadhipam', 'Rasyadhipam', 'Ruling lords match'),
     ('vasyam', 'Vasyam', 'Mutual attraction'),
-    ('rajju_dosham', 'Rajju', 'Life span protection'),
-    ('vedha_dosham', 'Vedha', 'Absence of affliction'),
+    ('sthree_deerga', 'Deergham', 'Long married life'),
+    ('dinam', 'Dinam', 'Health & longevity'),
+    ('mahendra', 'Mahendram', 'Prosperity & progeny'),
+    ('ganam', 'Ganam', 'Temperament & nature'),
+    ('yoni', 'Yoni', 'Physical compatibility'),
+    ('rajju_dosham', 'Rajju Dosham', 'Life span protection'),
+    ('vedha_dosham', 'Vedha Dosham', 'Absence of affliction'),
 )
 
 

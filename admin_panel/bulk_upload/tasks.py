@@ -24,6 +24,19 @@ from .models import BulkUploadJob
 from .validators import delete_cached_payload, get_cached_payload, normalize_gender
 
 
+def _optional_sibling_count(payload: dict, key: str) -> int | None:
+    val = payload.get(key)
+    if val is None:
+        return None
+    text = str(val).strip()
+    if not text:
+        return None
+    try:
+        return max(0, int(float(text)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _import_single_row(payload: dict, branch_id: int | None):
     # Debug: show normalized row data before saving.
     # (Intentional print for troubleshooting bulk upload issues.)
@@ -113,7 +126,6 @@ def _import_single_row(payload: dict, branch_id: int | None):
             "annual_income_id": payload.get("annual_income_id"),
         },
     )
-
     UserFamily.objects.update_or_create(
         user=user,
         defaults={
@@ -125,10 +137,10 @@ def _import_single_row(payload: dict, branch_id: int | None):
             "mother_status": payload.get("mother_status") or "",
             "mother_occupation": payload.get("mother_occupation") or "",
             "family_status": payload.get("family_status") or "",
-            "brothers": int(payload.get("num_brothers") or 0),
-            "married_brothers": int(payload.get("num_married_brothers") or 0),
-            "sisters": int(payload.get("num_sisters") or 0),
-            "married_sisters": int(payload.get("num_married_sisters") or 0),
+            "brothers": _optional_sibling_count(payload, "num_brothers"),
+            "married_brothers": _optional_sibling_count(payload, "num_married_brothers"),
+            "sisters": _optional_sibling_count(payload, "num_sisters"),
+            "married_sisters": _optional_sibling_count(payload, "num_married_sisters"),
             "about_family": payload.get("about_family") or "",
         },
     )

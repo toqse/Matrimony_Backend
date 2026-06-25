@@ -150,6 +150,10 @@ class AdminProfileReligionSectionView(APIView):
             defaults["partner_religion_ids"] = vd["partner_religion_ids"]
         if "partner_caste_preferences" in vd:
             defaults["partner_caste_preferences"] = vd["partner_caste_preferences"]
+        if "partner_age_from" in vd:
+            defaults["partner_age_from"] = vd["partner_age_from"]
+        if "partner_age_to" in vd:
+            defaults["partner_age_to"] = vd["partner_age_to"]
         UserReligion.objects.update_or_create(user=user, defaults=defaults)
         mark_profile_step_completed(user, "religion")
         _sync_registration_done(user)
@@ -196,6 +200,12 @@ class AdminProfilePersonalSectionView(APIView):
             pers.colour = vd["colour"]
         if "blood_group" in vd:
             pers.blood_group = vd["blood_group"]
+        from profiles.serializers import _persist_personal_reason_for_divorce
+        _persist_personal_reason_for_divorce(
+            pers,
+            vd,
+            marital_status_id=vd.get("marital_status"),
+        )
         pers.save()
         mark_profile_step_completed(user, "personal")
         _sync_registration_done(user)

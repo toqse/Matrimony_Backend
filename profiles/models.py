@@ -145,6 +145,7 @@ class UserPersonal(TimeStampedModel):
     blood_group = models.CharField(max_length=10, blank=True)
     number_of_children = models.PositiveSmallIntegerField(default=0, db_column='children_count')
     children_living_with = models.CharField(max_length=200, blank=True)
+    reason_for_divorce = models.CharField(max_length=255, blank=True)
 
     class Meta:
         db_table = 'profiles_user_personal'
@@ -171,13 +172,20 @@ class UserFamily(TimeStampedModel):
         max_length=20, choices=ParentStatus.choices, blank=True, default=''
     )
     mother_occupation = models.CharField(max_length=150, blank=True)
-    brothers = models.PositiveSmallIntegerField(default=0)
-    married_brothers = models.PositiveSmallIntegerField(default=0)
-    sisters = models.PositiveSmallIntegerField(default=0)
-    married_sisters = models.PositiveSmallIntegerField(default=0)
+    brothers = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+    married_brothers = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+    sisters = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+    married_sisters = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+    brother_occupation = models.CharField(max_length=150, blank=True)
+    sister_occupation = models.CharField(max_length=150, blank=True)
     about_family = models.TextField(blank=True)
     family_type = models.CharField(max_length=100, blank=True)
     family_status = models.CharField(max_length=100, blank=True)
+    family_values = models.CharField(max_length=50, blank=True)
+    native_place = models.CharField(max_length=200, blank=True)
+    family_location = models.CharField(max_length=200, blank=True)
+    family_contact = models.CharField(max_length=20, blank=True)
+    family_contact_2 = models.CharField(max_length=20, blank=True)
 
     class Meta:
         db_table = 'profiles_user_family'

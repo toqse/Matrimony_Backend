@@ -13,6 +13,8 @@ from profiles.views import (
     ProfileViewRecordView,
 )
 from admin_panel.success_stories.views import PublicSuccessStoryListAPIView
+from admin_panel.newsletter.views import NewsletterSubscribeAPIView
+from admin_panel.app_config.views import PublicAppConfigAPIView
 from astrology.views import HoroscopeDecoderDebugView
 from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
 
@@ -58,6 +60,8 @@ urlpatterns = [
     path('api/v1/staff/enquiries/', include('admin_panel.staff_enquiries.urls')),
     path('api/v1/branch/enquiries/', include('admin_panel.enquiries.branch_urls')),
     path('api/v1/admin/success-stories/', include('admin_panel.success_stories.urls')),
+    path('api/v1/admin/newsletter/', include('admin_panel.newsletter.urls')),
+    path('api/v1/admin/app-config/', include('admin_panel.app_config.urls')),
     path('api/v1/admin/reports/', include('admin_panel.reports.urls')),
     path('api/v1/admin/audit-log/', include('admin_panel.audit_log.urls')),
     path('api/v1/admin/master/', include('admin_panel.master.urls')),
@@ -86,6 +90,8 @@ urlpatterns = [
     path('api/v1/plans/', include('plans.urls_plans')),
     path('api/v1/website/plans/', WebsitePlanListView.as_view()),
     path('api/v1/website/success-stories/', PublicSuccessStoryListAPIView.as_view()),
+    path('api/v1/website/newsletter/subscribe/', NewsletterSubscribeAPIView.as_view()),
+    path('api/v1/website/app-config/', PublicAppConfigAPIView.as_view()),
     path('api/v1/admin/plans/', include('admin_panel.plans.urls')),
     path('api/v1/chat/', include('chat.urls')),
     path('api/v1/settings/', include('user_settings.urls')),

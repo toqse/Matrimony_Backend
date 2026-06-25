@@ -35,6 +35,78 @@ def _validate_complexion_choice(value, *, field_name='complexion'):
     return cleaned
 
 
+def _resolve_marital_status_name(serializer, attrs):
+    """Resolve marital status label for cross-field validation."""
+    marital_status_name = serializer.initial_data.get('marital_status')
+    ms_resolved = attrs.get('marital_status')
+    if marital_status_name is None and isinstance(ms_resolved, int):
+        from master.models import MaritalStatus
+        mso = MaritalStatus.objects.filter(pk=ms_resolved).first()
+        marital_status_name = mso.name if mso else ''
+    if not (isinstance(marital_status_name, str) and marital_status_name.strip()):
+        user = serializer.context.get('user')
+        if user is None:
+            request = serializer.context.get('request')
+            user = getattr(request, 'user', None) if request else None
+        if user and getattr(user, 'pk', None):
+            pers = UserPersonal.objects.filter(user=user).select_related('marital_status').first()
+            if pers and pers.marital_status_id:
+                marital_status_name = pers.marital_status.name
+    return str(marital_status_name or '').strip()
+
+
+def _apply_reason_for_divorce_rules(serializer, attrs):
+    """Require reason when Divorced; clear when marital status is not Divorced."""
+    attrs = dict(attrs)
+    marital_name = _resolve_marital_status_name(serializer, attrs)
+    is_divorced = marital_name.lower() == 'divorced'
+    reason_in_payload = 'reason_for_divorce' in serializer.initial_data
+
+    if reason_in_payload:
+        reason = (attrs.get('reason_for_divorce') or '').strip()
+    elif is_divorced:
+        user = serializer.context.get('user')
+        if user is None:
+            request = serializer.context.get('request')
+            user = getattr(request, 'user', None) if request else None
+        existing = ''
+        if user and getattr(user, 'pk', None):
+            pers = UserPersonal.objects.filter(user=user).first()
+            existing = (pers.reason_for_divorce or '').strip() if pers else ''
+        reason = existing
+    else:
+        reason = ''
+
+    if is_divorced and not reason:
+        raise serializers.ValidationError(
+            {'reason_for_divorce': 'Reason for divorce is required when marital status is Divorced.'}
+        )
+
+    if not is_divorced:
+        attrs['reason_for_divorce'] = ''
+    elif reason_in_payload:
+        attrs['reason_for_divorce'] = reason
+
+    return attrs
+
+
+def _persist_personal_reason_for_divorce(pers, vd, marital_status_id=None):
+    """Apply reason_for_divorce from validated personal payload."""
+    from master.models import MaritalStatus
+
+    ms_id = marital_status_id
+    if ms_id is None:
+        ms_id = pers.marital_status_id
+    is_divorced = False
+    if ms_id:
+        mso = MaritalStatus.objects.filter(pk=ms_id).first()
+        is_divorced = bool(mso and (mso.name or '').strip().lower() == 'divorced')
+    if 'reason_for_divorce' in vd:
+        pers.reason_for_divorce = vd['reason_for_divorce'] or ''
+    elif not is_divorced:
+        pers.reason_for_divorce = ''
+
+
 def _normalize_partner_caste_preferences(raw_value):
     if raw_value in (None, ''):
         return {}
@@ -311,6 +383,7 @@ class UserPersonalSerializer(serializers.Serializer):
     weight_kg = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     complexion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     blood_group = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    reason_for_divorce = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def to_internal_value(self, data):
         data = dict(data) if not isinstance(data, dict) else data.copy()
@@ -354,7 +427,7 @@ class UserPersonalSerializer(serializers.Serializer):
         if has_children is True and number_of_children is None:
             raise serializers.ValidationError('Please specify the number of children.')
 
-        return attrs
+        return _apply_reason_for_divorce_rules(self, attrs)
 
     def create(self, validated_data):
         user = self.context['request'].user
@@ -381,6 +454,8 @@ class UserPersonalSerializer(serializers.Serializer):
             defaults['number_of_children'] = number_of_children
         if marital_status_id is not None:
             defaults['marital_status_id'] = marital_status_id
+        if 'reason_for_divorce' in validated_data:
+            defaults['reason_for_divorce'] = validated_data.get('reason_for_divorce') or ''
         obj, _ = UserPersonal.objects.update_or_create(user=user, defaults=defaults)
         return obj
 
@@ -614,6 +689,7 @@ class PersonalDetailsReadSerializer(serializers.Serializer):
     weight_kg = serializers.DecimalField(source='weight', max_digits=5, decimal_places=2, allow_null=True)
     colour = serializers.CharField()
     blood_group = serializers.CharField()
+    reason_for_divorce = serializers.CharField(allow_blank=True)
 
     def get_marital_status(self, obj):
         return obj.marital_status.name if obj.marital_status_id else None
@@ -676,13 +752,20 @@ class FamilyDetailsReadSerializer(serializers.Serializer):
     mother_name = serializers.CharField()
     mother_status = serializers.CharField(allow_blank=True)
     mother_occupation = serializers.CharField()
-    brothers = serializers.IntegerField()
-    married_brothers = serializers.IntegerField()
-    sisters = serializers.IntegerField()
-    married_sisters = serializers.IntegerField()
+    brothers = serializers.IntegerField(allow_null=True)
+    married_brothers = serializers.IntegerField(allow_null=True)
+    sisters = serializers.IntegerField(allow_null=True)
+    married_sisters = serializers.IntegerField(allow_null=True)
+    brother_occupation = serializers.CharField(allow_blank=True)
+    sister_occupation = serializers.CharField(allow_blank=True)
     about_family = serializers.CharField()
     family_type = serializers.CharField(allow_blank=True)
     family_status = serializers.CharField(allow_blank=True)
+    family_values = serializers.CharField(allow_blank=True)
+    native_place = serializers.CharField(allow_blank=True)
+    family_location = serializers.CharField(allow_blank=True)
+    family_contact = serializers.CharField(allow_blank=True)
+    family_contact_2 = serializers.CharField(allow_blank=True)
 
 
 class EducationDetailsReadSerializer(serializers.Serializer):
@@ -774,6 +857,7 @@ def empty_personal_details_read_data():
         'weight_kg': None,
         'colour': '',
         'blood_group': '',
+        'reason_for_divorce': '',
     }
 
 
@@ -813,13 +897,20 @@ def empty_family_details_read_data():
         'mother_name': '',
         'mother_status': '',
         'mother_occupation': '',
-        'brothers': 0,
-        'married_brothers': 0,
-        'sisters': 0,
-        'married_sisters': 0,
+        'brothers': None,
+        'married_brothers': None,
+        'sisters': None,
+        'married_sisters': None,
+        'brother_occupation': '',
+        'sister_occupation': '',
         'about_family': '',
         'family_type': '',
         'family_status': '',
+        'family_values': '',
+        'native_place': '',
+        'family_location': '',
+        'family_contact': '',
+        'family_contact_2': '',
     }
 
 
@@ -1079,6 +1170,7 @@ class PersonalDetailsUpdateSerializer(serializers.Serializer):
     complexion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     colour = serializers.CharField(required=False, allow_blank=True)
     blood_group = serializers.CharField(required=False, allow_blank=True)
+    reason_for_divorce = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def to_internal_value(self, data):
         data = dict(data) if not isinstance(data, dict) else data.copy()
@@ -1161,7 +1253,7 @@ class PersonalDetailsUpdateSerializer(serializers.Serializer):
             # Keep DB value non-null and semantically consistent.
             attrs['number_of_children'] = 0
 
-        return attrs
+        return _apply_reason_for_divorce_rules(self, attrs)
 
 
 class LocationDetailsUpdateSerializer(serializers.Serializer):
@@ -1237,13 +1329,41 @@ class FamilyDetailsUpdateSerializer(serializers.Serializer):
     mother_name = serializers.CharField(required=False, allow_blank=True)
     mother_status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     mother_occupation = serializers.CharField(required=False, allow_blank=True)
-    brothers = serializers.IntegerField(required=False, min_value=0)
-    married_brothers = serializers.IntegerField(required=False, min_value=0)
-    sisters = serializers.IntegerField(required=False, min_value=0)
-    married_sisters = serializers.IntegerField(required=False, min_value=0)
+    brothers = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    married_brothers = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    sisters = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    married_sisters = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    brother_occupation = serializers.CharField(required=False, allow_blank=True)
+    sister_occupation = serializers.CharField(required=False, allow_blank=True)
     about_family = serializers.CharField(required=False, allow_blank=True)
     family_type = serializers.CharField(required=False, allow_blank=True)
     family_status = serializers.CharField(required=False, allow_blank=True)
+    family_values = serializers.CharField(required=False, allow_blank=True)
+    native_place = serializers.CharField(required=False, allow_blank=True)
+    family_location = serializers.CharField(required=False, allow_blank=True)
+    family_contact = serializers.CharField(required=False, allow_blank=True)
+    family_contact_2 = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_about_family(self, value):
+        if value and len(value) > 500:
+            raise serializers.ValidationError('About family must be 500 characters or fewer.')
+        return value
+
+    def validate_family_contact(self, value):
+        return self._normalize_optional_phone(value)
+
+    def validate_family_contact_2(self, value):
+        return self._normalize_optional_phone(value)
+
+    def _normalize_optional_phone(self, value):
+        cleaned = (value or '').strip()
+        if not cleaned:
+            return ''
+        from core.phone import normalize_phone_input
+        try:
+            return normalize_phone_input(cleaned, required=False)
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError(str(exc.detail[0]) if isinstance(exc.detail, list) else str(exc.detail))
 
     def validate_father_status(self, value):
         n = normalize_parent_status(value)

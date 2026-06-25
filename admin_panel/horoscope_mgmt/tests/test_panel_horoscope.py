@@ -22,6 +22,10 @@ class _Request(SimpleNamespace):
     pass
 
 
+def _list_req(params: dict | None = None):
+    return SimpleNamespace(query_params=params or {})
+
+
 def _rasi_string(moon_sign: int) -> str:
     """11-char A-L chart string; position index 2 = Moon rasi (1-12)."""
     chars = []
@@ -228,7 +232,11 @@ class HoroscopePanelExeDoneFilterTests(TestCase):
     def test_list_without_exe_done_includes_all_members(self):
         req = _Request(user=self.admin_super)
         qs = scoped_member_users_queryset(req, mount="admin")
-        data = list_horoscope_records(qs, search="", branch_id=None, page=1, page_size=50, gender="F")
+        list_req = _list_req({"gender": "F"})
+        data, err = list_horoscope_records(
+            qs, request=list_req, page=1, page_size=50,
+        )
+        self.assertIsNone(err)
         profile_ids = {row["profile_id"] for row in data["results"]}
         self.assertIn(UserProfile.objects.get(user=self.eligible_user).pk, profile_ids)
         self.assertIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)
@@ -236,15 +244,14 @@ class HoroscopePanelExeDoneFilterTests(TestCase):
     def test_list_with_exe_done_returns_only_eligible_profiles(self):
         req = _Request(user=self.admin_super)
         qs = scoped_member_users_queryset(req, mount="admin")
-        data = list_horoscope_records(
+        list_req = _list_req({"gender": "F", "exe_done": "true"})
+        data, err = list_horoscope_records(
             qs,
-            search="",
-            branch_id=None,
+            request=list_req,
             page=1,
             page_size=50,
-            gender="F",
-            exe_done=True,
         )
+        self.assertIsNone(err)
         profile_ids = {row["profile_id"] for row in data["results"]}
         self.assertIn(UserProfile.objects.get(user=self.eligible_user).pk, profile_ids)
         self.assertNotIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)

@@ -20,6 +20,7 @@ from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.profile_filters import apply_profile_list_filters
+from admin_panel.profile_porutham_filters import apply_porutham_match_filters
 from admin_panel.bulk_upload.services import normalize_mobile
 from admin_panel.commissions.views import (
     _branch_manager_code_or_error,
@@ -291,6 +292,12 @@ class MyProfilesListView(APIView):
             )
 
         qs = apply_profile_list_filters(qs, request)
+        qs, perr = apply_porutham_match_filters(qs, request)
+        if perr:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": perr}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         wishlist_actor = _wishlist_actor_for_panel_user(request.user)
         wishlist_user_ids = set()

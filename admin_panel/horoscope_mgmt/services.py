@@ -237,18 +237,31 @@ def paginate(qs, page: int, page_size: int):
 def list_horoscope_records(
     users_qs,
     *,
-    search,
-    branch_id,
+    request,
     page,
     page_size,
-    request=None,
     mount: str | None = None,
-    gender: str | None = None,
-    exe_done: bool = False,
 ):
+    from admin_panel.profile_filters import apply_profile_list_filters
+    from admin_panel.profile_porutham_filters import apply_porutham_match_filters
+
+    branch_id = request.query_params.get('branch_id')
+    gender = request.query_params.get('gender')
+    exe_done_raw = (request.query_params.get('exe_done') or '').strip().lower()
+    exe_done = exe_done_raw in {'1', 'true', 'yes'}
+
     qs = _list_users_filtered(
-        users_qs, search=search, branch_id=branch_id, gender=gender, exe_done=exe_done
+        users_qs,
+        search='',
+        branch_id=branch_id,
+        gender=gender,
+        exe_done=exe_done,
     )
+    qs = apply_profile_list_filters(qs, request)
+    qs, perr = apply_porutham_match_filters(qs, request)
+    if perr:
+        return None, perr
+
     total, page_qs = paginate(qs, page, page_size)
     user_ids = [u.pk for u in page_qs]
     hp_map = {
@@ -275,7 +288,7 @@ def list_horoscope_records(
         'results': [
             build_record_row(u, hp_map, request=request, mount=mount) for u in page_qs
         ],
-    }
+    }, None
 
 
 def user_in_scope(users_qs, user_id: UUID) -> bool:
@@ -306,15 +319,24 @@ def record_detail(
     if not user:
         return None
     hp = HoroscopeProfile.objects.filter(user=user).first()
-    return {
+    payload: dict[str, Any] = {
         'record': build_record_row(
             user,
             {user.pk: hp} if hp else {},
             request=request,
             mount=mount,
         ),
-        'horoscope': HoroscopeProfileSerializer(hp).data if hp else None,
+        'horoscope': None,
     }
+    if not hp:
+        payload['exe_pending'] = False
+        return payload
+    if not hp.is_exe_done():
+        payload['exe_pending'] = True
+        return payload
+    payload['horoscope'] = HoroscopeProfileSerializer(hp).data
+    payload['exe_pending'] = False
+    return payload
 
 
 def run_mark_horoscope_done(users_qs) -> dict[str, int]:

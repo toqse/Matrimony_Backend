@@ -1,10 +1,16 @@
 """Shared queryset filters for admin / staff / branch profile list endpoints."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from django.db.models import Q
 from django.utils import timezone
+
+from admin_panel.planet_house_filter import (
+    PLANET_KEY_TO_INDEX,
+    filter_users_by_planet_house,
+)
+from astrology.porutham import RASI_NAMES
 
 PROFILE_STATUS_FILTERS = frozenset(
     {
@@ -38,6 +44,22 @@ def _apply_phone_filter(qs, phone: str):
     if digits_only and digits_only != phone:
         search_filter |= Q(mobile__icontains=digits_only)
     return qs.filter(search_filter)
+
+
+def _parse_iso_date(raw: str) -> date | None:
+    try:
+        return datetime.strptime(raw.strip(), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _horoscope_chart_q():
+    """EXE chart string present (11 planet positions)."""
+    return Q(horoscope_profile__pr_rasi__isnull=False) & ~Q(horoscope_profile__pr_rasi="")
+
+
+def _has_horoscope_q():
+    return Q(user_profile__has_horoscope=True) | _horoscope_chart_q()
 
 
 def _active_subscription_q():
@@ -107,7 +129,11 @@ def apply_profile_list_filters(qs, request):
       religion_id, caste_id, pr_star|star_id, star (name or number),
       state_id, district_id, education_id, occupation_id, marital_status_id,
       gender, religion_id, plan|plan_id, verified, staff_id, has_photo,
+      height_from_cm, height_to_cm, income_id,
+      registered_from, registered_to, rasi_id, rasi,
+      has_horoscope, planet, planet_house, rajju, dosham,
       filter (profile status buckets — applied separately in views).
+      Porutham matching params are handled in profile_porutham_filters.py.
     """
     matri_id = _qp(request, "matri_id")
     if matri_id:
@@ -135,6 +161,28 @@ def apply_profile_list_filters(qs, request):
     if age_to.isdigit():
         min_dob = date(today.year - int(age_to) - 1, today.month, today.day)
         qs = qs.filter(dob__isnull=False, dob__gt=min_dob)
+
+    height_from = _qp(request, "height_from_cm", "height_min")
+    if height_from.isdigit():
+        qs = qs.filter(
+            user_personal__height__value_cm__gte=int(height_from),
+        )
+    height_to = _qp(request, "height_to_cm", "height_max")
+    if height_to.isdigit():
+        qs = qs.filter(
+            user_personal__height__value_cm__lte=int(height_to),
+        )
+
+    income_id = _qp(request, "income_id")
+    if income_id.isdigit():
+        qs = qs.filter(user_education__annual_income_id=int(income_id))
+
+    registered_from = _parse_iso_date(_qp(request, "registered_from"))
+    if registered_from:
+        qs = qs.filter(created_at__date__gte=registered_from)
+    registered_to = _parse_iso_date(_qp(request, "registered_to"))
+    if registered_to:
+        qs = qs.filter(created_at__date__lte=registered_to)
 
     religion_id = _qp(request, "religion_id")
     if religion_id.isdigit():
@@ -174,6 +222,46 @@ def apply_profile_list_filters(qs, request):
                 qs = qs.filter(horoscope_profile__pr_star=int(star))
             else:
                 qs = qs.filter(horoscope_profile__star_name__icontains=star)
+
+    rasi_id = _qp(request, "rasi_id")
+    if rasi_id.isdigit() and 1 <= int(rasi_id) <= 12:
+        rasi_name = RASI_NAMES[int(rasi_id)]
+        qs = qs.filter(horoscope_profile__rasi_sign__icontains=rasi_name)
+    else:
+        rasi = _qp(request, "rasi")
+        if rasi:
+            qs = qs.filter(horoscope_profile__rasi_sign__icontains=rasi)
+
+    has_horoscope = _qp(request, "has_horoscope").lower()
+    if has_horoscope in {"true", "1", "yes"}:
+        qs = qs.filter(_has_horoscope_q())
+    elif has_horoscope in {"false", "0", "no"}:
+        qs = qs.exclude(_has_horoscope_q())
+
+    planet_key = _qp(request, "planet").lower()
+    planet_house_raw = _qp(request, "planet_house")
+    if (
+        planet_key in PLANET_KEY_TO_INDEX
+        and planet_house_raw.isdigit()
+        and 1 <= int(planet_house_raw) <= 12
+    ):
+        qs = filter_users_by_planet_house(qs, planet_key, int(planet_house_raw))
+
+    rajju = _qp(request, "rajju")
+    if rajju:
+        qs = qs.filter(horoscope_profile__rajju__icontains=rajju)
+
+    dosham = _qp(request, "dosham").lower()
+    if dosham in {"true", "1", "yes"}:
+        qs = qs.exclude(
+            Q(user_profile__horoscope_data__dosham__isnull=True)
+            | Q(user_profile__horoscope_data__dosham="")
+        )
+    elif dosham in {"false", "0", "no"}:
+        qs = qs.filter(
+            Q(user_profile__horoscope_data__dosham__isnull=True)
+            | Q(user_profile__horoscope_data__dosham="")
+        )
 
     gender = _qp(request, "gender").upper()
     if gender in {"M", "F", "O"}:

@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
+from django.template.loader import render_to_string
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -40,6 +41,7 @@ from .services.razorpay_pdf_orders import (
     transaction_type_for_product,
     verify_payment_signature,
 )
+from .horoscope_api import horoscope_fetch_payload, horoscope_not_found_response
 from .services.public_url_signing import (
     sign_match_report_access,
     sign_pdf_credit_access,
@@ -102,12 +104,30 @@ def _already_purchased_order_payload(
 def _thalakuri_pdf_http_response(hp) -> HttpResponse:
     from .thalakkuri_calc import generate_thalakkuri_pdf
 
-    content, fmt = generate_thalakkuri_pdf(hp)
+    gender = getattr(getattr(hp, 'user', None), 'gender', None)
+    content, fmt = generate_thalakkuri_pdf(hp, gender=gender)
     name = f"thalakkuri_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
     ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
     resp = HttpResponse(content, content_type=ct)
     resp['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
     return resp
+
+
+def _pdf_download_error_http(
+    message: str,
+    *,
+    status_code: int = 400,
+    title: str = "Download unavailable",
+) -> HttpResponse:
+    """Browser-friendly HTML popup for signed PDF download failures (not raw JSON)."""
+    html = render_to_string(
+        'astrology/pdf_download_error.html',
+        {
+            'title': title,
+            'message': message,
+        },
+    )
+    return HttpResponse(html, content_type='text/html; charset=utf-8', status=status_code)
 
 
 class HoroscopeProfileMeView(APIView):
@@ -121,11 +141,12 @@ class HoroscopeProfileMeView(APIView):
         try:
             hp = HoroscopeProfile.objects.get(user=request.user)
         except HoroscopeProfile.DoesNotExist:
-            return Response(
-                {'success': True, 'data': {'exists': False, 'is_calculated': False}}
-            )
+            return Response(horoscope_not_found_response())
         return Response(
-            {'success': True, 'data': HoroscopeProfileSerializer(hp).data}
+            horoscope_fetch_payload(
+                hp,
+                serializer_class=HoroscopeProfileSerializer,
+            )
         )
 
 
@@ -145,12 +166,12 @@ class HoroscopeProfileDetailView(APIView):
         try:
             hp = HoroscopeProfile.objects.get(user_id=user_id)
         except HoroscopeProfile.DoesNotExist:
-            return Response(
-                {'success': False, 'error': {'code': 404, 'message': 'Not found.'}},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return Response(horoscope_not_found_response())
         return Response(
-            {'success': True, 'data': HoroscopeProfilePublicSerializer(hp).data}
+            horoscope_fetch_payload(
+                hp,
+                serializer_class=HoroscopeProfilePublicSerializer,
+            )
         )
 
 
@@ -249,7 +270,7 @@ class PoruthamCheckView(APIView):
                     'success': False,
                     'error': {
                         'code': 400,
-                        'message': 'Horoscope not yet calculated. Windows EXE must run first.',
+                        'message': 'Horoscope not available. It may not have been generated or the Horoscope option was not selected.',
                     },
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -886,20 +907,16 @@ class AstrologyPdfThalakuriDownloadView(APIView):
             try:
                 credit_id = int(credit_id_raw)
             except (TypeError, ValueError):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 403, 'message': 'Invalid or missing download token.'},
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
+                return _pdf_download_error_http(
+                    'Invalid or missing download token.',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    title='Access denied',
                 )
             if not verify_pdf_credit_access(sig, credit_id):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 403, 'message': 'Invalid or expired download token.'},
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
+                return _pdf_download_error_http(
+                    'Invalid or expired download token.',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    title='Access denied',
                 )
             try:
                 credit = AstrologyPdfCredit.objects.get(
@@ -907,51 +924,41 @@ class AstrologyPdfThalakuriDownloadView(APIView):
                     product=AstrologyPdfCredit.PRODUCT_THALAKURI,
                 )
             except AstrologyPdfCredit.DoesNotExist:
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 404, 'message': 'Download credit not found.'},
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
+                return _pdf_download_error_http(
+                    'Download credit not found.',
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    title='Not found',
                 )
             user_id = credit.user_id
         elif uid and sig:
             if not verify_thalakuri_demo_access(sig, uid):
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 403, 'message': 'Invalid or expired download token.'},
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
+                return _pdf_download_error_http(
+                    'Invalid or expired download token.',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    title='Access denied',
                 )
             user_id = uid
         else:
-            return Response(
-                {
-                    'success': False,
-                    'error': {'code': 403, 'message': 'Invalid or missing download token.'},
-                },
-                status=status.HTTP_403_FORBIDDEN,
+            return _pdf_download_error_http(
+                'Invalid or missing download token.',
+                status_code=status.HTTP_403_FORBIDDEN,
+                title='Access denied',
             )
 
         try:
-            hp = HoroscopeProfile.objects.get(user_id=user_id)
+            hp = HoroscopeProfile.objects.select_related('user').get(user_id=user_id)
         except HoroscopeProfile.DoesNotExist:
-            return Response(
-                {
-                    'success': False,
-                    'error': {'code': 404, 'message': 'Horoscope profile not found.'},
-                },
-                status=status.HTTP_404_NOT_FOUND,
+            return _pdf_download_error_http(
+                'Horoscope profile not found.',
+                status_code=status.HTTP_404_NOT_FOUND,
+                title='Not found',
             )
 
         if not hp.pr_rasi or len(hp.pr_rasi) < 11:
-            return Response(
-                {
-                    'success': False,
-                    'error': {'code': 400, 'message': 'Horoscope not calculated yet.'},
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return _pdf_download_error_http(
+                'Horoscope not calculated yet. Please complete your birth details and generate your horoscope first.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+                title='Horoscope not ready',
             )
 
         return _thalakuri_pdf_http_response(hp)
@@ -968,7 +975,7 @@ class ThalakkuriPDFView(APIView):
         from .thalakkuri_calc import generate_thalakkuri_pdf
 
         try:
-            hp = HoroscopeProfile.objects.get(id=horoscope_id)
+            hp = HoroscopeProfile.objects.select_related('user').get(id=horoscope_id)
         except HoroscopeProfile.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -979,7 +986,7 @@ class ThalakkuriPDFView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        content, fmt = generate_thalakkuri_pdf(hp)
+        content, fmt = generate_thalakkuri_pdf(hp, gender=getattr(hp.user, 'gender', None))
         name = f"thalakkuri_{hp.pr_name}_{hp.pr_dob}".replace(' ', '_')
         ct = 'application/pdf' if fmt == 'pdf' else 'text/html'
         resp = HttpResponse(content, content_type=ct)

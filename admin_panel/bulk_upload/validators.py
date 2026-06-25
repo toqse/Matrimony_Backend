@@ -129,7 +129,7 @@ def _resolve_location(country: str, state: str, district: str, city: str):
 def _parse_non_negative_integer_optional(raw: str):
     text = (raw or "").strip()
     if not text:
-        return 0, True
+        return None, True
     try:
         dec = Decimal(text)
     except (InvalidOperation, ValueError):
@@ -480,10 +480,10 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 "mother_status": (mother_status_norm or ""),
                 "mother_occupation": (r.get("mother_occupation") or "").strip(),
                 "family_status": (r.get("family_status") or "").strip(),
-                "num_brothers": int(num_brothers or 0),
-                "num_married_brothers": int(num_married_brothers or 0),
-                "num_sisters": int(num_sisters or 0),
-                "num_married_sisters": int(num_married_sisters or 0),
+                "num_brothers": num_brothers,
+                "num_married_brothers": num_married_brothers,
+                "num_sisters": num_sisters,
+                "num_married_sisters": num_married_sisters,
                 "about_family": (r.get("about_family") or "").strip(),
             }
         )

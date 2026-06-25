@@ -11,6 +11,11 @@ from rest_framework.views import APIView
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.permissions import IsAdminUser, IsBranchManagerOnly
 
+from astrology.horoscope_api import (
+    horoscope_not_found_response,
+    horoscope_not_generated_response,
+)
+
 from .permissions import IsPanelStaff
 from .serializers import PanelPoruthamRequestSerializer
 from . import services as horoscope_panel
@@ -24,6 +29,28 @@ def _resolve_qs(request, mount: str):
             status=status.HTTP_403_FORBIDDEN,
         )
     return qs, None
+
+
+def _record_detail_response(data: dict | None) -> Response:
+    """Apply EXE-generation gate to admin horoscope record detail payloads."""
+    if not data:
+        return Response(
+            {"success": False, "error": {"code": 404, "message": "Profile not found or out of scope."}},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    if data.get("exe_pending"):
+        return Response(horoscope_not_generated_response(), status=status.HTTP_200_OK)
+    if data.get("horoscope") is None:
+        return Response(horoscope_not_found_response(), status=status.HTTP_200_OK)
+    response_data = {k: v for k, v in data.items() if k != "exe_pending"}
+    return Response(
+        {
+            "success": True,
+            "is_horoscope_generated": True,
+            "data": response_data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 class HoroscopePanelSummaryView(APIView):
@@ -68,22 +95,18 @@ class HoroscopePanelRecordsView(APIView):
             page_size = max(1, min(100, int(request.query_params.get("page_size", 20))))
         except (TypeError, ValueError):
             page_size = 20
-        search = (request.query_params.get("search") or "").strip()
-        branch_id = request.query_params.get("branch_id")
-        gender = request.query_params.get("gender")
-        exe_done_raw = (request.query_params.get("exe_done") or "").strip().lower()
-        exe_done = exe_done_raw in {"1", "true", "yes"}
-        data = horoscope_panel.list_horoscope_records(
+        data, perr = horoscope_panel.list_horoscope_records(
             qs,
-            search=search,
-            branch_id=branch_id,
-            gender=gender,
+            request=request,
             page=page,
             page_size=page_size,
-            request=request,
             mount=self.mount,
-            exe_done=exe_done,
         )
+        if perr:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": perr}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 
 
@@ -112,12 +135,7 @@ class HoroscopePanelRecordDetailView(APIView):
         data = horoscope_panel.record_detail(
             qs, uid, request=request, mount=self.mount
         )
-        if not data:
-            return Response(
-                {"success": False, "error": {"code": 404, "message": "Profile not found or out of scope."}},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+        return _record_detail_response(data)
 
 
 class HoroscopePanelJathagamPdfDownloadView(APIView):
@@ -179,12 +197,7 @@ class HoroscopePanelRecordByMatriView(APIView):
         data = horoscope_panel.record_detail_by_matri(
             qs, matri_id, request=request, mount=self.mount
         )
-        if not data:
-            return Response(
-                {"success": False, "error": {"code": 404, "message": "Profile not found or out of scope."}},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+        return _record_detail_response(data)
 
 
 class HoroscopePanelPoruthamView(APIView):

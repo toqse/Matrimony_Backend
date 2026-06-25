@@ -748,6 +748,12 @@ class ProfilePersonalView(APIView):
             pers.colour = ser.validated_data['colour']
         if 'blood_group' in ser.validated_data:
             pers.blood_group = ser.validated_data['blood_group']
+        from .serializers import _persist_personal_reason_for_divorce
+        _persist_personal_reason_for_divorce(
+            pers,
+            ser.validated_data,
+            marital_status_id=ser.validated_data.get('marital_status'),
+        )
         pers.save()
         mark_profile_step_completed(request.user, 'personal')
         pers = UserPersonal.objects.filter(user=request.user).select_related('marital_status', 'height').first()

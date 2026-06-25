@@ -28,6 +28,7 @@ from admin_panel.my_profiles.views import (
     _wishlist_actor_for_panel_user,
 )
 from admin_panel.profile_filters import apply_profile_list_filters
+from admin_panel.profile_porutham_filters import apply_porutham_match_filters
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from admin_panel.staff_profiles.registration import (
@@ -256,6 +257,12 @@ class StaffMyProfilesListView(APIView):
             )
 
         qs = apply_profile_list_filters(qs, request)
+        qs, perr = apply_porutham_match_filters(qs, request)
+        if perr:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": perr}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         wishlist_actor = _wishlist_actor_for_panel_user(request.user)
         wishlist_user_ids = set()

@@ -527,13 +527,13 @@ def validate_rows(
         nb = (row.get("num_brothers") or "").strip()
         ns = (row.get("num_sisters") or "").strip()
         try:
-            brothers = max(0, int(float(nb))) if nb else 0
+            brothers = max(0, int(float(nb))) if nb else None
         except (ValueError, TypeError):
-            brothers = 0
+            brothers = None
         try:
-            sisters = max(0, int(float(ns))) if ns else 0
+            sisters = max(0, int(float(ns))) if ns else None
         except (ValueError, TypeError):
-            sisters = 0
+            sisters = None
 
         height_fk_id = None
         if height_cm is not None:
@@ -726,10 +726,22 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
         },
     )
 
-    brothers = int(_first("brothers", "num_brothers", default=0) or 0)
-    sisters = int(_first("sisters", "num_sisters", default=0) or 0)
-    married_brothers = int(_first("married_brothers", "num_married_brothers", default=0) or 0)
-    married_sisters = int(_first("married_sisters", "num_married_sisters", default=0) or 0)
+    def _optional_sibling_count(*keys: str) -> int | None:
+        raw = _first(*keys, default=None)
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        try:
+            return max(0, int(text))
+        except (TypeError, ValueError):
+            return None
+
+    brothers = _optional_sibling_count("brothers", "num_brothers")
+    sisters = _optional_sibling_count("sisters", "num_sisters")
+    married_brothers = _optional_sibling_count("married_brothers", "num_married_brothers")
+    married_sisters = _optional_sibling_count("married_sisters", "num_married_sisters")
 
     fs = normalize_parent_status(payload.get("father_status"))
     ms = normalize_parent_status(payload.get("mother_status"))

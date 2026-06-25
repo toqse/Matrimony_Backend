@@ -24,6 +24,8 @@ from profiles.models import UserProfile
 from profiles.utils import get_profile_completion_data
 from astrology.charts import star_name as nakshatra_name_from_number
 from admin_panel.profile_filters import apply_profile_list_filters, apply_profile_status_filter
+from admin_panel.profile_porutham_filters import apply_porutham_match_filters
+from admin_panel.profile_porutham_filters import apply_porutham_match_filters
 from profiles.views import _build_profile_data_for_user
 
 from admin_panel.audit_log.mixins import AuditLogMixin
@@ -201,6 +203,12 @@ class AdminProfileListAPIView(APIView):
             )
 
         qs = apply_profile_list_filters(qs, request)
+        qs, perr = apply_porutham_match_filters(qs, request)
+        if perr:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": perr}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if (request.query_params.get("show_inactive") or "").strip().lower() not in {"1", "true", "yes"}:
             qs = qs.filter(is_active=True)

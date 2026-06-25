@@ -12,9 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libharfbuzz0b \
     libfribidi0 \
     libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
-    fonts-smc fonts-noto-core \
+    fonts-smc fonts-noto-core fontconfig \
     wget libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /usr/share/fonts/truetype/noto \
+    && (wget -q -O "/usr/share/fonts/truetype/noto/NotoSansMalayalam.ttf" \
+         "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansmalayalam/NotoSansMalayalam%5Bwdth%2Cwght%5D.ttf" \
+        || echo "WARN: Noto Sans Malayalam download skipped; using fonts-noto-core / fonts-smc.") \
+    && fc-cache -f
 
 # Swiss Ephemeris data files for pyswisseph (thalakkuri/jathakam astronomy).
 # Resilient: if the download fails at build time, pyswisseph falls back to its

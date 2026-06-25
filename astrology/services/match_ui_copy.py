@@ -1,16 +1,16 @@
 """Static copy, labels, and UI config for match/compatibility API responses."""
 from __future__ import annotations
 
-# Order matches porutham_service.calculate_porutham keys (canonical 10).
+# Order matches the legacy Visual PairMaker EXE porutham list.
 PORUTHAM_ORDER: tuple[str, ...] = (
-    'dina',
-    'gana',
-    'mahendra',
-    'sthree_deergha',
-    'yoni',
     'rasi',
     'rasi_adhipathi',
     'vasya',
+    'sthree_deergha',
+    'dina',
+    'mahendra',
+    'gana',
+    'yoni',
     'rajju',
     'vedha',
 )
