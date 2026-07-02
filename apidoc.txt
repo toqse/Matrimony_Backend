@@ -2049,13 +2049,7 @@ POST /api/v1/staff/subscriptions/{id}/renew/
   Error 404: Subscription not found (id out of scope).
 
 ----------------------------------------------------------------------------
-GET /api/v1/staff/subscriptions/export/
-  Description: Stream CSV for staff-scoped ledger (same columns as admin export).
-  Query: ?search=&status=&start=YYYY-MM-DD&end=YYYY-MM-DD
-  - date filters apply to Transaction.created_at (inclusive dates).
-  - Invalid start/end date format -> 400 with message "Invalid start date. Use YYYY-MM-DD." / end equivalent.
-  Response 200: Content-Type text/csv; Content-Disposition attachment; filename="staff_subscriptions_export.csv"
-
+ 
 ----------------------------------------------------------------------------
 DELETE /api/v1/staff/subscriptions/{id}/
   Description: Disallowed for staff.

@@ -13,6 +13,7 @@ from profiles.models import (
     UserProfile,
     UserReligion,
 )
+from profiles.legacy_import.horoscope import upsert_horoscope_profile
 from profiles.utils import get_profile_completion_data
 
 from .legacy_runner import (
@@ -76,6 +77,8 @@ def _import_single_row(payload: dict, branch_id: int | None):
         profile.about_me = payload["about_me"]
     if payload.get("partner_preference"):
         profile.about_completed = True
+    horoscope_obj = upsert_horoscope_profile(user, payload)
+    profile.has_horoscope = bool(horoscope_obj)
     profile.save()
 
     UserLocation.objects.update_or_create(

@@ -85,47 +85,59 @@ body {
   padding: 4mm 5mm 5mm;
 }
 
-.title-row {
+.title-box {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 5px;
+  border: 0.5pt solid #000;
+  padding: 3mm 4mm;
+  margin-bottom: 6px;
 }
 .header-title {
   font-size: 14pt;
   font-weight: bold;
-  line-height: 1.2;
+  line-height: 1.25;
+  flex: 1 1 auto;
 }
 .header-meta {
   text-align: right;
   font-size: 12pt;
-  line-height: 1.35;
+  line-height: 1.45;
+  flex: 0 1 auto;
   white-space: nowrap;
 }
-.header-meta .meta-en {
-  font-family: Verdana, Arial, sans-serif;
-  font-size: 8.2pt;
-  line-height: 1.5;
+.header-meta .meta-name {
+  font-size: 12pt;
+  line-height: 1.45;
+}
+.header-meta .meta-place {
+  font-size: 12pt;
+  line-height: 1.45;
 }
 
 /* ── Birth paragraph ── */
 .para {
   text-align: justify;
   font-size: 12pt;
-  line-height: 1.15;
-  margin-bottom: 8px;
+  line-height: 1.55;
+  margin-bottom: 10px;
 }
 
-/* ── Three horoscope charts ── */
+/* ── Horoscope charts: 2 on top row, 1 centered below ── */
+.charts-section {
+  margin-top: 6px;
+}
 .charts-row {
   display: flex;
   flex-wrap: nowrap;
   justify-content: center;
   align-items: flex-end;
-  gap: 4mm;
+  gap: 6mm;
   width: 100%;
-  margin-top: 4px;
+}
+.charts-row-bottom {
+  margin-top: 5mm;
 }
 .chart-wrap {
   width: 56mm;
@@ -222,11 +234,11 @@ body {
 
   <div class="content-frame">
 
-    <div class="title-row">
-      <div class="header-title">ജ്യോതിഷദീപ്തി തലക്കുറി</div>
+    <div class="title-box">
+      <div class="header-title">ജ്യോതിഷദീപം പഞ്ചാംഗം തലക്കുറി</div>
       <div class="header-meta">
-        പേര്: <strong>{{ hp.pr_name }}</strong><br>
-        <span class="meta-en">Lat: {{ lat_dms }}N, Lon: {{ lon_dms }}E +{{ hp.pr_tz|floatformat:2 }}</span>
+        <div class="meta-name">പേര്: {{ hp.pr_name }}</div>
+        <div class="meta-place">സ്ഥലം: {% if birth_place %}{{ birth_place|upper }}, {% endif %}Lat: {{ lat_dms }}N, Lon: {{ lon_dms }}E</div>
       </div>
     </div>
 
@@ -237,7 +249,7 @@ body {
       കൊല്ലവർഷം {{ kollam_year }} {{ kollam_month }} {{ kollam_day }} -ാം തീയതി,
       {{ kali_dinam }} -ാം കലിദിനത്തിൽ {{ weekday_ml }}വാരെ
       {{ star_ml }} നക്ഷത്രത്തിൽ {{ star_pada_ml }}പാദവും,
-      {{ tithi }} {{ karana }}ക്കരണവും, {{ yoga }}നിത്യയോഗവും
+      {{ tithi }} {{ karana_phrase }}, {{ yoga }}നിത്യയോഗവും
       കൂടിയ ശുഭദിനത്തിൽ {{ kollam_year }} {{ kollam_month }} {{ kollam_day }}( സമയം: {{ tob_ml }})
       ചന്ദ്രൻ {{ moon_rasi_ml }}ക്കൂറിൽ നിൽക്കെ {{ lagnam_rasi_ml }}ലഗ്നം {{ lagna_degree_ml }}
       {{ gana_ml }}ഗണത്തിൽ {{ gender_ml }}.
@@ -246,8 +258,9 @@ body {
       ദിനാന്തം {{ dinantham }}നും ആകുന്നു.
     </div>
 
-    <!-- Three charts -->
-    <div class="charts-row">
+    <!-- Charts: rasi + navamsa on first row, bhava centered below -->
+    <div class="charts-section">
+    <div class="charts-row charts-row-top">
 
       <div class="chart-wrap">
         <div class="chart-square">
@@ -299,6 +312,10 @@ body {
         </div>
       </div>
 
+    </div>
+
+    <div class="charts-row charts-row-bottom">
+
       <div class="chart-wrap">
         <div class="chart-square">
           <table class="chart-table">
@@ -324,6 +341,7 @@ body {
         </div>
       </div>
 
+    </div>
     </div>
 
     <div class="ayan-row">

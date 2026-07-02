@@ -3,7 +3,6 @@ import io
 
 from celery.result import AsyncResult
 from django.http import HttpResponse
-from openpyxl import Workbook
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -29,6 +28,7 @@ from .parser import TEMPLATE_COLUMNS, is_legacy_format, parse_upload_file, read_
 from .permissions import IsAdminOrBranchManager
 from .serializers import BulkUploadJobHistorySerializer
 from .tasks import bulk_import_legacy_profiles_task, bulk_import_profiles_task, run_import_job
+from .template_assets import load_bulk_upload_template_xlsx
 from .validators import (
     ASYNC_ROW_THRESHOLD,
     cache_validation_payload,
@@ -67,19 +67,12 @@ class BulkUploadTemplateView(APIView):
             )
             return response
 
-        wb = Workbook()
-        ws = wb.active
-        ws.append(TEMPLATE_COLUMNS)
-        out = io.BytesIO()
-        wb.save(out)
-        out.seek(0)
+        content, filename = load_bulk_upload_template_xlsx()
         response = HttpResponse(
-            out.read(),
+            content,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response["Content-Disposition"] = (
-            'attachment; filename="bulk_upload_template.xlsx"'
-        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
 
 

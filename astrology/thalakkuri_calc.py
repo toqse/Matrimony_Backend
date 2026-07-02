@@ -300,6 +300,21 @@ def _thalakkuri_assets_dir() -> str:
     )
 
 
+def _karana_phrase_ml(karana_name: str) -> str:
+    """Jyothishadeepti thalakkuri style: e.g. 'കഴുത കരണം'."""
+    return f'{karana_name} കരണം'
+
+
+def _birth_place_name(hp) -> str:
+    user = getattr(hp, 'user', None)
+    if not user:
+        return ''
+    profile = getattr(user, 'user_profile', None)
+    place = (getattr(profile, 'place_of_birth', '') or '').strip()
+    if not place:
+        return ''
+    # Show city only — drop state/country suffixes like ", Kerala, India".
+    return place.split(',')[0].strip()
 
 
 
@@ -1313,6 +1328,8 @@ def calculate_all(hp, gender=None):
 
         'karana': KARANA_ML[karana_i],
 
+        'karana_phrase': _karana_phrase_ml(KARANA_ML[karana_i]),
+
         'weekday_ml': wd_ml,
 
         'ayanam': ayanam,
@@ -1386,6 +1403,8 @@ def calculate_all(hp, gender=None):
         'lat_dms': _format_coord_dms(lat),
 
         'lon_dms': _format_coord_dms(lon),
+
+        'birth_place': _birth_place_name(hp),
 
     }
 

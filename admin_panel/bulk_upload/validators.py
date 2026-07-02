@@ -11,6 +11,8 @@ from django.db.models import Q
 
 from accounts.models import User
 from profiles.parent_status import normalize_parent_status
+from profiles.legacy_import.horoscope import resolve_padam, resolve_star, star_lookup
+from profiles.legacy_import.normalize import parse_int
 from master.models import (
     Caste,
     City,
@@ -32,6 +34,7 @@ CACHE_TTL = 60 * 60
 ASYNC_ROW_THRESHOLD = 50
 SPECIAL_MARITALS = {"divorced", "widowed", "separated"}
 MAX_AVAILABLE_VALUES_IN_ERROR = 20
+STAR_LOOKUP = star_lookup()
 
 
 def normalize_gender(raw: str) -> str:
@@ -394,6 +397,9 @@ def validate_rows(data_rows: list[dict[str, str]]):
         education_subject = _resolve_name(EducationSubject, r.get("education_subject") or "")
         occupation = _resolve_name(Occupation, r.get("occupation") or "")
         annual_income = _resolve_name(IncomeRange, r.get("annual_income") or "")
+        pr_dasabalance = parse_int(r.get("pr_dasabalance") or "")
+        pr_star, pr_star_warning = resolve_star(r.get("pr_star_text"), STAR_LOOKUP)
+        pr_pada = resolve_padam(r.get("pr_pada_text"))
         if (r.get("highest_education") or "").strip() and not highest_education:
             row_err.append(
                 {
@@ -485,6 +491,13 @@ def validate_rows(data_rows: list[dict[str, str]]):
                 "num_sisters": num_sisters,
                 "num_married_sisters": num_married_sisters,
                 "about_family": (r.get("about_family") or "").strip(),
+                "pr_rasi": (r.get("pr_rasi") or "").strip(),
+                "pr_amsa": (r.get("pr_amsa") or "").strip(),
+                "pr_bhav": (r.get("pr_bhav") or "").strip(),
+                "pr_dasabalance": pr_dasabalance or None,
+                "pr_star": pr_star,
+                "pr_pada": pr_pada,
+                "pr_star_warning": pr_star_warning or "",
             }
         )
 

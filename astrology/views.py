@@ -946,7 +946,7 @@ class AstrologyPdfThalakuriDownloadView(APIView):
             )
 
         try:
-            hp = HoroscopeProfile.objects.select_related('user').get(user_id=user_id)
+            hp = HoroscopeProfile.objects.select_related('user', 'user__user_profile').get(user_id=user_id)
         except HoroscopeProfile.DoesNotExist:
             return _pdf_download_error_http(
                 'Horoscope profile not found.',
@@ -975,7 +975,7 @@ class ThalakkuriPDFView(APIView):
         from .thalakkuri_calc import generate_thalakkuri_pdf
 
         try:
-            hp = HoroscopeProfile.objects.select_related('user').get(id=horoscope_id)
+            hp = HoroscopeProfile.objects.select_related('user', 'user__user_profile').get(id=horoscope_id)
         except HoroscopeProfile.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 

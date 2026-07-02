@@ -42,6 +42,12 @@ TEMPLATE_COLUMNS = [
     "Number of Sisters (integer >= 0)",
     "Number of Married Sisters (integer >= 0)",
     "About My Family",
+    "horochart",
+    "amsachart",
+    "bhavchart",
+    "sishta_dur",
+    "star",
+    "padam",
 ]
 
 _HEADER_TO_KEY = {
@@ -76,12 +82,16 @@ _HEADER_TO_KEY = {
     "father name": "father_name",
     "father's status": "father_status",
     "father status": "father_status",
+    "father's status (alive / late)": "father_status",
+    "father status (alive / late)": "father_status",
     "father's occupation": "father_occupation",
     "father occupation": "father_occupation",
     "mother's name": "mother_name",
     "mother name": "mother_name",
     "mother's status": "mother_status",
     "mother status": "mother_status",
+    "mother's status (alive / late)": "mother_status",
+    "mother status (alive / late)": "mother_status",
     "mother's occupation": "mother_occupation",
     "mother occupation": "mother_occupation",
     "family status": "family_status",
@@ -90,6 +100,12 @@ _HEADER_TO_KEY = {
     "number of sisters (integer >= 0)": "num_sisters",
     "number of married sisters (integer >= 0)": "num_married_sisters",
     "about my family": "about_family",
+    "horochart": "pr_rasi",
+    "amsachart": "pr_amsa",
+    "bhavchart": "pr_bhav",
+    "sishta_dur": "pr_dasabalance",
+    "star": "pr_star_text",
+    "padam": "pr_pada_text",
 }
 
 # Excel often truncates headers; map normalized short headers when unambiguous.
@@ -141,6 +157,19 @@ LEGACY_FORMAT_FINGERPRINTS = {
     "bhavchart",
     "sishta_dur",
     "padam",
+}
+
+# New horoscope columns are emitted in the standard template but are optional
+# on upload so older 37-column sheets continue to validate.
+OPTIONAL_TEMPLATE_KEYS = {
+    "pr_rasi",
+    "pr_amsa",
+    "pr_bhav",
+    "pr_dasabalance",
+    "pr_star_text",
+    "pr_pada_text",
+    "father_status",
+    "mother_status",
 }
 
 
@@ -226,7 +255,10 @@ def _validate_headers_strict(headers: list[str]) -> None:
     required_headers = [_norm(h) for h in TEMPLATE_COLUMNS]
     required_keys = [(_HEADER_TO_KEY.get(h) or _HEADER_ALIASES.get(h)) for h in required_headers]
     required_keys = [k for k in required_keys if k]  # safety
-    missing_keys = [k for k in required_keys if k not in set(provided_keys)]
+    missing_keys = [
+        k for k in required_keys
+        if k not in set(provided_keys) and k not in OPTIONAL_TEMPLATE_KEYS
+    ]
 
     if unknown or missing_keys:
         parts: list[str] = []
