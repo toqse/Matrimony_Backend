@@ -102,12 +102,16 @@ class HoroscopeProfile(TimeStampedModel):
     rajju = models.CharField(max_length=20, blank=True)
 
     # Status tracking
-    is_calculated = models.BooleanField(default=False)
+    is_calculated = models.BooleanField(default=False, db_index=True)
     calculated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'horoscope_profile'
         app_label = 'astrology'
+        indexes = [
+            models.Index(fields=['is_calculated', 'pr_star'], name='horoscope_calc_star_idx'),
+            models.Index(fields=['pr_star'], name='horoscope_pr_star_idx'),
+        ]
 
     def get_rasi_array(self):
         """Convert pr_rasi string to list of ints 1-12."""

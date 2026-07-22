@@ -1,11 +1,18 @@
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from accounts.models import User
 from matches.utils import age_from_dob
 from matches.serializers import format_last_seen
-from profiles.models import UserLocation, UserEducation, UserPhotos
 from core.media import absolute_media_url
 from .models import Wishlist
+
+
+def _safe_one_to_one(obj, rel_name):
+    try:
+        return getattr(obj, rel_name)
+    except ObjectDoesNotExist:
+        return None
 
 
 class WishlistSerializer(serializers.ModelSerializer):
@@ -44,10 +51,8 @@ def _build_wishlist_profile_dict(viewer: User, profile_user: User, request=None)
     # Age
     age = age_from_dob(getattr(profile_user, 'dob', None))
 
-    # Location: City, State
-    loc = getattr(profile_user, 'user_location', None) or UserLocation.objects.filter(user=profile_user).select_related(
-        'city', 'state'
-    ).first()
+    # Location / education / photos: use prefetched select_related when present (no N+1)
+    loc = _safe_one_to_one(profile_user, 'user_location')
     city = getattr(getattr(loc, 'city', None), 'name', None)
     state = getattr(getattr(loc, 'state', None), 'name', None)
     if city and state:
@@ -55,15 +60,11 @@ def _build_wishlist_profile_dict(viewer: User, profile_user: User, request=None)
     else:
         location = city or state or None
 
-    # Education / occupation
-    edu = getattr(profile_user, 'user_education', None) or UserEducation.objects.filter(user=profile_user).select_related(
-        'highest_education', 'occupation'
-    ).first()
+    edu = _safe_one_to_one(profile_user, 'user_education')
     education = getattr(getattr(edu, 'highest_education', None), 'name', None)
     occupation = getattr(getattr(edu, 'occupation', None), 'name', None)
 
-    # Photo
-    photos = getattr(profile_user, 'user_photos', None) or UserPhotos.objects.filter(user=profile_user).first()
+    photos = _safe_one_to_one(profile_user, 'user_photos')
     if photos and photos.profile_photo:
         profile_photo = absolute_media_url(request, photos.profile_photo)
     else:

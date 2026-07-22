@@ -311,6 +311,13 @@ class Message(TimeStampedModel):
     class Meta:
         db_table = 'chat_message'
         ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['conversation', '-created_at'], name='chat_msg_conv_created_idx'),
+            models.Index(
+                fields=['conversation', 'read_at', 'sender'],
+                name='chat_msg_conv_read_sender_idx',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.sender.matri_id} in conv {self.conversation_id}: {self.text[:30]}'

@@ -1,17 +1,18 @@
 """
 REST APIs for chat list and message history.
 """
+from datetime import timedelta
+
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Q
+from django.db.models import Q, Count, OuterRef, Subquery, Case, When, F
 from django.utils import timezone
 
 from accounts.models import User
-from plans.models import Conversation, Message
+from plans.models import Conversation, Message, Interest
 from plans.services import has_accepted_interest_between, get_user_plan_status, plan_expired_response
-from profiles.models import UserPhotos
 from matches.serializers import format_last_seen
 from core.media import absolute_media_url
 
@@ -47,6 +48,28 @@ def _profile_photo_url(request, user):
     return None
 
 
+def _is_online(user):
+    last_seen = getattr(user, 'last_seen', None)
+    if not last_seen:
+        return False
+    return (timezone.now() - last_seen) < timedelta(minutes=15)
+
+
+def _accepted_other_user_ids_subquery(user):
+    """Subquery of counterparties with an accepted interest (either direction)."""
+    return (
+        Interest.objects.filter(status=Interest.STATUS_ACCEPTED)
+        .filter(Q(sender=user) | Q(receiver=user))
+        .annotate(
+            other_id=Case(
+                When(sender=user, then=F('receiver_id')),
+                default=F('sender_id'),
+            )
+        )
+        .values('other_id')
+    )
+
+
 class ChatListView(APIView):
     """
     GET /api/v1/chat/list/
@@ -59,41 +82,58 @@ class ChatListView(APIView):
         if get_user_plan_status(user) != 'active':
             return Response(plan_expired_response(user), status=status.HTTP_403_FORBIDDEN)
         page, page_size = _parse_page_params(request, default_page_size=20, max_page_size=100)
+
+        accepted_others = _accepted_other_user_ids_subquery(user)
+        last_msg_qs = Message.objects.filter(conversation_id=OuterRef('pk')).order_by('-created_at')
+
         convs = (
-            Conversation.objects.filter(
-                Q(user1=user) | Q(user2=user)
+            Conversation.objects.filter(Q(user1=user) | Q(user2=user))
+            .filter(
+                Q(user1=user, user2_id__in=Subquery(accepted_others))
+                | Q(user2=user, user1_id__in=Subquery(accepted_others))
             )
-            .select_related('user1', 'user2')
+            .select_related(
+                'user1', 'user2',
+                'user1__user_photos', 'user2__user_photos',
+            )
+            .annotate(
+                last_msg_text=Subquery(last_msg_qs.values('text')[:1]),
+                last_msg_at=Subquery(last_msg_qs.values('created_at')[:1]),
+                unread_count=Count(
+                    'messages',
+                    filter=Q(messages__read_at__isnull=True) & ~Q(messages__sender_id=user.pk),
+                ),
+            )
             .order_by('-updated_at')
         )
+
+        total = convs.count()
+        start = (page - 1) * page_size
+        page_convs = list(convs[start:start + page_size])
+
         conversations = []
-        for conv in convs:
+        for conv in page_convs:
             other = _other_user(conv, user)
-            # Hide conversations if interest was not accepted (defense-in-depth).
-            if not has_accepted_interest_between(user, other):
-                continue
-            last_msg = conv.messages.order_by('-created_at').first()
-            unread = Message.objects.filter(
-                conversation=conv
-            ).exclude(sender=user).filter(read_at__isnull=True).count()
+            last_text = getattr(conv, 'last_msg_text', None)
+            last_at = getattr(conv, 'last_msg_at', None)
+            preview = None
+            if last_text:
+                preview = (last_text[:80] + '...') if len(last_text) > 80 else last_text
             conversations.append({
                 'conversation_id': conv.id,
                 'other_user': {
                     'matri_id': other.matri_id or '',
                     'name': other.name or '',
                     'profile_photo': _profile_photo_url(request, other),
-                    'is_online': bool(getattr(other, "last_seen", None) and (timezone.now() - getattr(other, "last_seen")) < timezone.timedelta(minutes=15)),
+                    'is_online': _is_online(other),
                 },
                 'last_message': {
-                    'preview': (last_msg.text[:80] + '...') if last_msg and len(last_msg.text) > 80 else (last_msg.text if last_msg else None),
-                    'timestamp': last_msg.created_at.isoformat() if last_msg else None,
+                    'preview': preview,
+                    'timestamp': last_at.isoformat() if last_at else None,
                 },
-                'unread_count': unread,
+                'unread_count': int(getattr(conv, 'unread_count', 0) or 0),
                 'updated_at': conv.updated_at.isoformat() if conv.updated_at else None,
             })
-        total = len(conversations)
-        start = (page - 1) * page_size
-        page_items = conversations[start:start + page_size]
         return Response({
             'success': True,
             'data': {
@@ -101,7 +141,7 @@ class ChatListView(APIView):
                 'page': page,
                 'page_size': page_size,
                 'limit': page_size,
-                'conversations': page_items,
+                'conversations': conversations,
             },
         }, status=status.HTTP_200_OK)
 
@@ -153,28 +193,13 @@ class ChatMessagesView(APIView):
             limit = max(1, min(100, int(request.query_params.get('limit', 20))))
         except (TypeError, ValueError):
             limit = 20
-        qs = Message.objects.filter(conversation=conv).select_related('sender').order_by('-created_at')
+
+        qs = Message.objects.filter(conversation=conv).select_related('sender').order_by('created_at')
         total = qs.count()
         start = (page - 1) * limit
-        msgs = qs[start:start + limit]
-        results = [
-            {
-                'id': m.id,
-                'sender_id': m.sender_id,
-                'sender_matri_id': m.sender.matri_id or '',
-                'sender_name': m.sender.name or '',
-                'text': m.text,
-                'created_at': m.created_at.isoformat(),
-                'read_at': m.read_at.isoformat() if m.read_at else None,
-            }
-            for m in reversed(list(msgs))
-        ]
+        messages = list(qs[start:start + limit])
 
-        # Online status for the other participant (same 15-min rule + formatted last_seen)
-        other = _other_user(conv, user)
-        last_seen = getattr(other, "last_seen", None)
-        is_online = bool(last_seen and (timezone.now() - last_seen) < timezone.timedelta(minutes=15))
-
+        last_seen = getattr(other, 'last_seen', None)
         return Response({
             'success': True,
             'data': {
@@ -183,13 +208,24 @@ class ChatMessagesView(APIView):
                     'matri_id': other.matri_id or '',
                     'name': other.name or '',
                     'profile_photo': _profile_photo_url(request, other),
-                    'is_online': is_online,
+                    'is_online': _is_online(other),
                     'last_seen': format_last_seen(last_seen) if last_seen else None,
                 },
                 'total': total,
                 'page': page,
                 'limit': limit,
-                'messages': results,
+                'messages': [
+                    {
+                        'id': m.id,
+                        'sender_id': str(m.sender_id),
+                        'sender_matri_id': m.sender.matri_id or '',
+                        'sender_name': m.sender.name or '',
+                        'text': m.text,
+                        'created_at': m.created_at.isoformat() if m.created_at else None,
+                        'read_at': m.read_at.isoformat() if m.read_at else None,
+                    }
+                    for m in messages
+                ],
             },
         }, status=status.HTTP_200_OK)
 
@@ -197,29 +233,25 @@ class ChatMessagesView(APIView):
 class ChatUserStatusView(APIView):
     """
     GET /api/v1/chat/status/<matri_id>/
-    Returns whether the given user is online (based on last_seen within 15 minutes).
+    Returns online status for a single user.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, matri_id):
         try:
-            user = User.objects.get(matri_id=matri_id, is_active=True)
+            target = User.objects.get(matri_id=matri_id, is_active=True)
         except User.DoesNotExist:
             return Response({
                 'success': False,
-                'error': {'code': 404, 'message': 'User not found.'},
+                'error': {'code': 404, 'message': 'Profile not found.'},
             }, status=status.HTTP_404_NOT_FOUND)
 
-        from datetime import timedelta
-        now = timezone.now()
-        last_seen = getattr(user, 'last_seen', None)
-        is_online = bool(last_seen and last_seen >= now - timedelta(minutes=15))
-
+        last_seen = getattr(target, 'last_seen', None)
         return Response({
             'success': True,
             'data': {
-                'matri_id': user.matri_id or '',
-                'is_online': is_online,
-                'last_seen': last_seen.isoformat() if last_seen else None,
+                'matri_id': target.matri_id or '',
+                'is_online': _is_online(target),
+                'last_seen': format_last_seen(last_seen) if last_seen else None,
             },
         }, status=status.HTTP_200_OK)

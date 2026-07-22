@@ -5,11 +5,20 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from django.core.exceptions import ObjectDoesNotExist
+
 from accounts.models import User
 from matches.utils import compute_match_percentage
-from profiles.models import UserReligion, UserPersonal, UserEducation, UserLocation
 from .models import Wishlist
 from .serializers import WishlistProfileSerializer, _build_wishlist_profile_dict
+
+
+def _safe_one_to_one(obj, rel_name):
+    """Return related OneToOne object or None without raising DoesNotExist."""
+    try:
+        return getattr(obj, rel_name)
+    except ObjectDoesNotExist:
+        return None
 
 
 def _parse_page_params(request, default_page_size=10, max_page_size=50):
@@ -87,41 +96,46 @@ class WishlistListView(APIView):
     def get(self, request):
         page, page_size = _parse_page_params(request, default_page_size=10, max_page_size=50)
 
-        qs = Wishlist.objects.filter(user=request.user).select_related('profile').order_by('-created_at')
+        _profile_related = (
+            'profile',
+            'profile__user_religion', 'profile__user_religion__religion', 'profile__user_religion__caste_fk',
+            'profile__user_personal', 'profile__user_personal__height', 'profile__user_personal__marital_status',
+            'profile__user_education', 'profile__user_education__highest_education', 'profile__user_education__occupation',
+            'profile__user_location', 'profile__user_location__state', 'profile__user_location__city',
+            'profile__user_photos',
+        )
+        qs = (
+            Wishlist.objects.filter(user=request.user)
+            .select_related(*_profile_related)
+            .order_by('-created_at')
+        )
         total = qs.count()
         start = (page - 1) * page_size
         page_qs = qs[start:start + page_size]
 
-        # Preload viewer profile objects for match percentage computation
-        viewer = request.user
-        viewer_rel = getattr(viewer, 'user_religion', None) or UserReligion.objects.filter(user=viewer).select_related(
-            'religion', 'caste_fk'
-        ).first()
-        viewer_pers = getattr(viewer, 'user_personal', None) or UserPersonal.objects.filter(user=viewer).select_related(
-            'height', 'marital_status'
-        ).first()
-        viewer_edu = getattr(viewer, 'user_education', None) or UserEducation.objects.filter(user=viewer).select_related(
-            'highest_education', 'occupation'
-        ).first()
-        viewer_loc = getattr(viewer, 'user_location', None) or UserLocation.objects.filter(user=viewer).select_related(
-            'state', 'city'
-        ).first()
+        # Preload viewer profile objects for match percentage computation (one query each, not per row)
+        viewer = (
+            User.objects.filter(pk=request.user.pk)
+            .select_related(
+                'user_religion', 'user_religion__religion', 'user_religion__caste_fk',
+                'user_personal', 'user_personal__height', 'user_personal__marital_status',
+                'user_education', 'user_education__highest_education', 'user_education__occupation',
+                'user_location', 'user_location__state', 'user_location__city',
+            )
+            .first()
+        ) or request.user
+        viewer_rel = _safe_one_to_one(viewer, 'user_religion')
+        viewer_pers = _safe_one_to_one(viewer, 'user_personal')
+        viewer_edu = _safe_one_to_one(viewer, 'user_education')
+        viewer_loc = _safe_one_to_one(viewer, 'user_location')
 
         profiles = []
         for item in page_qs:
             u = item.profile
-            rel = getattr(u, 'user_religion', None) or UserReligion.objects.filter(user=u).select_related(
-                'religion', 'caste_fk'
-            ).first()
-            pers = getattr(u, 'user_personal', None) or UserPersonal.objects.filter(user=u).select_related(
-                'height', 'marital_status'
-            ).first()
-            edu = getattr(u, 'user_education', None) or UserEducation.objects.filter(user=u).select_related(
-                'highest_education', 'occupation'
-            ).first()
-            loc = getattr(u, 'user_location', None) or UserLocation.objects.filter(user=u).select_related(
-                'state', 'city'
-            ).first()
+            rel = _safe_one_to_one(u, 'user_religion')
+            pers = _safe_one_to_one(u, 'user_personal')
+            edu = _safe_one_to_one(u, 'user_education')
+            loc = _safe_one_to_one(u, 'user_location')
 
             match_pct = compute_match_percentage(
                 viewer, u,

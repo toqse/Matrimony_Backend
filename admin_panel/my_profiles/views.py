@@ -3,7 +3,8 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
+from django.db.models.functions import Length, Trim
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -38,7 +39,14 @@ from admin_panel.staff_profiles.registration import (
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
-from profiles.models import UserPhotos, UserProfile
+from profiles.models import (
+    UserEducation,
+    UserLocation,
+    UserPersonal,
+    UserPhotos,
+    UserProfile,
+    UserReligion,
+)
 from profiles.utils import get_profile_completion_data
 from profiles.views import _build_profile_data_for_user
 from wishlist.models import Wishlist
@@ -137,6 +145,47 @@ def _completion_steps(user: User):
 def _completeness_percent(user: User) -> int:
     done = sum(1 for v in _completion_steps(user).values() if v)
     return int((done / 6) * 100)
+
+
+def _count_incomplete_profiles(qs) -> int:
+    """
+    DB aggregate equivalent of sum(1 for u in qs if _completeness_percent(u) < 100).
+    Mirrors _completion_steps: location/religion/personal/education rows exist,
+    about_me non-blank (trimmed), and profile_photo set.
+    """
+    has_location = Exists(UserLocation.objects.filter(user_id=OuterRef('pk')))
+    has_religion = Exists(UserReligion.objects.filter(user_id=OuterRef('pk')))
+    has_personal = Exists(UserPersonal.objects.filter(user_id=OuterRef('pk')))
+    has_education = Exists(UserEducation.objects.filter(user_id=OuterRef('pk')))
+    has_about = Exists(
+        UserProfile.objects.filter(user_id=OuterRef('pk'))
+        .annotate(_about_len=Length(Trim('about_me')))
+        .filter(_about_len__gt=0)
+    )
+    has_photos = Exists(
+        UserPhotos.objects.filter(user_id=OuterRef('pk'))
+        .exclude(profile_photo='')
+        .exclude(profile_photo__isnull=True)
+    )
+    return (
+        qs.annotate(
+            _has_location=has_location,
+            _has_religion=has_religion,
+            _has_personal=has_personal,
+            _has_education=has_education,
+            _has_about=has_about,
+            _has_photos=has_photos,
+        )
+        .filter(
+            Q(_has_location=False)
+            | Q(_has_religion=False)
+            | Q(_has_personal=False)
+            | Q(_has_education=False)
+            | Q(_has_about=False)
+            | Q(_has_photos=False)
+        )
+        .count()
+    )
 
 
 def _resolve_user_or_error(request, matri_id: str):
@@ -254,7 +303,7 @@ class MyProfilesSummaryView(APIView):
         verified = qs.filter(user_profile__admin_verified=True).count()
         unverified = total - verified
         subscribed = qs.filter(_active_subscription_q()).count()
-        incomplete_count = sum(1 for u in qs if _completeness_percent(u) < 100)
+        incomplete_count = _count_incomplete_profiles(qs)
         return Response(
             {
                 "success": True,

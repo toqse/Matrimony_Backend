@@ -245,7 +245,7 @@ def _match_list_response(request, *, home_slider=False):
         'user_personal', 'user_personal__height', 'user_personal__marital_status',
         'user_religion', 'user_religion__religion', 'user_religion__caste_fk',
         'user_education', 'user_education__highest_education', 'user_education__occupation',
-        'user_photos', 'user_location',
+        'user_photos', 'user_location', 'user_location__city', 'user_location__state',
     ).distinct()[start:start + limit]
 
     page_users = list(qs)

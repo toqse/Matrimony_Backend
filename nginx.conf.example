@@ -1,6 +1,7 @@
-# Production Nginx placeholder for matrimony_backend
-# Upstream Gunicorn
-upstream django {
+# Production Nginx example for matrimony_backend (Daphne ASGI on :8000)
+# Supports HTTP + WebSocket (Channels chat). Place TLS termination here or at LB.
+
+upstream django_asgi {
     server django:8000;
 }
 
@@ -9,16 +10,34 @@ server {
     server_name _;
     client_max_body_size 10M;
 
+    location /health/ {
+        proxy_pass http://django_asgi;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        access_log off;
+    }
+
     location /static/ {
         alias /app/staticfiles/;
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+
+    location /media/ {
+        alias /app/media/;
+        expires 1d;
     }
 
     location / {
-        proxy_pass http://django;
+        proxy_pass http://django_asgi;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
         proxy_redirect off;
     }
 }

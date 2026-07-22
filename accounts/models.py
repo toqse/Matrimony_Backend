@@ -112,6 +112,12 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     class Meta:
         db_table = 'accounts_user'
+        indexes = [
+            models.Index(fields=['is_active', 'gender'], name='acc_user_act_gender_idx'),
+            models.Index(fields=['role', 'is_active', '-created_at'], name='acc_user_role_act_cr_idx'),
+            models.Index(fields=['dob'], name='acc_user_dob_idx'),
+            models.Index(fields=['branch', 'role'], name='acc_user_branch_role_idx'),
+        ]
 
     def __str__(self):
         return self.matri_id or self.email or self.mobile or str(self.id)

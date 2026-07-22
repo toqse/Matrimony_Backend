@@ -26,12 +26,13 @@ PROFILE_STEP_ORDER = (
 PROFILE_VISIBILITY_MIN_PERCENTAGE = 85
 
 
-def _family_completion_ratio(user):
+def _family_completion_ratio(user, fam=None):
     """
     Return family step completion as a value between 0.0 and 1.0.
     Uses field-level completion so percentage grows/drops proportionally.
     """
-    fam = UserFamily.objects.filter(user=user).first()
+    if fam is None:
+        fam = UserFamily.objects.filter(user=user).first()
     if not fam:
         return 0.0
 
@@ -61,17 +62,45 @@ def _family_completion_ratio(user):
     return filled / total
 
 
-def _compute_step_completion(user):
-    """Compute step completion from actual section data."""
-    loc = UserLocation.objects.filter(user=user).first()
-    rel = UserReligion.objects.filter(user=user).first()
-    pers = UserPersonal.objects.filter(user=user).first()
-    fam = UserFamily.objects.filter(user=user).first()
-    edu = UserEducation.objects.filter(user=user).first()
-    photos = UserPhotos.objects.filter(user=user).first()
-    profile = UserProfile.objects.filter(user=user).first()
+def _safe_profile_rel(user, rel_name):
+    """Return OneToOne related object or None without raising DoesNotExist."""
+    from django.core.exceptions import ObjectDoesNotExist
+    try:
+        return getattr(user, rel_name)
+    except ObjectDoesNotExist:
+        return None
 
-    family_ratio = _family_completion_ratio(user)
+
+def _compute_step_completion(user):
+    """Compute step completion from actual section data (single select_related fetch)."""
+    from accounts.models import User as UserModel
+
+    # One query loads all sections when not already cached on the instance.
+    loaded = (
+        UserModel.objects.filter(pk=user.pk)
+        .select_related(
+            'user_location',
+            'user_religion',
+            'user_personal',
+            'user_family',
+            'user_education',
+            'user_photos',
+            'user_profile',
+        )
+        .first()
+    )
+    if loaded is not None:
+        user = loaded
+
+    loc = _safe_profile_rel(user, 'user_location')
+    rel = _safe_profile_rel(user, 'user_religion')
+    pers = _safe_profile_rel(user, 'user_personal')
+    fam = _safe_profile_rel(user, 'user_family')
+    edu = _safe_profile_rel(user, 'user_education')
+    photos = _safe_profile_rel(user, 'user_photos')
+    profile = _safe_profile_rel(user, 'user_profile')
+
+    family_ratio = _family_completion_ratio(user, fam=fam)
     location_completed = bool(
         loc and (
             loc.country_id

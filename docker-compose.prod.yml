@@ -1,0 +1,40 @@
+# Production overlay — use with Backend/docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Does not change local default compose. Requires real SECRET_KEY and hosts via env.
+
+services:
+  django:
+    environment:
+      - DJANGO_ENV=production
+      - DJANGO_SETTINGS_MODULE=matrimony_backend.settings
+      - DEBUG=0
+      - LOG_DATABASE_CONFIG=0
+      # Set explicitly in .env.prod — never use *
+      # - ALLOWED_HOSTS=api.example.com
+      # - SECRET_KEY=...
+      # - CSRF_TRUSTED_ORIGINS=https://www.example.com,https://admin.example.com
+      # Optional Redis split (fallback to REDIS_URL if unset):
+      # - CACHE_REDIS_URL=redis://redis:6379/1
+      # - CELERY_BROKER_URL=redis://redis:6379/2
+      # - CELERY_RESULT_BACKEND=redis://redis:6379/3
+      # - CHANNEL_REDIS_URL=redis://redis:6379/4
+    volumes: []
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  celery_worker:
+    environment:
+      - DJANGO_ENV=production
+      - DEBUG=0
+    volumes: []
+
+  celery_beat:
+    environment:
+      - DJANGO_ENV=production
+      - DEBUG=0
+    volumes: []

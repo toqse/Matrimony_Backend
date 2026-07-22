@@ -36,6 +36,7 @@ class UserProfile(TimeStampedModel):
 
     admin_verified = models.BooleanField(
         default=False,
+        db_index=True,
         help_text='Platform verification (admin). Distinct from mobile_verified.',
     )
     has_horoscope = models.BooleanField(
@@ -55,6 +56,12 @@ class UserProfile(TimeStampedModel):
 
     class Meta:
         db_table = 'profiles_user_profile'
+        indexes = [
+            models.Index(
+                fields=['admin_verified', 'has_horoscope'],
+                name='prof_up_verif_horo_idx',
+            ),
+        ]
 
     def __str__(self):
         return f'Profile of {self.user.matri_id}'

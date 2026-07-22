@@ -5,11 +5,13 @@ CRUD ViewSets for Religion, Caste, MotherTongue (admin write, all read).
 from rest_framework import generics, viewsets
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 
 from core.permissions import ReadOnlyOrAdmin
+from . import cache_utils as mc
 from .filters import CasteFilter
 from .models import (
     Country, State, District, City,
@@ -31,7 +33,26 @@ class MasterListPagination(PageNumberPagination):
     max_page_size = 200
 
 
-class CountryList(generics.ListAPIView):
+class CachedMasterListMixin:
+    """Cache-aside for public master list GET responses (identical payload)."""
+    master_cache_resource = None
+
+    def list(self, request, *args, **kwargs):
+        resource = getattr(self, 'master_cache_resource', None)
+        if not resource:
+            return super().list(request, *args, **kwargs)
+        query_string = request.META.get('QUERY_STRING', '') or ''
+        cached = mc.get_cached_master_list(resource, query_string)
+        if cached is not None:
+            return Response(cached)
+        response = super().list(request, *args, **kwargs)
+        if getattr(response, 'status_code', 200) == 200 and hasattr(response, 'data'):
+            mc.set_cached_master_list(resource, query_string, response.data)
+        return response
+
+
+class CountryList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_COUNTRIES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = CountrySerializer
@@ -45,7 +66,8 @@ class CountryList(generics.ListAPIView):
         return qs
 
 
-class StateList(generics.ListAPIView):
+class StateList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_STATES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = StateSerializer
@@ -62,7 +84,8 @@ class StateList(generics.ListAPIView):
         return qs
 
 
-class DistrictList(generics.ListAPIView):
+class DistrictList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_DISTRICTS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = DistrictSerializer
@@ -79,7 +102,8 @@ class DistrictList(generics.ListAPIView):
         return qs
 
 
-class CityList(generics.ListAPIView):
+class CityList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_CITIES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = CitySerializer
@@ -113,7 +137,8 @@ class CityList(generics.ListAPIView):
         return qs
 
 
-class ReligionList(generics.ListAPIView):
+class ReligionList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_RELIGIONS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = ReligionSerializer
@@ -127,7 +152,8 @@ class ReligionList(generics.ListAPIView):
         return qs
 
 
-class MotherTongueList(generics.ListAPIView):
+class MotherTongueList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_MOTHER_TONGUES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = MotherTongueSerializer
@@ -141,7 +167,8 @@ class MotherTongueList(generics.ListAPIView):
         return qs
 
 
-class HeightList(generics.ListAPIView):
+class HeightList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_HEIGHTS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = HeightSerializer
@@ -151,7 +178,8 @@ class HeightList(generics.ListAPIView):
         return Height.objects.filter(is_active=True).order_by('value_cm')
 
 
-class MaritalStatusList(generics.ListAPIView):
+class MaritalStatusList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_MARITAL_STATUSES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = MaritalStatusSerializer
@@ -161,7 +189,8 @@ class MaritalStatusList(generics.ListAPIView):
         return MaritalStatus.objects.filter(is_active=True).order_by('name')
 
 
-class ComplexionList(generics.ListAPIView):
+class ComplexionList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_COMPLEXIONS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = ComplexionSerializer
@@ -171,7 +200,8 @@ class ComplexionList(generics.ListAPIView):
         return Complexion.objects.filter(is_active=True).order_by('name')
 
 
-class IncomeRangeList(generics.ListAPIView):
+class IncomeRangeList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_INCOME_RANGES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = IncomeRangeSerializer
@@ -181,7 +211,8 @@ class IncomeRangeList(generics.ListAPIView):
         return IncomeRange.objects.filter(is_active=True).order_by('min_value')
 
 
-class EducationList(generics.ListAPIView):
+class EducationList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_EDUCATIONS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = EducationSerializer
@@ -195,7 +226,8 @@ class EducationList(generics.ListAPIView):
         return qs
 
 
-class EducationSubjectList(generics.ListAPIView):
+class EducationSubjectList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_EDUCATION_SUBJECTS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = EducationSubjectSerializer
@@ -212,7 +244,8 @@ class EducationSubjectList(generics.ListAPIView):
         return qs.distinct()
 
 
-class OccupationList(generics.ListAPIView):
+class OccupationList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_OCCUPATIONS
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = OccupationSerializer
@@ -226,7 +259,8 @@ class OccupationList(generics.ListAPIView):
         return qs
 
 
-class EmploymentStatusList(generics.ListAPIView):
+class EmploymentStatusList(CachedMasterListMixin, generics.ListAPIView):
+    master_cache_resource = mc.RESOURCE_EMPLOYMENT_STATUSES
     permission_classes = [AllowAny]
     authentication_classes = []
     serializer_class = EmploymentStatusSerializer
@@ -242,7 +276,8 @@ class EmploymentStatusList(generics.ListAPIView):
 
 # --- CRUD ViewSets (Admin create/update/delete; everyone can read) ---
 
-class ReligionViewSet(viewsets.ModelViewSet):
+class ReligionViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
+    master_cache_resource = mc.RESOURCE_RELIGIONS
     serializer_class = ReligionSerializer
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
@@ -258,7 +293,8 @@ class ReligionViewSet(viewsets.ModelViewSet):
         return qs.filter(is_active=True)
 
 
-class CasteViewSet(viewsets.ModelViewSet):
+class CasteViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
+    master_cache_resource = mc.RESOURCE_CASTES
     serializer_class = CasteSerializer
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
@@ -275,7 +311,8 @@ class CasteViewSet(viewsets.ModelViewSet):
         return qs.filter(is_active=True, religion__is_active=True)
 
 
-class MotherTongueViewSet(viewsets.ModelViewSet):
+class MotherTongueViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
+    master_cache_resource = mc.RESOURCE_MOTHER_TONGUES
     serializer_class = MotherTongueSerializer
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []

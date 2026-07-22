@@ -5,6 +5,11 @@ from rest_framework.views import APIView
 
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.permissions import IsAdminUser
+from master.cache_utils import (
+    get_cached_app_config,
+    invalidate_app_config,
+    set_cached_app_config,
+)
 
 from .models import MobileAppConfig
 from .serializers import MobileAppConfigSerializer
@@ -27,7 +32,12 @@ class PublicAppConfigAPIView(APIView):
     authentication_classes = []
 
     def get(self, request):
-        return _config_response(MobileAppConfig.load())
+        cached = get_cached_app_config()
+        if cached is not None:
+            return Response({"success": True, "data": cached})
+        payload = MobileAppConfigSerializer(MobileAppConfig.load()).data
+        set_cached_app_config(payload)
+        return Response({"success": True, "data": payload})
 
 
 class AdminAppConfigAPIView(APIView):
@@ -55,4 +65,5 @@ class AdminAppConfigAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         serializer.save()
+        invalidate_app_config()
         return _config_response(config)

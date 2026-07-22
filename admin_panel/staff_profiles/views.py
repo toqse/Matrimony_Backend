@@ -23,6 +23,7 @@ from admin_panel.my_profiles.views import (
     _active_subscription_q,
     _completion_steps,
     _completeness_percent,
+    _count_incomplete_profiles,
     _my_profiles_base_queryset,
     _subscription_label,
     _wishlist_actor_for_panel_user,
@@ -218,7 +219,7 @@ class StaffMyProfilesSummaryView(APIView):
         verified = qs.filter(user_profile__admin_verified=True).count()
         unverified = total - verified
         subscribed = qs.filter(_active_subscription_q()).count()
-        incomplete_count = sum(1 for u in qs if _completeness_percent(u) < 100)
+        incomplete_count = _count_incomplete_profiles(qs)
         return Response(
             {
                 "success": True,

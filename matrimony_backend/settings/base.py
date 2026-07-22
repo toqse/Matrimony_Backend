@@ -40,7 +40,7 @@ INSTALLED_APPS = [
     'storages',
     'django_celery_results',
     'core',
-    'master',
+    'master.apps.MasterConfig',
     'accounts',
     'profiles',
     'astrology.apps.AstrologyConfig',
@@ -100,12 +100,12 @@ ROOT_URLCONF = 'matrimony_backend.urls'
 WSGI_APPLICATION = 'matrimony_backend.wsgi.application'
 ASGI_APPLICATION = 'matrimony_backend.asgi.application'
 
-# Channel layer (Redis) for WebSocket
+# Channel layer (Redis) for WebSocket — optional CHANNEL_REDIS_URL (falls back to REDIS_URL)
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [env('REDIS_URL', default='redis://localhost:6379/0')],
+            'hosts': [env('CHANNEL_REDIS_URL', default=env('REDIS_URL', default='redis://localhost:6379/0'))],
         },
     },
 }
@@ -181,6 +181,10 @@ else:
         }
     }
 
+# Persistent DB connections (seconds); 0 disables. Safe default for Daphne/Celery workers.
+_CONN_MAX_AGE = env.int('CONN_MAX_AGE', default=60)
+DATABASES['default']['CONN_MAX_AGE'] = _CONN_MAX_AGE
+
 
 def _mask_database_config(db_config):
     return {
@@ -199,12 +203,13 @@ if env.bool('LOG_DATABASE_CONFIG', default=True):
         file=sys.stderr,
     )
 
-# Redis
+# Redis — optional split DBs via CACHE_REDIS_URL / CELERY_* (fallback to REDIS_URL)
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
+CACHE_REDIS_URL = env('CACHE_REDIS_URL', default=REDIS_URL)
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': REDIS_URL,
+        'LOCATION': CACHE_REDIS_URL,
         'OPTIONS': {'CLIENT_CLASS': 'django_redis.client.DefaultClient'},
     }
 }
@@ -266,9 +271,9 @@ if env('JWT_PUBLIC_KEY', default=''):
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:3000'])
 CORS_ALLOW_CREDENTIALS = True
 
-# Celery
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+# Celery — optional CELERY_BROKER_URL / CELERY_RESULT_BACKEND (fallback to REDIS_URL)
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default=REDIS_URL)
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default=REDIS_URL)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -347,3 +352,38 @@ EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@matrimony.example.com')
+
+# Structured logging (production-safe defaults; no behavior change)
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': env('LOG_LEVEL', default='INFO'),
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.db.backends': {
+            'handlers': ['console'],
+            'level': env('DB_LOG_LEVEL', default='WARNING'),
+            'propagate': False,
+        },
+    },
+}
+
