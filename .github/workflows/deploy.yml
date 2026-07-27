@@ -3,7 +3,7 @@ name: Deploy to VPS
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   deploy:
@@ -22,10 +22,14 @@ jobs:
             cd /opt/aiswaryamatrimonials/Matrimony_Backend
 
             git fetch origin
-            git reset --hard origin/main
+            git reset --hard origin/master
 
-            docker compose pull
+            docker compose down
             docker compose up -d --build
+
+            docker compose exec -T django python manage.py migrate
+
+            docker compose exec -T django python manage.py collectstatic --noinput
 
             docker image prune -f
 
