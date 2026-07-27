@@ -1,6 +1,6 @@
 ================================================================================
 MATRIMONY BACKEND - API DOCUMENTATION (Aiswarya Matrimony)
-================================================================================
+=======================.=========================================================
 Base URL: /api/v1
 Auth Base: /api/v1/auth/  (endpoints: register, resend-otp, verify-otp, register|verify mobile, register|verify email, login, token/refresh, logout, password reset|confirm)
 Admin Auth Base: /api/v1/admin/auth/
