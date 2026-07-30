@@ -7,11 +7,14 @@ Gunicorn/Docker hangs from application-stack hangs.
 import os
 import sys
 
+print('wsgi.py: module import starting', file=sys.stderr, flush=True)
+
 from django.core.wsgi import get_wsgi_application
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'matrimony_backend.settings')
 
 _django_app = get_wsgi_application()
+print('wsgi.py: Django WSGI ready (short-circuit=/health/live/)', file=sys.stderr, flush=True)
 
 
 def application(environ, start_response):
