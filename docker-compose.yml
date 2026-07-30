@@ -28,11 +28,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: matrimony_backend-redis-1
+    restart: unless-stopped
 
     ports:
       - "6379:6379"
-
-    restart: unless-stopped
 
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -44,6 +43,7 @@ services:
   django:
     build: .
     container_name: matrimony_backend-django-1
+    restart: unless-stopped
 
     command:
       [
@@ -68,10 +68,15 @@ services:
       - "host.docker.internal:host-gateway"
 
     environment:
+      DJANGO_ENV: production
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
+
       DEBUG: "0"
+
       REDIS_URL: redis://redis:6379/0
+
       ALLOWED_HOSTS: "*"
+
       DATABASE_ENGINE: mysql
       DATABASE_HOST: db
       DATABASE_PORT: "3306"
@@ -85,11 +90,10 @@ services:
       redis:
         condition: service_healthy
 
-    restart: unless-stopped
-
   celery_worker:
     build: .
     container_name: matrimony_backend-celery_worker-1
+    restart: unless-stopped
 
     entrypoint:
       - /celery-entrypoint.sh
@@ -111,9 +115,13 @@ services:
       - "host.docker.internal:host-gateway"
 
     environment:
+      DJANGO_ENV: production
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
+
       DEBUG: "0"
+
       REDIS_URL: redis://redis:6379/0
+
       DATABASE_ENGINE: mysql
       DATABASE_HOST: db
       DATABASE_PORT: "3306"
@@ -129,11 +137,10 @@ services:
       redis:
         condition: service_healthy
 
-    restart: unless-stopped
-
   celery_beat:
     build: .
     container_name: matrimony_backend-celery_beat-1
+    restart: unless-stopped
 
     entrypoint:
       - /celery-entrypoint.sh
@@ -155,9 +162,13 @@ services:
       - "host.docker.internal:host-gateway"
 
     environment:
+      DJANGO_ENV: production
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
+
       DEBUG: "0"
+
       REDIS_URL: redis://redis:6379/0
+
       DATABASE_ENGINE: mysql
       DATABASE_HOST: db
       DATABASE_PORT: "3306"
@@ -174,8 +185,6 @@ services:
         condition: service_healthy
       celery_worker:
         condition: service_started
-
-    restart: unless-stopped
 
 networks:
   default:
