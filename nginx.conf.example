@@ -1,10 +1,11 @@
-# Production Nginx example when Nginx runs on the VPS host (not in Compose).
-# Django uses network_mode: host and listens on 127.0.0.1:8000.
-# Do NOT rely on docker-proxy published ports if host→container HTTP hangs
-# (TCP connects but Gunicorn never sees the request).
+# Host Nginx → Django on the Compose bridge (static IP).
+# Do NOT use 127.0.0.1:8000 if docker-proxy published ports hang
+# (TCP connect works, HTTP never reaches Gunicorn).
+#
+# Django is pinned at 172.28.0.12 on matrimony_backend_net.
 
 upstream django_backend {
-    server 127.0.0.1:8000;
+    server 172.28.0.12:8000;
     keepalive 8;
 }
 
