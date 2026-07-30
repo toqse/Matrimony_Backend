@@ -45,17 +45,20 @@ services:
     container_name: matrimony_backend-django-1
     restart: unless-stopped
 
+    # sync workers: one stuck request cannot exhaust a gthread pool and block all traffic.
     command:
       - gunicorn
       - matrimony_backend.wsgi:application
       - --bind
       - 0.0.0.0:8000
+      - --worker-class
+      - sync
       - --workers
       - "3"
-      - --threads
-      - "2"
       - --timeout
-      - "120"
+      - "30"
+      - --graceful-timeout
+      - "15"
       - --access-logfile
       - "-"
       - --error-logfile
@@ -77,6 +80,9 @@ services:
       DJANGO_ENV: production
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
       DEBUG: "0"
+      HEALTH_DEBUG_LOG: "1"
+      REDIS_SOCKET_CONNECT_TIMEOUT: "2"
+      REDIS_SOCKET_TIMEOUT: "2"
 
       REDIS_URL: redis://redis:6379/0
 

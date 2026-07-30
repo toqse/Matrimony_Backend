@@ -6,7 +6,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from core.health import HealthCheckView
+from core.health import HealthCheckView, HealthLiveView
 from profiles.views import (
     PublicProfileByMatriIdView,
     ProfilePreviewByMatriIdView,
@@ -20,6 +20,7 @@ from astrology.views import HoroscopeDecoderDebugView
 from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
 
 urlpatterns = [
+    path('health/live/', HealthLiveView.as_view(), name='health-live'),
     path('health/', HealthCheckView.as_view(), name='health'),
     path('admin/', admin.site.urls),
 

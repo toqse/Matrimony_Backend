@@ -212,25 +212,25 @@ REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
 CACHE_REDIS_URL = env('CACHE_REDIS_URL', default=REDIS_URL)
 # Bound Redis socket waits so stalled peers fail fast instead of hanging workers.
 # retry_on_timeout=False: retries would multiply wait time under a degraded Redis.
-_REDIS_SOCKET_CONNECT_TIMEOUT = env.float('REDIS_SOCKET_CONNECT_TIMEOUT', default=2)
-_REDIS_SOCKET_TIMEOUT = env.float('REDIS_SOCKET_TIMEOUT', default=2)
+REDIS_SOCKET_CONNECT_TIMEOUT = env.float('REDIS_SOCKET_CONNECT_TIMEOUT', default=2)
+REDIS_SOCKET_TIMEOUT = env.float('REDIS_SOCKET_TIMEOUT', default=2)
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
         'LOCATION': CACHE_REDIS_URL,
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'SOCKET_CONNECT_TIMEOUT': _REDIS_SOCKET_CONNECT_TIMEOUT,
-            'SOCKET_TIMEOUT': _REDIS_SOCKET_TIMEOUT,
+            'SOCKET_CONNECT_TIMEOUT': REDIS_SOCKET_CONNECT_TIMEOUT,
+            'SOCKET_TIMEOUT': REDIS_SOCKET_TIMEOUT,
             'CONNECTION_POOL_KWARGS': {
-                'socket_connect_timeout': _REDIS_SOCKET_CONNECT_TIMEOUT,
-                'socket_timeout': _REDIS_SOCKET_TIMEOUT,
+                'socket_connect_timeout': REDIS_SOCKET_CONNECT_TIMEOUT,
+                'socket_timeout': REDIS_SOCKET_TIMEOUT,
                 'retry_on_timeout': False,
             },
         },
     }
 }
-# Temporary health-path debug logs (before/after DB + cache ops). Default off.
+# Health-path debug logs (before/after DB + Redis). Set HEALTH_DEBUG_LOG=1 on VPS to diagnose hangs.
 HEALTH_DEBUG_LOG = env.bool('HEALTH_DEBUG_LOG', default=False)
 
 # DRF
