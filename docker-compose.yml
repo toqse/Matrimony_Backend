@@ -1,39 +1,50 @@
+version: "3.9"
+
 services:
   db:
     image: mariadb:11.4
     container_name: matrimony_backend-db-1
     restart: unless-stopped
+
     environment:
       MYSQL_ROOT_PASSWORD: RootPassword@123
       MYSQL_DATABASE: aiswaryamatrimony
       MYSQL_USER: matrimony_user
       MYSQL_PASSWORD: Matrimonial@123
+
     ports:
       - "3306:3306"
+
     volumes:
       - matrimony_backend_mariadb_data:/var/lib/mysql
+
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-pRootPassword@123"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 20s
-    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    container_name: matrimony_backend-redis-1
+
     ports:
       - "6379:6379"
+
+    restart: unless-stopped
+
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 5
       start_period: 5s
-    restart: unless-stopped
 
   django:
     build: .
+    container_name: matrimony_backend-django-1
+
     command:
       [
         "daphne",
@@ -43,40 +54,73 @@ services:
         "8000",
         "matrimony_backend.asgi:application"
       ]
+
     volumes:
       - .:/app
+
     ports:
       - "8000:8000"
+
     env_file:
       - .env
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
     environment:
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
       DEBUG: "0"
       REDIS_URL: redis://redis:6379/0
       ALLOWED_HOSTS: "*"
+      DATABASE_ENGINE: mysql
+      DATABASE_HOST: db
+      DATABASE_PORT: "3306"
+      DATABASE_NAME: aiswaryamatrimony
+      DATABASE_USER: matrimony_user
+      DATABASE_PASSWORD: Matrimonial@123
+
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+
     restart: unless-stopped
 
   celery_worker:
     build: .
-    entrypoint: ["/celery-entrypoint.sh"]
-    command: ["-A", "matrimony_backend", "worker", "-l", "info"]
+    container_name: matrimony_backend-celery_worker-1
+
+    entrypoint:
+      - /celery-entrypoint.sh
+
+    command:
+      - -A
+      - matrimony_backend
+      - worker
+      - -l
+      - info
+
     volumes:
       - .:/app
+
     env_file:
       - .env
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
     environment:
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
       DEBUG: "0"
       REDIS_URL: redis://redis:6379/0
+      DATABASE_ENGINE: mysql
+      DATABASE_HOST: db
+      DATABASE_PORT: "3306"
+      DATABASE_NAME: aiswaryamatrimony
+      DATABASE_USER: matrimony_user
+      DATABASE_PASSWORD: Matrimonial@123
+
     depends_on:
       db:
         condition: service_healthy
@@ -84,22 +128,43 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+
     restart: unless-stopped
 
   celery_beat:
     build: .
-    entrypoint: ["/celery-entrypoint.sh"]
-    command: ["-A", "matrimony_backend", "beat", "-l", "info"]
+    container_name: matrimony_backend-celery_beat-1
+
+    entrypoint:
+      - /celery-entrypoint.sh
+
+    command:
+      - -A
+      - matrimony_backend
+      - beat
+      - -l
+      - info
+
     volumes:
       - .:/app
+
     env_file:
       - .env
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
     environment:
       DJANGO_SETTINGS_MODULE: matrimony_backend.settings
       DEBUG: "0"
       REDIS_URL: redis://redis:6379/0
+      DATABASE_ENGINE: mysql
+      DATABASE_HOST: db
+      DATABASE_PORT: "3306"
+      DATABASE_NAME: aiswaryamatrimony
+      DATABASE_USER: matrimony_user
+      DATABASE_PASSWORD: Matrimonial@123
+
     depends_on:
       db:
         condition: service_healthy
@@ -109,6 +174,7 @@ services:
         condition: service_healthy
       celery_worker:
         condition: service_started
+
     restart: unless-stopped
 
 networks:
