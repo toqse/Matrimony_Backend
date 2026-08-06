@@ -124,12 +124,15 @@ def _generate_otp() -> str:
 
 def _send_otp_sms(mobile_e164: str, otp: str) -> bool:
     # Prefer Celery task; fallback to sync print (same style as accounts app)
+    if getattr(settings, "DEBUG", False):
+        print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
     try:
         from notifications.tasks import send_otp_sms
 
         send_otp_sms.delay(mobile_e164, otp)
     except Exception:
-        print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
+        if not getattr(settings, "DEBUG", False):
+            print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
     return True
 
 

@@ -11,6 +11,8 @@ def send_otp_sms(self, phone_number: str, otp: str):
     backend = getattr(settings, 'SMS_BACKEND', 'console')
     success = True
     error_msg = ''
+    if getattr(settings, 'DEBUG', False):
+        print(f'[SMS] OTP for {phone_number}: {otp}')
     try:
         if backend == 'twilio':
             from twilio.rest import Client
@@ -46,8 +48,8 @@ def send_otp_sms(self, phone_number: str, otp: str):
             else:
                 success = False
                 error_msg = 'MSG91 not configured'
-        else:
-            # console / fallback
+        elif not getattr(settings, 'DEBUG', False):
+            # console / fallback (DEBUG already printed above)
             print(f'[SMS] OTP for {phone_number}: {otp}')
     except Exception as e:
         success = False

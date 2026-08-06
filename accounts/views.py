@@ -39,11 +39,14 @@ from admin_panel.audit_log.utils import create_audit_log
 
 def _send_otp_mobile(mobile: str, otp: str):
     # Prefer Celery task; fallback to sync
+    if getattr(settings, 'DEBUG', False):
+        print(f'[SMS] OTP for {mobile}: {otp}')
     try:
         from notifications.tasks import send_otp_sms
         send_otp_sms.delay(mobile, otp)
     except Exception:
-        print(f'[SMS] OTP for {mobile}: {otp}')
+        if not getattr(settings, 'DEBUG', False):
+            print(f'[SMS] OTP for {mobile}: {otp}')
     return True
 
 

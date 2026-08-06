@@ -1,12 +1,12 @@
 """
 Create or reset admin user so you can log in to /admin/.
-- If the user exists: sets password and ensures is_staff, is_superuser, is_active.
+- If the user exists: sets password and ensures is_staff, is_superuser, is_active, role=admin.
 - If the user does not exist: creates a new superuser with that email and password.
 
 Run this in the SAME environment as your running server (e.g. inside Docker if you use Docker).
 Usage:
   python manage.py set_admin_password admin4@gmail.com 'YourNewPassword'
-  docker-compose exec django python manage.py set_admin_password admin4@gmail.com 'YourNewPassword'
+  docker compose exec django python manage.py set_admin_password admin4@gmail.com 'YourNewPassword'
 """
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
@@ -36,16 +36,32 @@ class Command(BaseCommand):
             user.is_active = True
             user.is_staff = True
             user.is_superuser = True
-            user.save(update_fields=["password", "is_active", "is_staff", "is_superuser"])
+            user.role = "admin"
+            # Persist the canonical lowercased email so ModelBackend lookups match.
+            user.email = User.objects.normalize_email(email)
+            user.save(
+                update_fields=[
+                    "password",
+                    "is_active",
+                    "is_staff",
+                    "is_superuser",
+                    "role",
+                    "email",
+                ]
+            )
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Password updated for {user.email}. Log in at /admin/ with this email and the new password."
+                    f"Password updated for {user.email} "
+                    f"(is_active={user.is_active}, is_staff={user.is_staff}, "
+                    f"is_superuser={user.is_superuser}). "
+                    f"Log in at /admin/ with this email and the new password."
                 )
             )
         else:
             User.objects.create_superuser(email=email, password=password)
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Admin user created: {email}. Log in at /admin/ with this email and the password you provided."
+                    f"Admin user created: {email}. "
+                    f"Log in at /admin/ with this email and the password you provided."
                 )
             )
