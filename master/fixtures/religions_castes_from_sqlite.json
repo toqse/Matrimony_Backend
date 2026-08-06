@@ -1,0 +1,64 @@
+{
+  "religions": [
+    {
+      "name": "Christian",
+      "castes": [
+        "ANGLO INDIAI",
+        "CSI-CHALDIYAN",
+        "NADAR",
+        "ORTHODOX",
+        "PENTECOAST",
+        "RC",
+        "ROMAN CATH",
+        "SYRIAN CATH"
+      ]
+    },
+    {
+      "name": "Hindu",
+      "castes": [
+        "Brahmin",
+        "Cheramar",
+        "Dheevara",
+        "Ezhava",
+        "Ezhavathy",
+        "Ezhu Thachan",
+        "Ganaka",
+        "Iyar",
+        "Kaimal",
+        "Kartha",
+        "Kudumbi",
+        "Kurup",
+        "Marar",
+        "Menon",
+        "Nadar",
+        "Nair",
+        "Nambiar",
+        "Nambudhiri",
+        "Panan",
+        "Panikkar",
+        "Paravar",
+        "Paraya",
+        "Pilla",
+        "Potty",
+        "Tamil Chettiar",
+        "Thiruvannan",
+        "Thiya",
+        "Tulu Brahmin",
+        "Veerashaiva",
+        "Vellala"
+      ]
+    },
+    {
+      "name": "Muslim",
+      "castes": [
+        "AHMEDIYA",
+        "ANAPHY",
+        "MAPPILA",
+        "MUHAMEDIYA",
+        "SHAFI",
+        "SHIYA",
+        "Sunni"
+      ]
+    }
+  ]
+}
