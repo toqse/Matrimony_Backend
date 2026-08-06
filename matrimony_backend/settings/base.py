@@ -21,6 +21,9 @@ if env_file.exists():
 
 SECRET_KEY = env('SECRET_KEY', default='dev-secret-key-change-in-production')
 DEBUG = env('DEBUG', default=False)
+# Independent of DEBUG (Docker/production often force DEBUG=0). When True, OTP is
+# printed to console and included in API responses for testing.
+EXPOSE_OTP_IN_RESPONSE = env.bool('EXPOSE_OTP_IN_RESPONSE', default=False)
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
 INSTALLED_APPS = [

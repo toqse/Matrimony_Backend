@@ -124,14 +124,15 @@ def _generate_otp() -> str:
 
 def _send_otp_sms(mobile_e164: str, otp: str) -> bool:
     # Prefer Celery task; fallback to sync print (same style as accounts app)
-    if getattr(settings, "DEBUG", False):
+    expose = bool(getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False))
+    if expose:
         print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
     try:
         from notifications.tasks import send_otp_sms
 
         send_otp_sms.delay(mobile_e164, otp)
     except Exception:
-        if not getattr(settings, "DEBUG", False):
+        if not expose:
             print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
     return True
 
@@ -197,7 +198,7 @@ class SendOTPView(APIView):
         _send_otp_sms(mobile, otp)
 
         payload = {"success": True, "message": "OTP sent successfully", "data": {"mobile": mobile}}
-        if getattr(settings, "DEBUG", False):
+        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -434,7 +435,7 @@ class AdminChangePhoneSendOTPView(APIView):
         _send_otp_sms(new_mobile, otp)
 
         payload = {"success": True, "message": "OTP sent successfully.", "data": {"new_mobile": new_mobile}}
-        if getattr(settings, "DEBUG", False):
+        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 

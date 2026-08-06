@@ -39,13 +39,14 @@ from admin_panel.audit_log.utils import create_audit_log
 
 def _send_otp_mobile(mobile: str, otp: str):
     # Prefer Celery task; fallback to sync
-    if getattr(settings, 'DEBUG', False):
+    expose = bool(getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False))
+    if expose:
         print(f'[SMS] OTP for {mobile}: {otp}')
     try:
         from notifications.tasks import send_otp_sms
         send_otp_sms.delay(mobile, otp)
     except Exception:
-        if not getattr(settings, 'DEBUG', False):
+        if not expose:
             print(f'[SMS] OTP for {mobile}: {otp}')
     return True
 
@@ -150,7 +151,7 @@ class RegisterView(APIView):
             },
         }
         # Expose OTP only in development/testing to simplify QA.
-        if getattr(settings, 'DEBUG', False):
+        if getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False):
             payload['data']['otp'] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -204,7 +205,7 @@ class ResendOTPView(APIView):
                 "otp_sent": True,
             },
         }
-        if getattr(settings, "DEBUG", False):
+        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -275,7 +276,7 @@ class RegisterMobileView(APIView):
             'data': {'mobile': mobile},
         }
         # Expose OTP in development/testing only.
-        if getattr(settings, 'DEBUG', False):
+        if getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False):
             payload['data']['otp'] = otp
         return Response(payload, status=status.HTTP_200_OK)
 

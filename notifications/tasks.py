@@ -11,7 +11,7 @@ def send_otp_sms(self, phone_number: str, otp: str):
     backend = getattr(settings, 'SMS_BACKEND', 'console')
     success = True
     error_msg = ''
-    if getattr(settings, 'DEBUG', False):
+    if getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False):
         print(f'[SMS] OTP for {phone_number}: {otp}')
     try:
         if backend == 'twilio':
@@ -48,8 +48,8 @@ def send_otp_sms(self, phone_number: str, otp: str):
             else:
                 success = False
                 error_msg = 'MSG91 not configured'
-        elif not getattr(settings, 'DEBUG', False):
-            # console / fallback (DEBUG already printed above)
+        elif not (getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False)):
+            # console / fallback (already printed above when expose flag is on)
             print(f'[SMS] OTP for {phone_number}: {otp}')
     except Exception as e:
         success = False

@@ -493,7 +493,7 @@ class StaffPaymentCustomerOtpSendAPIView(APIView):
             "message": "OTP sent to customer's registered mobile.",
             "data": {"customer_matri_id": customer.matri_id or matri},
         }
-        if getattr(settings, "DEBUG", False):
+        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
