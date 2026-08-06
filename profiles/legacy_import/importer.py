@@ -54,6 +54,41 @@ class LegacyImporter:
         self.seen_phones: set[str] = set()
         self.seen_emails: set[str] = set()
         self.stars = star_lookup()
+        self._existing_mobiles: set[str] | None = None
+        self._existing_emails: set[str] | None = None
+
+    def _ensure_existing_lookups(self) -> None:
+        """Load existing mobiles/emails once — avoids N+1 queries on large CSVs."""
+        if not self.skip_existing:
+            return
+        if self._existing_mobiles is None:
+            self._existing_mobiles = {
+                (m or "").strip()
+                for m in User.objects.exclude(mobile__isnull=True)
+                .exclude(mobile="")
+                .values_list("mobile", flat=True)
+            }
+        if self._existing_emails is None:
+            self._existing_emails = {
+                (e or "").strip().lower()
+                for e in User.objects.exclude(email__isnull=True)
+                .exclude(email="")
+                .values_list("email", flat=True)
+            }
+
+    def _phone_exists(self, phone: str) -> bool:
+        self._ensure_existing_lookups()
+        assert self._existing_mobiles is not None
+        return (
+            phone in self._existing_mobiles
+            or f"91{phone}" in self._existing_mobiles
+            or f"+91{phone}" in self._existing_mobiles
+        )
+
+    def _email_exists(self, email: str) -> bool:
+        self._ensure_existing_lookups()
+        assert self._existing_emails is not None
+        return email.lower() in self._existing_emails
 
     def build_payload(self, row_number: int, row: dict) -> tuple[Optional[dict], str]:
         """Return (payload, '') for valid rows; (None, reason) for skipped rows."""
@@ -72,16 +107,14 @@ class LegacyImporter:
             if phone in self.seen_phones:
                 return None, "duplicate_phone_in_file"
             self.seen_phones.add(phone)
-            if self.skip_existing and User.objects.filter(
-                mobile__in=[phone, f"91{phone}", f"+91{phone}"]
-            ).exists():
+            if self.skip_existing and self._phone_exists(phone):
                 return None, "phone_exists_in_db"
 
         if email:
             if email in self.seen_emails:
                 return None, "duplicate_email_in_file"
             self.seen_emails.add(email)
-            if self.skip_existing and User.objects.filter(email__iexact=email).exists():
+            if self.skip_existing and self._email_exists(email):
                 return None, "email_exists_in_db"
 
         religion = self.masters.religion(row.get("religion"))
