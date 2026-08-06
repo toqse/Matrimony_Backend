@@ -14,3 +14,4 @@ REST_FRAMEWORK = {**REST_FRAMEWORK, 'DEFAULT_THROTTLE_RATES': {
     'anon': '10000/hour',
     'user': '10000/hour',
 }}
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
