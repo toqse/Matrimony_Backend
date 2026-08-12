@@ -393,18 +393,33 @@ class MatchFilterOptionsView(APIView):
     """
     GET /api/v1/matches/filters/
     Returns religions, castes, educations, occupations, marital_status, heights.
+    Cached briefly like master lists (invalidated on master writes).
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from master import cache_utils as mc
         from master.models import Religion, Caste, Education, Occupation, MaritalStatus, Height
+
+        cached = mc.get_cached_master_list(mc.RESOURCE_MATCH_FILTERS, '')
+        if cached is not None:
+            return Response(cached)
+
         religions = list(Religion.objects.filter(is_active=True).order_by('name').values('id', 'name'))
-        castes = list(Caste.objects.filter(is_active=True).select_related('religion').order_by('name').values('id', 'name', 'religion_id'))
+        castes = list(
+            Caste.objects.filter(is_active=True).order_by('name').values('id', 'name', 'religion_id')
+        )
         educations = list(Education.objects.filter(is_active=True).order_by('name').values('id', 'name'))
         occupations = list(Occupation.objects.filter(is_active=True).order_by('name').values('id', 'name'))
-        marital_status = list(MaritalStatus.objects.filter(is_active=True).order_by('name').values('id', 'name'))
-        heights = list(Height.objects.filter(is_active=True).order_by('value_cm').values('id', 'value_cm', 'display_label'))
-        return Response({
+        marital_status = list(
+            MaritalStatus.objects.filter(is_active=True).order_by('name').values('id', 'name')
+        )
+        heights = list(
+            Height.objects.filter(is_active=True).order_by('value_cm').values(
+                'id', 'value_cm', 'display_label'
+            )
+        )
+        payload = {
             'success': True,
             'data': {
                 'religions': religions,
@@ -413,5 +428,7 @@ class MatchFilterOptionsView(APIView):
                 'occupations': occupations,
                 'marital_status': marital_status,
                 'heights': heights,
-            }
-        }, status=status.HTTP_200_OK)
+            },
+        }
+        mc.set_cached_master_list(mc.RESOURCE_MATCH_FILTERS, '', payload)
+        return Response(payload, status=status.HTTP_200_OK)

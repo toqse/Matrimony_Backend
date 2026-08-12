@@ -24,6 +24,7 @@ from admin_panel.my_profiles.views import (
     _completion_steps,
     _completeness_percent,
     _count_incomplete_profiles,
+    _filter_by_completeness,
     _my_profiles_base_queryset,
     _subscription_label,
     _wishlist_actor_for_panel_user,
@@ -145,6 +146,10 @@ def _apply_staff_list_filter(qs, filter_value: str):
         return qs.filter(_active_subscription_q()), None
     if f == "unsubscribed":
         return qs.exclude(_active_subscription_q()), None
+    if f == "complete":
+        return _filter_by_completeness(qs, "complete"), None
+    if f == "incomplete":
+        return _filter_by_completeness(qs, "incomplete"), None
     return qs, None
 
 
@@ -272,18 +277,14 @@ class StaffMyProfilesListView(APIView):
                 Wishlist.objects.filter(user=wishlist_actor).values_list("profile_id", flat=True)
             )
 
-        rows = [_build_staff_list_row(request, u, wishlist_user_ids) for u in qs.order_by("-created_at")]
-        if filter_by == "complete":
-            rows = [r for r in rows if r["completeness"] == 100]
-        elif filter_by == "incomplete":
-            rows = [r for r in rows if r["completeness"] < 100]
-
+        qs = qs.order_by("-created_at")
         page_size = min(max(int(request.query_params.get("page_size", 20)), 1), 100)
         page_num = max(int(request.query_params.get("page", 1)), 1)
         start = (page_num - 1) * page_size
         end = start + page_size
-        total = len(rows)
-        page_rows = rows[start:end]
+        total = qs.count()
+        page_users = list(qs[start:end])
+        page_rows = [_build_staff_list_row(request, u, wishlist_user_ids) for u in page_users]
 
         next_link = None
         previous_link = None

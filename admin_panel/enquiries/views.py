@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -600,17 +600,17 @@ class EnquiryAddNoteView(_AdminUserMixin, APIView):
 
 class EnquiryKanbanView(_AdminUserMixin, APIView):
     """
-    GET /api/v1/admin/enquiries/kanban/ — Grouped by status (no pagination)
+    GET /api/v1/admin/enquiries/kanban/ — Grouped by status.
+    Full column counts; items capped per column for payload size.
     """
 
     authentication_classes = [AdminJWTAuthentication]
     permission_classes = [IsStaffOrAbove]
+    KANBAN_ITEMS_PER_COLUMN = 50
 
     def get(self, request):
         user = request.user
-        qs = Enquiry.objects.select_related("assigned_to", "branch").prefetch_related(
-            "enquiry_notes__created_by"
-        )
+        qs = Enquiry.objects.select_related("assigned_to", "branch")
 
         if user.role == AdminUser.ROLE_BRANCH_MANAGER:
             mb = admin_branch_for_manager(user)
@@ -619,12 +619,22 @@ class EnquiryKanbanView(_AdminUserMixin, APIView):
             qs = qs.filter(assigned_to=user)
 
         columns = ["new", "contacted", "interested", "converted", "lost"]
+        counts = {
+            row["status"]: row["c"]
+            for row in qs.values("status").annotate(c=Count("id"))
+        }
+
         result = {}
+        per_col = self.KANBAN_ITEMS_PER_COLUMN
         for col in columns:
-            items = qs.filter(status=col)
+            col_qs = (
+                qs.filter(status=col)
+                .prefetch_related("enquiry_notes__created_by")
+                .order_by("-updated_at", "-pk")[:per_col]
+            )
             result[col] = {
-                "count": items.count(),
-                "items": EnquirySerializer(items, many=True).data,
+                "count": int(counts.get(col, 0)),
+                "items": EnquirySerializer(col_qs, many=True).data,
             }
 
         return Response({"success": True, "data": result})

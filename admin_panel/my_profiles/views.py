@@ -147,11 +147,11 @@ def _completeness_percent(user: User) -> int:
     return int((done / 6) * 100)
 
 
-def _count_incomplete_profiles(qs) -> int:
+def _completeness_exists_annotations():
     """
-    DB aggregate equivalent of sum(1 for u in qs if _completeness_percent(u) < 100).
-    Mirrors _completion_steps: location/religion/personal/education rows exist,
-    about_me non-blank (trimmed), and profile_photo set.
+    Exists() annotations mirroring _completion_steps / _completeness_percent.
+    location/religion/personal/education rows exist, about_me non-blank (trimmed),
+    and profile_photo set.
     """
     has_location = Exists(UserLocation.objects.filter(user_id=OuterRef('pk')))
     has_religion = Exists(UserReligion.objects.filter(user_id=OuterRef('pk')))
@@ -167,25 +167,59 @@ def _count_incomplete_profiles(qs) -> int:
         .exclude(profile_photo='')
         .exclude(profile_photo__isnull=True)
     )
+    return {
+        '_has_location': has_location,
+        '_has_religion': has_religion,
+        '_has_personal': has_personal,
+        '_has_education': has_education,
+        '_has_about': has_about,
+        '_has_photos': has_photos,
+    }
+
+
+def _annotate_completeness_flags(qs):
+    return qs.annotate(**_completeness_exists_annotations())
+
+
+def _incomplete_q():
     return (
-        qs.annotate(
-            _has_location=has_location,
-            _has_religion=has_religion,
-            _has_personal=has_personal,
-            _has_education=has_education,
-            _has_about=has_about,
-            _has_photos=has_photos,
-        )
-        .filter(
-            Q(_has_location=False)
-            | Q(_has_religion=False)
-            | Q(_has_personal=False)
-            | Q(_has_education=False)
-            | Q(_has_about=False)
-            | Q(_has_photos=False)
-        )
-        .count()
+        Q(_has_location=False)
+        | Q(_has_religion=False)
+        | Q(_has_personal=False)
+        | Q(_has_education=False)
+        | Q(_has_about=False)
+        | Q(_has_photos=False)
     )
+
+
+def _complete_q():
+    return (
+        Q(_has_location=True)
+        & Q(_has_religion=True)
+        & Q(_has_personal=True)
+        & Q(_has_education=True)
+        & Q(_has_about=True)
+        & Q(_has_photos=True)
+    )
+
+
+def _filter_by_completeness(qs, completeness: str):
+    """completeness: 'complete' | 'incomplete'."""
+    annotated = _annotate_completeness_flags(qs)
+    if completeness == 'complete':
+        return annotated.filter(_complete_q())
+    if completeness == 'incomplete':
+        return annotated.filter(_incomplete_q())
+    return qs
+
+
+def _count_incomplete_profiles(qs) -> int:
+    """
+    DB aggregate equivalent of sum(1 for u in qs if _completeness_percent(u) < 100).
+    Mirrors _completion_steps: location/religion/personal/education rows exist,
+    about_me non-blank (trimmed), and profile_photo set.
+    """
+    return _filter_by_completeness(qs, 'incomplete').count()
 
 
 def _resolve_user_or_error(request, matri_id: str):
@@ -288,6 +322,10 @@ def _apply_list_filter(qs, filter_value: str):
         return qs.filter(_active_subscription_q()), None
     if f == "unsubscribed":
         return qs.exclude(_active_subscription_q()), None
+    if f == "complete":
+        return _filter_by_completeness(qs, "complete"), None
+    if f == "incomplete":
+        return _filter_by_completeness(qs, "incomplete"), None
     return qs, None
 
 
@@ -355,18 +393,14 @@ class MyProfilesListView(APIView):
                 Wishlist.objects.filter(user=wishlist_actor).values_list("profile_id", flat=True)
             )
 
-        rows = [_build_list_row(request, u, wishlist_user_ids) for u in qs.order_by("-created_at")]
-        if filter_by == "complete":
-            rows = [r for r in rows if r["completeness"] == 100]
-        elif filter_by == "incomplete":
-            rows = [r for r in rows if r["completeness"] < 100]
-
+        qs = qs.order_by("-created_at")
         page_size = min(max(int(request.query_params.get("page_size", 20)), 1), 100)
         page_num = max(int(request.query_params.get("page", 1)), 1)
         start = (page_num - 1) * page_size
         end = start + page_size
-        total = len(rows)
-        page_rows = rows[start:end]
+        total = qs.count()
+        page_users = list(qs[start:end])
+        page_rows = [_build_list_row(request, u, wishlist_user_ids) for u in page_users]
 
         next_link = None
         previous_link = None

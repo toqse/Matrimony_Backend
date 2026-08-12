@@ -7,7 +7,7 @@ from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import Coalesce, TruncDate, TruncMonth, TruncYear
 from django.utils import timezone
 from rest_framework import status
@@ -528,10 +528,29 @@ class ProfileCompletionReportAPIView(APIView):
                 base = base.filter(user__branch_id=master_bid)
 
             total_profiles = base.count()
+            step_filters = {
+                f'{key}_incomplete': Count('id', filter=Q(**{field: False}))
+                for key, field, _title in PROFILE_STEPS
+            }
+            aggregates = base.aggregate(
+                fully_complete=Count(
+                    'id',
+                    filter=Q(
+                        location_completed=True,
+                        religion_completed=True,
+                        personal_completed=True,
+                        family_completed=True,
+                        education_completed=True,
+                        about_completed=True,
+                        photos_completed=True,
+                    ),
+                ),
+                **step_filters,
+            )
             chart = []
             summary_table = []
-            for key, field, title in PROFILE_STEPS:
-                incomplete = base.filter(**{field: False}).count()
+            for key, _field, title in PROFILE_STEPS:
+                incomplete = int(aggregates.get(f'{key}_incomplete') or 0)
                 complete = total_profiles - incomplete
                 pct = round((incomplete / total_profiles) * 100, 2) if total_profiles else 0.0
                 chart.append({"label": title, "step": key, "incomplete_count": incomplete, "percent_of_profiles": pct})
@@ -545,15 +564,7 @@ class ProfileCompletionReportAPIView(APIView):
                     }
                 )
 
-            fully_complete = base.filter(
-                location_completed=True,
-                religion_completed=True,
-                personal_completed=True,
-                family_completed=True,
-                education_completed=True,
-                about_completed=True,
-                photos_completed=True,
-            ).count()
+            fully_complete = int(aggregates.get('fully_complete') or 0)
 
             return Response(
                 {

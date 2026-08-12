@@ -354,7 +354,7 @@ class PaymentsExportCSVAPIView(APIView):
         writer.writerow(
             ["Time", "Receipt/TXN ID", "Customer", "Matri ID", "Plan", "Amount", "Mode", "Branch", "Staff", "Status"]
         )
-        for obj in qs.order_by("-created_at"):
+        for obj in qs.order_by("-created_at").iterator(chunk_size=500):
             asn = getattr(obj.user, "staff_assignment", None)
             writer.writerow(
                 [

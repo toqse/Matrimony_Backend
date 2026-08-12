@@ -25,6 +25,7 @@ RESOURCE_EDUCATIONS = 'educations'
 RESOURCE_EDUCATION_SUBJECTS = 'education-subjects'
 RESOURCE_OCCUPATIONS = 'occupations'
 RESOURCE_EMPLOYMENT_STATUSES = 'employment-statuses'
+RESOURCE_MATCH_FILTERS = 'match-filters'
 
 
 def master_list_cache_key(resource: str, query_string: str) -> str:

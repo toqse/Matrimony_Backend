@@ -33,11 +33,11 @@ from .serializers import (
 )
 
 
-OTP_EXPIRY_MINUTES = 10
-OTP_REQUEST_LIMIT = 5
-OTP_REQUEST_WINDOW_SECONDS = 10 * 60
-OTP_FAILED_ATTEMPT_LIMIT = 3
-OTP_LOCK_SECONDS = 30 * 60
+OTP_EXPIRY_MINUTES = getattr(settings, "ADMIN_OTP_EXPIRY_MINUTES", 10)
+OTP_REQUEST_LIMIT = getattr(settings, "ADMIN_OTP_REQUEST_LIMIT", 10)
+OTP_REQUEST_WINDOW_SECONDS = getattr(settings, "ADMIN_OTP_REQUEST_WINDOW_SECONDS", 10 * 60)
+OTP_FAILED_ATTEMPT_LIMIT = getattr(settings, "ADMIN_OTP_FAILED_ATTEMPT_LIMIT", 5)
+OTP_LOCK_SECONDS = getattr(settings, "ADMIN_OTP_LOCK_SECONDS", 15 * 60)
 PROFILE_PHONE_OTP_EXPIRY_SECONDS = 10 * 60
 PROFILE_PHONE_OTP_REQUEST_LIMIT = 3
 PROFILE_PHONE_OTP_MAX_ATTEMPTS = 3
@@ -50,16 +50,20 @@ def _err(message: str, code: int | None = None):
     return payload
 
 
+# v2 keys invalidate prior rate-limit / lock counters (avoids stuck 429 after limit tweaks).
+_OTP_CACHE_VERSION = "v2"
+
+
 def _rate_key(mobile_e164: str) -> str:
-    return f"admin_otp_rate:{mobile_e164}"
+    return f"admin_otp_rate:{_OTP_CACHE_VERSION}:{mobile_e164}"
 
 
 def _attempt_key(mobile_e164: str) -> str:
-    return f"admin_otp_attempts:{mobile_e164}"
+    return f"admin_otp_attempts:{_OTP_CACHE_VERSION}:{mobile_e164}"
 
 
 def _lock_key(mobile_e164: str) -> str:
-    return f"admin_otp_lock:{mobile_e164}"
+    return f"admin_otp_lock:{_OTP_CACHE_VERSION}:{mobile_e164}"
 
 
 def _blacklist_key(jti: str) -> str:
@@ -72,6 +76,20 @@ def _profile_phone_rate_key(admin_user_id: int) -> str:
 
 def _profile_phone_payload_key(admin_user_id: int) -> str:
     return f"admin_profile_phone_otp_payload:{admin_user_id}"
+
+
+def _otp_window_minutes() -> int:
+    return max(1, int(OTP_REQUEST_WINDOW_SECONDS // 60) or 1)
+
+
+def _rate_limited_message() -> str:
+    mins = _otp_window_minutes()
+    return f"Too many OTP requests. Please try again after {mins} minute{'s' if mins != 1 else ''}."
+
+
+def _lock_message() -> str:
+    mins = max(1, int(OTP_LOCK_SECONDS // 60) or 1)
+    return f"Too many failed attempts. Please try again after {mins} minute{'s' if mins != 1 else ''}."
 
 
 def _sync_staff_profile_from_admin_user(user: AdminUser, *, sync_name=False, sync_email=False, sync_mobile=False):
@@ -183,11 +201,11 @@ class SendOTPView(APIView):
             )
 
         if cache.get(_lock_key(mobile)):
-            return Response(_err("Too many failed attempts", 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(_err(_lock_message(), 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         allowed, _ = _check_rate_limit(mobile)
         if not allowed:
-            return Response(_err("Too many OTP requests", 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(_err(_rate_limited_message(), 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         otp = _generate_otp()
         user.otp = otp
@@ -238,7 +256,7 @@ class VerifyOTPView(APIView):
             )
 
         if cache.get(_lock_key(mobile)):
-            return Response(_err("Too many failed attempts", 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(_err(_lock_message(), 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         if not user.otp or not user.otp_expiry or timezone.now() > user.otp_expiry:
             user.otp = None
@@ -251,7 +269,7 @@ class VerifyOTPView(APIView):
             cache.set(_attempt_key(mobile), attempts, timeout=OTP_EXPIRY_MINUTES * 60)
             if attempts >= OTP_FAILED_ATTEMPT_LIMIT:
                 cache.set(_lock_key(mobile), "1", timeout=OTP_LOCK_SECONDS)
-                return Response(_err("Too many failed attempts", 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
+                return Response(_err(_lock_message(), 429), status=status.HTTP_429_TOO_MANY_REQUESTS)
             return Response(_err("Invalid OTP. Please try again.", 400), status=status.HTTP_400_BAD_REQUEST)
 
         user.otp = None

@@ -424,6 +424,28 @@ class SendInterestView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+_INTEREST_RECEIVER_SELECT = (
+    'receiver',
+    'receiver__user_location',
+    'receiver__user_location__city',
+    'receiver__user_location__state',
+    'receiver__user_education',
+    'receiver__user_education__highest_education',
+    'receiver__user_education__occupation',
+    'receiver__user_photos',
+)
+_INTEREST_SENDER_SELECT = (
+    'sender',
+    'sender__user_location',
+    'sender__user_location__city',
+    'sender__user_location__state',
+    'sender__user_education',
+    'sender__user_education__highest_education',
+    'sender__user_education__occupation',
+    'sender__user_photos',
+)
+
+
 class MyInterestsView(APIView):
     """
     GET /api/v1/interests/my/
@@ -450,8 +472,8 @@ class MyInterestsView(APIView):
             max_page_size=50,
         )
 
-        sent_qs = Interest.objects.filter(sender=user).select_related('receiver').order_by('-created_at')
-        received_qs = Interest.objects.filter(receiver=user).select_related('sender').order_by('-created_at')
+        sent_qs = Interest.objects.filter(sender=user).select_related(*_INTEREST_RECEIVER_SELECT).order_by('-created_at')
+        received_qs = Interest.objects.filter(receiver=user).select_related(*_INTEREST_SENDER_SELECT).order_by('-created_at')
         sent_total = sent_qs.count()
         received_total = received_qs.count()
 
@@ -501,7 +523,7 @@ class SentInterestsView(APIView):
             request, default_page_size=10, max_page_size=50
         )
 
-        qs = Interest.objects.filter(sender=user).select_related('receiver').order_by('-created_at')
+        qs = Interest.objects.filter(sender=user).select_related(*_INTEREST_RECEIVER_SELECT).order_by('-created_at')
         total = qs.count()
         start = (page - 1) * page_size
         end = start + page_size
@@ -535,7 +557,7 @@ class ReceivedInterestsView(APIView):
             request, default_page_size=10, max_page_size=50
         )
 
-        qs = Interest.objects.filter(receiver=user).select_related('sender').order_by('-created_at')
+        qs = Interest.objects.filter(receiver=user).select_related(*_INTEREST_SENDER_SELECT).order_by('-created_at')
         total = qs.count()
         start = (page - 1) * page_size
         end = start + page_size

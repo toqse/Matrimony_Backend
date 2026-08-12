@@ -44,13 +44,10 @@ def filter_users_by_planet_house(qs, planet_key: str, house_num: int):
     Keep only users in ``qs`` whose rasi chart places ``planet_key`` in ``house_num``
     from Lagnam. Returns the narrowed queryset (possibly empty).
     """
-    candidate_ids = list(qs.values_list("pk", flat=True))
-    if not candidate_ids:
-        return qs.none()
-
+    # Subquery — avoid materializing every candidate pk in Python before scanning charts.
     matching_ids: list = []
     for hp in (
-        HoroscopeProfile.objects.filter(user_id__in=candidate_ids)
+        HoroscopeProfile.objects.filter(user_id__in=qs.values("pk"))
         .exclude(pr_rasi="")
         .filter(pr_rasi__isnull=False)
         .only("user_id", "pr_rasi")

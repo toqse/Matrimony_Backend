@@ -48,12 +48,12 @@ def _city_changed(sender, **kwargs):
 
 @receiver([post_save, post_delete], sender=Religion)
 def _religion_changed(sender, **kwargs):
-    _invalidate(mc.RESOURCE_RELIGIONS, mc.RESOURCE_CASTES)
+    _invalidate(mc.RESOURCE_RELIGIONS, mc.RESOURCE_CASTES, mc.RESOURCE_MATCH_FILTERS)
 
 
 @receiver([post_save, post_delete], sender=Caste)
 def _caste_changed(sender, **kwargs):
-    _invalidate(mc.RESOURCE_CASTES)
+    _invalidate(mc.RESOURCE_CASTES, mc.RESOURCE_MATCH_FILTERS)
 
 
 @receiver([post_save, post_delete], sender=MotherTongue)
@@ -63,12 +63,12 @@ def _mother_tongue_changed(sender, **kwargs):
 
 @receiver([post_save, post_delete], sender=Height)
 def _height_changed(sender, **kwargs):
-    _invalidate(mc.RESOURCE_HEIGHTS)
+    _invalidate(mc.RESOURCE_HEIGHTS, mc.RESOURCE_MATCH_FILTERS)
 
 
 @receiver([post_save, post_delete], sender=MaritalStatus)
 def _marital_changed(sender, **kwargs):
-    _invalidate(mc.RESOURCE_MARITAL_STATUSES)
+    _invalidate(mc.RESOURCE_MARITAL_STATUSES, mc.RESOURCE_MATCH_FILTERS)
 
 
 @receiver([post_save, post_delete], sender=Complexion)
@@ -83,7 +83,7 @@ def _income_changed(sender, **kwargs):
 
 @receiver([post_save, post_delete], sender=Education)
 def _education_changed(sender, **kwargs):
-    _invalidate(mc.RESOURCE_EDUCATIONS, mc.RESOURCE_EDUCATION_SUBJECTS)
+    _invalidate(mc.RESOURCE_EDUCATIONS, mc.RESOURCE_EDUCATION_SUBJECTS, mc.RESOURCE_MATCH_FILTERS)
 
 
 @receiver([post_save, post_delete], sender=EducationSubject)
@@ -93,7 +93,7 @@ def _education_subject_changed(sender, **kwargs):
 
 @receiver([post_save, post_delete], sender=Occupation)
 def _occupation_changed(sender, **kwargs):
-    _invalidate(mc.RESOURCE_OCCUPATIONS)
+    _invalidate(mc.RESOURCE_OCCUPATIONS, mc.RESOURCE_MATCH_FILTERS)
 
 
 @receiver([post_save, post_delete], sender=EmploymentStatus)

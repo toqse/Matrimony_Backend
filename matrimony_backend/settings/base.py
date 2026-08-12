@@ -310,6 +310,13 @@ OTP_LENGTH = 6
 OTP_RATE_LIMIT_REQUESTS = 5
 OTP_RATE_LIMIT_WINDOW_MINUTES = 10
 
+# Admin panel OTP login (SendOTP / VerifyOTP)
+ADMIN_OTP_EXPIRY_MINUTES = 10
+ADMIN_OTP_REQUEST_LIMIT = 10
+ADMIN_OTP_REQUEST_WINDOW_SECONDS = 10 * 60
+ADMIN_OTP_FAILED_ATTEMPT_LIMIT = 5
+ADMIN_OTP_LOCK_SECONDS = 15 * 60
+
 # Astrology: signed chart / match-PDF URLs (seconds, default 30 days)
 ASTROLOGY_PUBLIC_URL_MAX_AGE = env.int('ASTROLOGY_PUBLIC_URL_MAX_AGE', default=60 * 60 * 24 * 30)
 # Swiss Ephemeris: True = Lahiri sidereal (Prokerala-style Vedic); False = legacy tropical positions

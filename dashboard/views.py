@@ -89,7 +89,26 @@ def _apply_partner_preference(qs, user):
     return qs
 
 
-def _build_profile_card(request, user, viewer, include_extended=False):
+def _load_viewer_match_context(viewer):
+    """Load viewer profile sections once for match % (avoid per-card re-queries)."""
+    return {
+        'rel': UserReligion.objects.filter(user=viewer).select_related('religion', 'caste_fk').first(),
+        'pers': UserPersonal.objects.filter(user=viewer).select_related('height', 'marital_status').first(),
+        'edu': UserEducation.objects.filter(user=viewer).select_related('highest_education', 'occupation').first(),
+        'loc': UserLocation.objects.filter(user=viewer).select_related('state', 'city').first(),
+    }
+
+
+_CARD_SELECT_RELATED = (
+    'user_personal', 'user_personal__height',
+    'user_religion', 'user_religion__religion',
+    'user_education', 'user_education__highest_education', 'user_education__occupation',
+    'user_photos', 'user_location', 'user_location__state', 'user_location__city',
+    'user_plan', 'user_plan__plan',
+)
+
+
+def _build_profile_card(request, user, viewer, include_extended=False, viewer_ctx=None):
     """Build profile card dict for dashboard lists."""
     from matches.utils import age_from_dob
     pers = getattr(user, 'user_personal', None) or UserPersonal.objects.filter(user=user).select_related('height').first()
@@ -116,10 +135,12 @@ def _build_profile_card(request, user, viewer, include_extended=False):
             parts.append(loc.state.name)
         location_str = ', '.join(parts) if parts else None
 
-    viewer_rel = UserReligion.objects.filter(user=viewer).select_related('religion', 'caste_fk').first()
-    viewer_pers = UserPersonal.objects.filter(user=viewer).select_related('height', 'marital_status').first()
-    viewer_edu = UserEducation.objects.filter(user=viewer).select_related('highest_education', 'occupation').first()
-    viewer_loc = UserLocation.objects.filter(user=viewer).select_related('state', 'city').first()
+    if viewer_ctx is None:
+        viewer_ctx = _load_viewer_match_context(viewer)
+    viewer_rel = viewer_ctx['rel']
+    viewer_pers = viewer_ctx['pers']
+    viewer_edu = viewer_ctx['edu']
+    viewer_loc = viewer_ctx['loc']
 
     match_pct = compute_match_percentage(
         viewer, user,
@@ -130,6 +151,7 @@ def _build_profile_card(request, user, viewer, include_extended=False):
     new_threshold = timezone.now() - timedelta(days=7)
     is_new = user.created_at >= new_threshold if user.created_at else False
 
+    # Prefer select_related user_plan; _get_user_plan uses the cached reverse relation.
     up = _get_user_plan(user)
     is_premium = up is not None and getattr(up, 'is_active', True)
 
@@ -232,15 +254,14 @@ class NewMatchesView(APIView):
         viewer_has_plan = _get_user_plan(user) is not None
         if not viewer_has_plan:
             qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
-        qs = qs.select_related(
-            'user_personal', 'user_personal__height',
-            'user_religion', 'user_religion__religion',
-            'user_education', 'user_education__highest_education', 'user_education__occupation',
-            'user_photos', 'user_location', 'user_location__state', 'user_location__city',
-        ).distinct()
+        qs = qs.select_related(*_CARD_SELECT_RELATED).distinct()
         qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')[:limit]
 
-        data = [_build_profile_card(request, u, user, include_extended=False) for u in qs]
+        viewer_ctx = _load_viewer_match_context(user)
+        data = [
+            _build_profile_card(request, u, user, include_extended=False, viewer_ctx=viewer_ctx)
+            for u in qs
+        ]
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
 
@@ -265,7 +286,8 @@ class SuggestionsView(APIView):
 
         # Nearby matches: filter by same city (no coordinates).
         # If viewer city is not set, return empty suggestions (city-only mode).
-        viewer_loc = UserLocation.objects.filter(user=user).select_related('city').first()
+        viewer_ctx = _load_viewer_match_context(user)
+        viewer_loc = viewer_ctx['loc']
         if not viewer_loc or not viewer_loc.city_id:
             return Response({
                 'success': True,
@@ -290,18 +312,16 @@ class SuggestionsView(APIView):
             if dob_max is not None:
                 qs = qs.filter(dob__lte=dob_max)
 
-        qs = qs.select_related(
-            'user_personal', 'user_personal__height',
-            'user_religion', 'user_religion__religion',
-            'user_education', 'user_education__highest_education', 'user_education__occupation',
-            'user_photos', 'user_location', 'user_location__state', 'user_location__city',
-        ).distinct()
+        qs = qs.select_related(*_CARD_SELECT_RELATED).distinct()
         qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')
         total = qs.count()
         start = (page - 1) * page_size
         page_qs = qs[start:start + page_size]
 
-        data = [_build_profile_card(request, u, user, include_extended=True) for u in page_qs]
+        data = [
+            _build_profile_card(request, u, user, include_extended=True, viewer_ctx=viewer_ctx)
+            for u in page_qs
+        ]
         return Response({
             'success': True,
             'data': {

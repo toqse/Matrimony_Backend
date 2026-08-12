@@ -63,6 +63,45 @@ def _audit_member_profile(request, details: str, *, action: str | None = None) -
     return
 
 
+def _related_or_none(user, attr):
+    """Return reverse OneToOne if present (uses select_related cache when set)."""
+    from django.core.exceptions import ObjectDoesNotExist
+    try:
+        return getattr(user, attr)
+    except ObjectDoesNotExist:
+        return None
+
+
+def _fk_needs_fetch(obj, *field_names):
+    if obj is None:
+        return False
+    cache = getattr(obj._state, 'fields_cache', {}) or {}
+    for name in field_names:
+        if getattr(obj, f'{name}_id', None) and name not in cache:
+            return True
+    return False
+
+
+PROFILE_DATA_SELECT_RELATED = (
+    'user_profile',
+    'user_location__country',
+    'user_location__state',
+    'user_location__district',
+    'user_location__city',
+    'user_religion__religion',
+    'user_religion__caste_fk',
+    'user_religion__mother_tongue',
+    'user_personal__marital_status',
+    'user_personal__height',
+    'user_family',
+    'user_education__highest_education',
+    'user_education__education_subject',
+    'user_education__occupation',
+    'user_education__annual_income',
+    'user_photos',
+)
+
+
 def _build_profile_data_for_user(user, request=None, include_contact=False, include_family=True):
     """Build profile dict for a given user (for public profile view)."""
     from .serializers import (
@@ -71,15 +110,62 @@ def _build_profile_data_for_user(user, request=None, include_contact=False, incl
         FamilyDetailsReadSerializer, EducationDetailsReadSerializer,
         PhotosDetailsReadSerializer,
     )
-    loc = UserLocation.objects.filter(user=user).select_related('country', 'state', 'district', 'city').first()
-    rel = UserReligion.objects.filter(user=user).select_related('religion', 'caste_fk', 'mother_tongue').first()
-    pers = UserPersonal.objects.filter(user=user).select_related('marital_status', 'height').first()
-    fam = UserFamily.objects.filter(user=user).first()
-    edu = UserEducation.objects.filter(user=user).select_related(
-        'highest_education', 'education_subject', 'occupation', 'annual_income'
-    ).first()
-    photos = UserPhotos.objects.filter(user=user).first()
-    profile = getattr(user, 'user_profile', None) or UserProfile.objects.filter(user=user).first()
+
+    loc = _related_or_none(user, 'user_location')
+    if loc is None:
+        loc = UserLocation.objects.filter(user=user).select_related(
+            'country', 'state', 'district', 'city'
+        ).first()
+    elif _fk_needs_fetch(loc, 'country', 'state', 'district', 'city'):
+        loc = UserLocation.objects.filter(pk=loc.pk).select_related(
+            'country', 'state', 'district', 'city'
+        ).first()
+
+    rel = _related_or_none(user, 'user_religion')
+    if rel is None:
+        rel = UserReligion.objects.filter(user=user).select_related(
+            'religion', 'caste_fk', 'mother_tongue'
+        ).first()
+    elif _fk_needs_fetch(rel, 'religion', 'caste_fk', 'mother_tongue'):
+        rel = UserReligion.objects.filter(pk=rel.pk).select_related(
+            'religion', 'caste_fk', 'mother_tongue'
+        ).first()
+
+    pers = _related_or_none(user, 'user_personal')
+    if pers is None:
+        pers = UserPersonal.objects.filter(user=user).select_related(
+            'marital_status', 'height'
+        ).first()
+    elif _fk_needs_fetch(pers, 'marital_status', 'height'):
+        pers = UserPersonal.objects.filter(pk=pers.pk).select_related(
+            'marital_status', 'height'
+        ).first()
+
+    fam = None
+    if include_family:
+        fam = _related_or_none(user, 'user_family')
+        if fam is None:
+            fam = UserFamily.objects.filter(user=user).first()
+
+    edu = _related_or_none(user, 'user_education')
+    if edu is None:
+        edu = UserEducation.objects.filter(user=user).select_related(
+            'highest_education', 'education_subject', 'occupation', 'annual_income'
+        ).first()
+    elif _fk_needs_fetch(
+        edu, 'highest_education', 'education_subject', 'occupation', 'annual_income'
+    ):
+        edu = UserEducation.objects.filter(pk=edu.pk).select_related(
+            'highest_education', 'education_subject', 'occupation', 'annual_income'
+        ).first()
+
+    photos = _related_or_none(user, 'user_photos')
+    if photos is None:
+        photos = UserPhotos.objects.filter(user=user).first()
+
+    profile = _related_or_none(user, 'user_profile')
+    if profile is None:
+        profile = UserProfile.objects.filter(user=user).first()
 
     def _empty_photos():
         return {
@@ -141,7 +227,10 @@ class ProfileDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
+        from accounts.models import User
+        user = User.objects.select_related(*PROFILE_DATA_SELECT_RELATED).filter(pk=request.user.pk).first()
+        if not user:
+            user = request.user
         completion = get_profile_completion_data(user)
         data = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
         data['profile_completion_percentage'] = completion['profile_completion_percentage']
@@ -173,7 +262,9 @@ class ProfilePreviewByMatriIdView(APIView):
 
         viewer = request.user
         try:
-            profile_user = User.objects.get(matri_id=matri_id, is_active=True)
+            profile_user = User.objects.select_related(*PROFILE_DATA_SELECT_RELATED).get(
+                matri_id=matri_id, is_active=True
+            )
         except User.DoesNotExist:
             return Response(
                 {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
@@ -191,14 +282,20 @@ class ProfilePreviewByMatriIdView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        target_up = UserProfile.objects.filter(user=profile_user).first()
+        target_up = _related_or_none(profile_user, 'user_profile')
         has_plan = user_has_active_plan(viewer)
         already_unlocked = has_unlocked_profile(viewer, target_up)
         interest_status, is_interest_sent = get_interest_ui_state_for_viewer(viewer, profile_user)
         is_wishlisted = Wishlist.objects.filter(user=viewer, profile=profile_user).exists()
 
-        # Reuse existing helper to gather profile data without contact details.
-        profile = _build_profile_data_for_user(profile_user, request=request, include_contact=False, include_family=True)
+        is_viewed_by_me = bool(has_plan and already_unlocked)
+        # Single build: include contact only when already unlocked (reuse for nested profile).
+        profile = _build_profile_data_for_user(
+            profile_user,
+            request=request,
+            include_contact=is_viewed_by_me,
+            include_family=True,
+        )
         basic = profile.get('basic_details') or {}
         personal = profile.get('personal_details') or {}
         location = profile.get('location_details') or {}
@@ -238,8 +335,7 @@ class ProfilePreviewByMatriIdView(APIView):
             can_chat_flag and has_accepted_interest_between(viewer, profile_user)
         )
         is_able_to_view = bool(has_plan and (already_unlocked or can_view_flag))
-        is_viewed_by_me = bool(has_plan and already_unlocked)
-        opposite_profile = getattr(profile_user, 'user_profile', None)
+        opposite_profile = target_up
         can_horoscope_match = bool(
             getattr(profile_user, 'dob', None)
             and opposite_profile
@@ -281,9 +377,7 @@ class ProfilePreviewByMatriIdView(APIView):
 
         # Include full details only when the viewer has an active plan and already unlocked.
         if is_viewed_by_me:
-            out['data']['profile'] = _build_profile_data_for_user(
-                profile_user, request=request, include_contact=True, include_family=True
-            )
+            out['data']['profile'] = profile
 
         return Response(
             out,
@@ -312,7 +406,9 @@ class PublicProfileByMatriIdView(APIView):
 
         viewer = request.user
         try:
-            profile_user = User.objects.get(matri_id=matri_id, is_active=True)
+            profile_user = User.objects.select_related(*PROFILE_DATA_SELECT_RELATED).get(
+                matri_id=matri_id, is_active=True
+            )
         except User.DoesNotExist:
             return Response(
                 {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
@@ -329,7 +425,7 @@ class PublicProfileByMatriIdView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        target_up = UserProfile.objects.filter(user=profile_user).first()
+        target_up = _related_or_none(profile_user, 'user_profile')
         has_plan = user_has_active_plan(viewer)
         already_unlocked = has_unlocked_profile(viewer, target_up)
         can_view, remaining = PlanLimitService.can_view_profile(viewer)
