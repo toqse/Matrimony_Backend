@@ -313,10 +313,11 @@ class AdminProfileDetailAPIView(APIView):
         )
 
         data = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
-        p2 = UserProfile.objects.filter(user=user).first()
+        # Reuse completion + refresh admin flags without an extra UserProfile filter when possible.
+        profile.refresh_from_db(fields=["admin_verified", "has_horoscope"])
         data["admin"] = {
-            "admin_verified": bool(p2 and p2.admin_verified),
-            "has_horoscope": bool(p2 and p2.has_horoscope),
+            "admin_verified": bool(profile.admin_verified),
+            "has_horoscope": bool(profile.has_horoscope),
             "is_blocked": getattr(user, "is_blocked", False),
             "profile_status": completion["profile_status"],
             "profile_completion_percentage": completion["profile_completion_percentage"],

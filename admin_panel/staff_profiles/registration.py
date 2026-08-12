@@ -370,11 +370,15 @@ def create_user_and_profile_sections(
         }
         apply_profile_sections(user, section_data)
 
-        save_profile_uploads(user, files)
-
         if staff is not None:
             CustomerStaffAssignment.objects.update_or_create(user=user, defaults={"staff": staff})
 
+        completion = get_profile_completion_data(user)
+        user.is_registration_profile_completed = completion["profile_status"] == "completed"
+        user.save(update_fields=["is_registration_profile_completed", "updated_at"])
+
+    # Photos outside the DB transaction (Pillow/storage can be slow on VPS).
+    if save_profile_uploads(user, files):
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])
