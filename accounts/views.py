@@ -105,6 +105,8 @@ class RegisterView(APIView):
     POST /api/v1/auth/verify-otp/ succeeds. Returns phone_number (matri_id only after verify).
     """
     permission_classes = [AllowAny]
+    # Per-phone OTP limits apply in-view; skip IP-wide AnonRateThrottle (shared NAT / QA burns 500/hour).
+    throttle_classes = []
 
     def post(self, request):
         ser = RegisterSerializer(data=request.data)
@@ -166,6 +168,7 @@ class ResendOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = ResendOTPSerializer(data=request.data)
@@ -219,6 +222,7 @@ class VerifyOTPView(APIView):
              profile_status, profile_steps, profile_completion_percentage, next_step.
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = VerifyOTPSerializer(data=request.data)
@@ -250,7 +254,9 @@ class VerifyOTPView(APIView):
 
 
 class RegisterMobileView(APIView):
+    """Login: send OTP to an existing verified mobile (POST /api/v1/auth/register/mobile/)."""
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = RegisterMobileSerializer(data=request.data)
@@ -268,6 +274,12 @@ class RegisterMobileView(APIView):
         if blocked:
             return blocked
         identifier = f'mobile:{mobile}'
+        allowed, msg = check_otp_rate_limit(identifier)
+        if not allowed:
+            return Response({
+                'success': False,
+                'error': {'code': 429, 'message': msg},
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
         otp = generate_otp(identifier)
         _send_otp_mobile(mobile, otp)
         payload = {
@@ -283,6 +295,7 @@ class RegisterMobileView(APIView):
 
 class VerifyMobileView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = VerifyMobileSerializer(data=request.data)
@@ -331,6 +344,7 @@ class VerifyMobileView(APIView):
 
 class RegisterEmailView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = RegisterEmailSerializer(data=request.data)
@@ -348,6 +362,7 @@ class RegisterEmailView(APIView):
 
 class VerifyEmailView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = VerifyEmailSerializer(data=request.data)
@@ -388,6 +403,7 @@ class LoginView(APIView):
     Request OTP first via POST /api/v1/auth/register/mobile/.
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         payload = {
@@ -416,6 +432,7 @@ class LoginView(APIView):
 
 class TokenRefreshViewCustom(TokenRefreshView):
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request, *args, **kwargs):
         # Accept refresh from body or from HTTP-only cookie
@@ -490,6 +507,7 @@ class LogoutView(APIView):
 
 class PasswordResetView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = PasswordResetSerializer(data=request.data)
@@ -520,6 +538,7 @@ class PasswordResetView(APIView):
 
 class PasswordConfirmView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         ser = PasswordConfirmSerializer(data=request.data)

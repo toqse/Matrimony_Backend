@@ -4,6 +4,7 @@ Custom exception handler for consistent API error responses.
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.exceptions import Throttled
 
 
 def custom_exception_handler(exc, context):
@@ -13,7 +14,7 @@ def custom_exception_handler(exc, context):
             'success': False,
             'error': {
                 'code': response.status_code,
-                'message': _get_custom_message(response.data),
+                'message': _get_custom_message(response.data, exc=exc),
                 'details': response.data,
             },
         }
@@ -49,9 +50,18 @@ def _get_error_message(data):
     return str(data)
 
 
-def _get_custom_message(data):
+def _get_custom_message(data, exc=None):
     if _is_expired_access_token_error(data):
         return 'Something went wrong'
+    if isinstance(exc, Throttled):
+        wait = getattr(exc, 'wait', None)
+        if wait is not None:
+            mins = max(1, int((float(wait) + 59) // 60))
+            return (
+                f'Too many requests. Please try again in about {mins} minute'
+                f'{"s" if mins != 1 else ""}.'
+            )
+        return 'Too many requests. Please try again shortly.'
     return _get_error_message(data)
 
 

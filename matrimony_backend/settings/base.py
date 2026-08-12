@@ -250,8 +250,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '500/hour',   # public endpoints: countries, register, etc.
-        'user': '2000/hour',
+        # Public browsing (masters, landing) shares one IP bucket; keep room for QA/NAT.
+        # Auth OTP send/verify views set throttle_classes=[] and use per-phone OTP limits.
+        'anon': '2000/hour',
+        'user': '5000/hour',
     },
     'DEFAULT_PARSER_CLASSES': [
         'rest_framework.parsers.JSONParser',
