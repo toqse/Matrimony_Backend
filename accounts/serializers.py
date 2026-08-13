@@ -24,6 +24,7 @@ PROFILE_FOR_CHOICES = [
     ('sister', 'Sister'),
     ('friend', 'Friend'),
     ('relative', 'Relative'),
+    ('staff', 'Staff'),
 ]
 
 
@@ -102,7 +103,7 @@ class RegisterSerializer(serializers.Serializer):
     profile_for = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def validate_profile_for(self, value):
-        """Normalize to lowercase; must be one of: myself, son, daughter, brother, sister, friend, relative."""
+        """Normalize to lowercase; must be one of: myself, son, daughter, brother, sister, friend, relative, staff."""
         if not value or not str(value).strip():
             return None
         val = str(value).strip().lower()

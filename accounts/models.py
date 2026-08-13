@@ -67,6 +67,7 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         ('sister', 'Sister'),
         ('friend', 'Friend'),
         ('relative', 'Relative'),
+        ('staff', 'Staff'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     matri_id = models.CharField(max_length=20, unique=True, editable=False, db_index=True, null=True, blank=True)

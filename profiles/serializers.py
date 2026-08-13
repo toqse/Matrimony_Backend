@@ -924,6 +924,7 @@ PROFILE_FOR_CHOICES = [
     ('sister', 'Sister'),
     ('friend', 'Friend'),
     ('relative', 'Relative'),
+    ('staff', 'Staff'),
 ]
 
 

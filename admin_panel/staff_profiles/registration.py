@@ -96,7 +96,7 @@ def _collect_multipart_files(request) -> dict[str, Any]:
 
 
 PROFILE_FOR_VALUES = frozenset(
-    {"myself", "son", "daughter", "brother", "sister", "friend", "relative"}
+    {"myself", "son", "daughter", "brother", "sister", "friend", "relative", "staff"}
 )
 
 
@@ -220,7 +220,7 @@ def validate_core_create_fields(data: dict) -> tuple[dict[str, str] | None, dict
     pf = (data.get("profile_for") or "").strip().lower()
     if pf and pf not in PROFILE_FOR_VALUES:
         errors["profile_for"] = (
-            "Invalid profile_for. Use: myself, son, daughter, brother, sister, friend, relative."
+            "Invalid profile_for. Use: myself, son, daughter, brother, sister, friend, relative, staff."
         )
 
     if errors:
