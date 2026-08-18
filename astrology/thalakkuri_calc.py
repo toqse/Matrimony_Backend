@@ -459,7 +459,7 @@ def _get_dasa_display_legacy(days):
     )
 
 
-
+_get_dasa_display = _get_dasa_display_legacy
 
 
 def _gana_ml(gana: str, star_num: int) -> str:

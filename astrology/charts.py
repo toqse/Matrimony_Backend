@@ -183,7 +183,7 @@ def build_chart_center_for_hp(hp) -> dict[str, str]:
         DASA_LORD_ML,
         NAK_ML,
         _build_rasi_center,
-        _get_dasa_display,
+        _get_dasa_display_legacy as _get_dasa_display,
     )
 
     star_num = hp.pr_star or 0
