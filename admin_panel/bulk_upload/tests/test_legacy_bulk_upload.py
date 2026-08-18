@@ -8,6 +8,7 @@ Covers:
 from __future__ import annotations
 
 import textwrap
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -30,6 +31,8 @@ from admin_panel.bulk_upload.legacy_runner import (
 )
 from admin_panel.bulk_upload.models import BulkUploadJob
 from admin_panel.bulk_upload.parser import is_legacy_format
+from astrology.models import HoroscopeProfile
+from profiles.models import UserProfile
 
 
 LEGACY_CSV = textwrap.dedent(
@@ -121,3 +124,63 @@ class LegacyBulkUploadEndToEndTests(TestCase):
         job = BulkUploadJob.objects.get(pk=body["data"]["job_id"])
         self.assertEqual(job.status, BulkUploadJob.STATUS_COMPLETED)
         self.assertEqual(job.imported_count, 2)
+        profile = UserProfile.objects.get(user__mobile="8157012545")
+        self.assertEqual(profile.place_of_birth, "")
+        self.assertIsNone(profile.birth_latitude)
+
+    def test_validate_accepts_optional_pob_column(self):
+        csv_text = LEGACY_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India\n",
+        ).replace(
+            "Karthika, 2\n",
+            "Karthika, 2,\n",
+        )
+        resp = self._validate(csv_text.encode("utf-8"))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["data"]["valid_rows"], 2)
+
+    def test_import_geocodes_place_of_birth(self):
+        csv_text = LEGACY_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India\n",
+        ).replace(
+            "Karthika, 2\n",
+            "Karthika, 2,\n",
+        )
+        validate_resp = self._validate(csv_text.encode("utf-8"))
+        token = validate_resp.json()["data"]["validation_token"]
+
+        with patch(
+            "profiles.legacy_import.geocode.PlaceGeocoder.resolve",
+            side_effect=lambda place: (9.9252, 78.1198) if place else None,
+        ):
+            import_resp = self.client.post(
+                reverse("bulk-upload-import"),
+                {"validation_token": token},
+                format="json",
+            )
+        self.assertEqual(import_resp.status_code, 200)
+        self.assertEqual(import_resp.json()["data"]["imported"], 2)
+
+        sobhana = User.objects.get(mobile="8157012545")
+        profile = UserProfile.objects.get(user=sobhana)
+        self.assertEqual(profile.place_of_birth, "Madurai Tamil Nadu India")
+        self.assertAlmostEqual(profile.birth_latitude, 9.9252)
+        self.assertAlmostEqual(profile.birth_longitude, 78.1198)
+        hp = HoroscopeProfile.objects.get(user=sobhana)
+        self.assertAlmostEqual(hp.pr_lat, 9.9252)
+        self.assertAlmostEqual(hp.pr_lon, 78.1198)
+
+        sudheesh = User.objects.get(mobile="8129450610")
+        empty = UserProfile.objects.get(user=sudheesh)
+        self.assertEqual(empty.place_of_birth, "")
+        self.assertIsNone(empty.birth_latitude)

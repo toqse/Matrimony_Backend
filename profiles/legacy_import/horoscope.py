@@ -86,18 +86,25 @@ def upsert_horoscope_profile(user, payload: dict) -> Optional[HoroscopeProfile]:
     )
     if not has_chart:
         return None
+    defaults = {
+        "pr_name": user.name,
+        "pr_dob": user.dob,
+        "pr_rasi": payload.get("pr_rasi") or "",
+        "pr_amsa": payload.get("pr_amsa") or "",
+        "pr_bhav": payload.get("pr_bhav") or "",
+        "pr_dasabalance": payload.get("pr_dasabalance") or None,
+        "pr_star": payload.get("pr_star"),
+        "pr_pada": payload.get("pr_pada"),
+        "is_calculated": bool(payload.get("pr_rasi") and payload.get("pr_star")),
+    }
+    lat = payload.get("birth_latitude")
+    lon = payload.get("birth_longitude")
+    if lat is not None and lon is not None:
+        defaults["pr_lat"] = lat
+        defaults["pr_lon"] = lon
+        defaults["pr_tz"] = 5.5
     obj, _ = HoroscopeProfile.objects.update_or_create(
         user=user,
-        defaults={
-            "pr_name": user.name,
-            "pr_dob": user.dob,
-            "pr_rasi": payload.get("pr_rasi") or "",
-            "pr_amsa": payload.get("pr_amsa") or "",
-            "pr_bhav": payload.get("pr_bhav") or "",
-            "pr_dasabalance": payload.get("pr_dasabalance") or None,
-            "pr_star": payload.get("pr_star"),
-            "pr_pada": payload.get("pr_pada"),
-            "is_calculated": bool(payload.get("pr_rasi") and payload.get("pr_star")),
-        },
+        defaults=defaults,
     )
     return obj

@@ -10,6 +10,7 @@ import csv
 import io
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
 from django.test import SimpleTestCase, TestCase
@@ -18,7 +19,9 @@ from accounts.models import User
 from astrology.models import HoroscopeProfile
 from master.models import Religion
 from profiles.legacy_import import LegacyImporter, parse_legacy_csv, read_legacy_csv_text
+from profiles.legacy_import.geocode import PlaceGeocoder, place_of_birth_from_row
 from profiles.legacy_import.horoscope import resolve_padam, resolve_star, star_lookup
+from profiles.models import UserProfile
 from profiles.legacy_import.masters import (
     normalize_complexion_name,
     normalize_religion_name,
@@ -154,6 +157,19 @@ class ParserTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             parse_legacy_csv(bad)
 
+    def test_parse_legacy_csv_accepts_optional_pob_column(self):
+        with_pob = SAMPLE_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India\n",
+        )
+        headers, reader = parse_legacy_csv(with_pob)
+        self.assertEqual(headers[-1], "place of birth")
+        rows = list(reader)
+        self.assertEqual(rows[0]["place of birth"].strip(), "Madurai Tamil Nadu India")
+
     def test_read_legacy_csv_text_falls_back_to_latin1(self, tmp_path=None):
         # Embed a non-UTF-8 byte (0xD1) inline in the file.
         path = Path("legacy_import_latin1_fixture.csv")
@@ -216,6 +232,67 @@ class LegacyImporterTests(TestCase):
             "padam": "4",
         }
 
+    def test_place_of_birth_aliases(self):
+        self.assertEqual(
+            place_of_birth_from_row({"place of birth": "  Madurai  "}),
+            "Madurai",
+        )
+        self.assertEqual(place_of_birth_from_row({"pob": "Kochi"}), "Kochi")
+        self.assertEqual(place_of_birth_from_row({"birth place": "Kottayam"}), "Kottayam")
+        self.assertEqual(place_of_birth_from_row(self.row), "")
+
+    def test_build_payload_reads_place_of_birth(self):
+        importer = LegacyImporter(dry_run=True)
+        row = dict(self.row, **{"place of birth": "Madurai, Tamil Nadu, India"})
+        payload, reason = importer.build_payload(2, row)
+        self.assertEqual(reason, "")
+        self.assertEqual(payload["place_of_birth"], "Madurai, Tamil Nadu, India")
+
+    def test_empty_place_of_birth_skips_geocode(self):
+        importer = LegacyImporter()
+        payload, _ = importer.build_payload(2, self.row)
+        with patch.object(importer._geocoder, "resolve") as resolve:
+            user = importer.save(payload)
+        resolve.assert_not_called()
+        profile = UserProfile.objects.get(user=user)
+        self.assertEqual(profile.place_of_birth, "")
+        self.assertIsNone(profile.birth_latitude)
+        self.assertIsNone(profile.birth_longitude)
+        hp = HoroscopeProfile.objects.get(user=user)
+        self.assertIsNone(hp.pr_lat)
+        self.assertIsNone(hp.pr_lon)
+
+    def test_save_geocodes_place_of_birth(self):
+        importer = LegacyImporter()
+        row = dict(self.row, **{"place of birth": "Madurai, Tamil Nadu, India"})
+        payload, _ = importer.build_payload(2, row)
+        with patch.object(
+            importer._geocoder, "resolve", return_value=(9.9252, 78.1198)
+        ) as resolve:
+            user = importer.save(payload)
+        resolve.assert_called_once_with("Madurai, Tamil Nadu, India")
+        profile = UserProfile.objects.get(user=user)
+        self.assertEqual(profile.place_of_birth, "Madurai, Tamil Nadu, India")
+        self.assertAlmostEqual(profile.birth_latitude, 9.9252)
+        self.assertAlmostEqual(profile.birth_longitude, 78.1198)
+        hp = HoroscopeProfile.objects.get(user=user)
+        self.assertAlmostEqual(hp.pr_lat, 9.9252)
+        self.assertAlmostEqual(hp.pr_lon, 78.1198)
+        self.assertEqual(hp.pr_rasi, "HKAKKKLJDJH")
+        self.assertTrue(hp.is_calculated)
+
+    def test_geocode_failure_keeps_pob_without_coords(self):
+        importer = LegacyImporter()
+        row = dict(self.row, **{"place of birth": "Unknown Hamlet XYZ"})
+        payload, _ = importer.build_payload(2, row)
+        with patch.object(importer._geocoder, "resolve", return_value=None):
+            user = importer.save(payload)
+        profile = UserProfile.objects.get(user=user)
+        self.assertEqual(profile.place_of_birth, "Unknown Hamlet XYZ")
+        self.assertIsNone(profile.birth_latitude)
+        hp = HoroscopeProfile.objects.get(user=user)
+        self.assertIsNone(hp.pr_lat)
+
     def test_save_creates_user_and_horoscope(self):
         importer = LegacyImporter()
         payload, reason = importer.build_payload(2, self.row)
@@ -263,6 +340,54 @@ class LegacyImporterTests(TestCase):
         result = importer.save(payload)
         self.assertIsNone(result)
         self.assertFalse(User.objects.filter(mobile="8157012545").exists())
+
+
+class PlaceGeocoderTests(TestCase):
+    """Unit tests for Nominatim throttle / cache / fail-soft."""
+
+    def test_empty_place_returns_none(self):
+        geo = PlaceGeocoder(nominatim_delay_seconds=0)
+        self.assertIsNone(geo.resolve(""))
+        self.assertIsNone(geo.resolve("No Info"))
+
+    def test_fallback_skips_nominatim(self):
+        geo = PlaceGeocoder(nominatim_delay_seconds=0)
+        with patch(
+            "astrology.services.horoscope_service._fallback_lat_lon",
+            return_value=(9.9312, 76.2673),
+        ) as fallback, patch(
+            "astrology.services.horoscope_service._geocode_place"
+        ) as nominatim:
+            coords = geo.resolve("Kochi, Kerala, India")
+        self.assertEqual(coords, (9.9312, 76.2673))
+        fallback.assert_called_once()
+        nominatim.assert_not_called()
+
+    def test_caches_nominatim_and_throttles_once(self):
+        geo = PlaceGeocoder(nominatim_delay_seconds=0)
+        with patch(
+            "astrology.services.horoscope_service._fallback_lat_lon",
+            return_value=None,
+        ), patch(
+            "astrology.services.horoscope_service._geocode_place",
+            return_value=(9.9252, 78.1198),
+        ) as nominatim:
+            first = geo.resolve("Madurai, Tamil Nadu, India")
+            second = geo.resolve("madurai, tamil nadu, india")
+        self.assertEqual(first, (9.9252, 78.1198))
+        self.assertEqual(second, (9.9252, 78.1198))
+        nominatim.assert_called_once()
+
+    def test_nominatim_failure_is_soft(self):
+        geo = PlaceGeocoder(nominatim_delay_seconds=0)
+        with patch(
+            "astrology.services.horoscope_service._fallback_lat_lon",
+            return_value=None,
+        ), patch(
+            "astrology.services.horoscope_service._geocode_place",
+            side_effect=ValueError("Unable to resolve place_of_birth."),
+        ):
+            self.assertIsNone(geo.resolve("Not A Real Place 999"))
 
 
 class ImportLegacyCsvCommandTests(TestCase):

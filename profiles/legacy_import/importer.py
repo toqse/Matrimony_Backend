@@ -15,6 +15,7 @@ from profiles.models import (
 )
 from profiles.utils import get_profile_completion_data
 
+from .geocode import PlaceGeocoder, place_of_birth_from_row
 from .horoscope import resolve_padam, resolve_star, star_lookup, upsert_horoscope_profile
 from .masters import MasterResolver, normalize_complexion_name
 from .normalize import (
@@ -56,6 +57,7 @@ class LegacyImporter:
         self.stars = star_lookup()
         self._existing_mobiles: set[str] | None = None
         self._existing_emails: set[str] | None = None
+        self._geocoder = PlaceGeocoder()
 
     def _ensure_existing_lookups(self) -> None:
         """Load existing mobiles/emails once — avoids N+1 queries on large CSVs."""
@@ -184,6 +186,7 @@ class LegacyImporter:
             "pr_star": star_number,
             "pr_pada": resolve_padam(row.get("padam")),
             "star_warning": star_warning,
+            "place_of_birth": place_of_birth_from_row(row),
         }
         return payload, ""
 
@@ -207,17 +210,32 @@ class LegacyImporter:
         user.set_password(User.objects.make_random_password())
         user.save()
 
+        place_of_birth = payload.get("place_of_birth") or ""
+        birth_latitude = None
+        birth_longitude = None
+        if place_of_birth:
+            coords = self._geocoder.resolve(place_of_birth)
+            if coords:
+                birth_latitude, birth_longitude = coords
+                payload["birth_latitude"] = birth_latitude
+                payload["birth_longitude"] = birth_longitude
+
         has_horoscope = bool(
             payload["pr_rasi"]
             or payload["pr_amsa"]
             or payload["pr_bhav"]
             or payload["pr_star"]
+            or place_of_birth
         )
         UserProfile.objects.update_or_create(
             user=user,
             defaults={
                 "about_me": payload["about_me"],
                 "has_horoscope": has_horoscope,
+                "place_of_birth": place_of_birth,
+                "birth_latitude": birth_latitude,
+                "birth_longitude": birth_longitude,
+                "birth_timezone": 5.5 if place_of_birth else None,
             },
         )
         UserLocation.objects.update_or_create(

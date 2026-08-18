@@ -21,6 +21,14 @@ def _generate_matri_id():
 
 
 class UserManager(BaseUserManager):
+    def make_random_password(self, length=12, allowed_chars=None):
+        """Django 5.1 dropped BaseUserManager.make_random_password."""
+        from django.utils.crypto import get_random_string
+
+        if allowed_chars is None:
+            allowed_chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return get_random_string(length, allowed_chars)
+
     def create_user(self, email=None, mobile=None, password=None, **kwargs):
         if not email and not mobile:
             raise ValueError('User must have email or mobile.')
