@@ -7,7 +7,7 @@ clean Python primitives the importer can safely persist.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
@@ -16,6 +16,15 @@ from django.core.validators import validate_email
 
 NO_INFO = {"", "no info", "n/a", "na", "nil", "none", "null", "-"}
 PARENT_NAME_PLACEHOLDERS = {"FATHER", "MOTHER"}
+
+TOB_HEADER_ALIASES = (
+    "time of birth",
+    "time_of_birth",
+    "tob",
+    "birth time",
+)
+
+TOB_PARSE_FORMATS = ("%H:%M:%S", "%H:%M")
 
 
 def norm_header(value: object) -> str:
@@ -73,6 +82,28 @@ def parse_dob(value: object) -> Optional[date]:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             continue
+    return None
+
+
+def parse_tob(value: object) -> Optional[time]:
+    """Parse legacy birth-time cells (HH:MM or HH:MM:SS). Invalid input -> None."""
+    text = clean(value)
+    if not text:
+        return None
+    for fmt in TOB_PARSE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def time_of_birth_from_row(row: dict) -> Optional[time]:
+    """Return the first non-empty Time of Birth alias from a parsed CSV row."""
+    for key in TOB_HEADER_ALIASES:
+        parsed = parse_tob(row.get(key))
+        if parsed is not None:
+            return parsed
     return None
 
 

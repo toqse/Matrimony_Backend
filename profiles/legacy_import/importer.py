@@ -28,6 +28,7 @@ from .normalize import (
     parse_gender,
     parse_int,
     parse_phone,
+    time_of_birth_from_row,
 )
 
 
@@ -187,6 +188,7 @@ class LegacyImporter:
             "pr_pada": resolve_padam(row.get("padam")),
             "star_warning": star_warning,
             "place_of_birth": place_of_birth_from_row(row),
+            "time_of_birth": time_of_birth_from_row(row),
         }
         return payload, ""
 
@@ -211,6 +213,7 @@ class LegacyImporter:
         user.save()
 
         place_of_birth = payload.get("place_of_birth") or ""
+        time_of_birth = payload.get("time_of_birth")
         birth_latitude = None
         birth_longitude = None
         if place_of_birth:
@@ -220,22 +223,25 @@ class LegacyImporter:
                 payload["birth_latitude"] = birth_latitude
                 payload["birth_longitude"] = birth_longitude
 
-        has_horoscope = bool(
+        has_chart_data = bool(
             payload["pr_rasi"]
             or payload["pr_amsa"]
             or payload["pr_bhav"]
             or payload["pr_star"]
-            or place_of_birth
         )
+        has_horoscope = bool(has_chart_data or place_of_birth or time_of_birth)
         UserProfile.objects.update_or_create(
             user=user,
             defaults={
                 "about_me": payload["about_me"],
                 "has_horoscope": has_horoscope,
                 "place_of_birth": place_of_birth,
+                "time_of_birth": time_of_birth,
                 "birth_latitude": birth_latitude,
                 "birth_longitude": birth_longitude,
-                "birth_timezone": 5.5 if place_of_birth else None,
+                "birth_timezone": 5.5
+                if (place_of_birth or time_of_birth or has_chart_data)
+                else None,
             },
         )
         UserLocation.objects.update_or_create(

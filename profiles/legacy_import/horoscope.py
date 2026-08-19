@@ -103,6 +103,9 @@ def upsert_horoscope_profile(user, payload: dict) -> Optional[HoroscopeProfile]:
         defaults["pr_lat"] = lat
         defaults["pr_lon"] = lon
         defaults["pr_tz"] = 5.5
+    tob = payload.get("time_of_birth")
+    if tob is not None:
+        defaults["pr_tob"] = tob
     obj, _ = HoroscopeProfile.objects.update_or_create(
         user=user,
         defaults=defaults,

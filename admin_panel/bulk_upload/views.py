@@ -1,6 +1,3 @@
-import csv
-import io
-
 from celery.result import AsyncResult
 from django.http import HttpResponse
 from rest_framework import status
@@ -24,11 +21,16 @@ from .legacy_runner import (
     validate_legacy_csv_text,
 )
 from .models import BulkUploadJob
-from .parser import TEMPLATE_COLUMNS, is_legacy_format, parse_upload_file, read_upload_file_text
+from .parser import is_legacy_format, parse_upload_file, read_upload_file_text
 from .permissions import IsAdminOrBranchManager
 from .serializers import BulkUploadJobHistorySerializer
 from .tasks import bulk_import_legacy_profiles_task, bulk_import_profiles_task, run_import_job
-from .template_assets import load_bulk_upload_template_xlsx
+from .template_assets import (
+    LEGACY_IMPORT_TEMPLATE_FILENAME,
+    generate_legacy_import_template_xlsx,
+    get_legacy_template_columns,
+    load_legacy_import_template_csv,
+)
 from .validators import (
     ASYNC_ROW_THRESHOLD,
     cache_validation_payload,
@@ -51,28 +53,37 @@ class BulkUploadTemplateView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrBranchManager]
 
     def get(self, request):
-        fmt = (request.query_params.get("format") or "csv").strip().lower()
+        if request.query_params.get("columns") in ("1", "true", "yes"):
+            return Response(
+                {
+                    "success": True,
+                    "data": {"columns": get_legacy_template_columns()},
+                }
+            )
+
+        fmt = (
+            request.query_params.get("file_format")
+            or request.query_params.get("format")
+            or "csv"
+        ).strip().lower()
         if fmt not in ("csv", "xlsx"):
             return Response(
                 {"success": False, "error": {"message": "format must be csv or xlsx"}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if fmt == "csv":
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            writer.writerow(TEMPLATE_COLUMNS)
-            response = HttpResponse(buf.getvalue(), content_type="text/csv; charset=utf-8")
-            response["Content-Disposition"] = (
-                'attachment; filename="bulk_upload_template.csv"'
-            )
+            content, filename = load_legacy_import_template_csv()
+            response = HttpResponse(content, content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
             return response
 
-        content, filename = load_bulk_upload_template_xlsx()
+        content = generate_legacy_import_template_xlsx()
+        xlsx_name = LEGACY_IMPORT_TEMPLATE_FILENAME.replace(".csv", ".xlsx")
         response = HttpResponse(
             content,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Disposition"] = f'attachment; filename="{xlsx_name}"'
         return response
 
 

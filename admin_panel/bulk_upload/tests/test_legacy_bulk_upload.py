@@ -31,6 +31,10 @@ from admin_panel.bulk_upload.legacy_runner import (
 )
 from admin_panel.bulk_upload.models import BulkUploadJob
 from admin_panel.bulk_upload.parser import is_legacy_format
+from admin_panel.bulk_upload.template_assets import (
+    get_legacy_template_columns,
+    load_legacy_import_template_csv,
+)
 from astrology.models import HoroscopeProfile
 from profiles.models import UserProfile
 
@@ -61,6 +65,48 @@ class LegacyFormatDetectionTests(TestCase):
         ]
         self.assertTrue(is_legacy_format(legacy_headers))
         self.assertFalse(is_legacy_format(modern_headers))
+
+
+@override_settings(CACHES=LOCMEM_CACHES)
+class LegacyTemplateDownloadTests(TestCase):
+    def setUp(self):
+        self.admin = AdminUser.objects.create(
+            mobile="+919876543211",
+            role=AdminUser.ROLE_ADMIN,
+            name="Template Admin",
+            is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+
+    def test_template_columns_endpoint(self):
+        resp = self.client.get(reverse("bulk-upload-template"), {"columns": "1"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["success"])
+        columns = body["data"]["columns"]
+        self.assertIn("Mother Toungue", columns)
+        self.assertIn("Place of Birth", columns)
+        self.assertIn("Time of Birth", columns)
+        self.assertEqual(len(columns), 45)
+
+    def test_template_csv_download_has_legacy_headers(self):
+        resp = self.client.get(
+            reverse("bulk-upload-template"),
+            {"file_format": "csv"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("matrimony_import_template.csv", resp["Content-Disposition"])
+        first_line = resp.content.decode("utf-8-sig").splitlines()[0]
+        self.assertIn("Mother Toungue", first_line)
+        self.assertIn("Place of Birth", first_line)
+        self.assertIn("Time of Birth", first_line)
+
+    def test_get_legacy_template_columns_matches_file(self):
+        columns = get_legacy_template_columns()
+        content, _ = load_legacy_import_template_csv()
+        first_line = content.decode("utf-8-sig").splitlines()[0]
+        self.assertEqual(columns[0], first_line.split(",")[0])
 
 
 @override_settings(CACHES=LOCMEM_CACHES)
@@ -184,3 +230,53 @@ class LegacyBulkUploadEndToEndTests(TestCase):
         empty = UserProfile.objects.get(user=sudheesh)
         self.assertEqual(empty.place_of_birth, "")
         self.assertIsNone(empty.birth_latitude)
+
+    def test_validate_accepts_optional_pob_and_tob_columns(self):
+        csv_text = LEGACY_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth, Time of Birth\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India, 14:30\n",
+        ).replace(
+            "Karthika, 2\n",
+            "Karthika, 2,,\n",
+        )
+        resp = self._validate(csv_text.encode("utf-8"))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["data"]["valid_rows"], 2)
+
+    def test_import_persists_time_of_birth(self):
+        csv_text = LEGACY_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth, Time of Birth\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India, 14:30\n",
+        ).replace(
+            "Karthika, 2\n",
+            "Karthika, 2,,\n",
+        )
+        validate_resp = self._validate(csv_text.encode("utf-8"))
+        token = validate_resp.json()["data"]["validation_token"]
+
+        with patch(
+            "profiles.legacy_import.geocode.PlaceGeocoder.resolve",
+            side_effect=lambda place: (9.9252, 78.1198) if place else None,
+        ):
+            import_resp = self.client.post(
+                reverse("bulk-upload-import"),
+                {"validation_token": token},
+                format="json",
+            )
+        self.assertEqual(import_resp.status_code, 200)
+        self.assertEqual(import_resp.json()["data"]["imported"], 2)
+
+        sobhana = User.objects.get(mobile="8157012545")
+        profile = UserProfile.objects.get(user=sobhana)
+        self.assertEqual(profile.time_of_birth.isoformat(), "14:30:00")
+        hp = HoroscopeProfile.objects.get(user=sobhana)
+        self.assertEqual(hp.pr_tob.isoformat(), "14:30:00")
+        self.assertAlmostEqual(hp.pr_lat, 9.9252)

@@ -34,6 +34,8 @@ from profiles.legacy_import.normalize import (
     parse_gender,
     parse_int,
     parse_phone,
+    parse_tob,
+    time_of_birth_from_row,
 )
 
 
@@ -93,6 +95,25 @@ class NormalizeTests(SimpleTestCase):
         self.assertEqual(parent_name("FATHER"), "")
         self.assertEqual(parent_name("Mother"), "")
         self.assertEqual(parent_name("KUNJU MON"), "KUNJU MON")
+
+    def test_parse_tob_accepts_common_formats(self):
+        self.assertEqual(parse_tob("14:30").isoformat(), "14:30:00")
+        self.assertEqual(parse_tob("9:05").isoformat(), "09:05:00")
+        self.assertEqual(parse_tob("09:05:00").isoformat(), "09:05:00")
+        self.assertIsNone(parse_tob(""))
+        self.assertIsNone(parse_tob("No Info"))
+        self.assertIsNone(parse_tob("not-a-time"))
+
+    def test_time_of_birth_from_row_aliases(self):
+        self.assertEqual(
+            time_of_birth_from_row({"time of birth": "14:30"}).isoformat(),
+            "14:30:00",
+        )
+        self.assertEqual(
+            time_of_birth_from_row({"birth time": "9:05"}).isoformat(),
+            "09:05:00",
+        )
+        self.assertIsNone(time_of_birth_from_row({}))
 
 
 class StarLookupTests(SimpleTestCase):
@@ -169,6 +190,21 @@ class ParserTests(SimpleTestCase):
         self.assertEqual(headers[-1], "place of birth")
         rows = list(reader)
         self.assertEqual(rows[0]["place of birth"].strip(), "Madurai Tamil Nadu India")
+
+    def test_parse_legacy_csv_accepts_optional_pob_and_tob_columns(self):
+        with_pob_tob = SAMPLE_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth, Time of Birth\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India, 14:30\n",
+        )
+        headers, reader = parse_legacy_csv(with_pob_tob)
+        self.assertEqual(headers[-2], "place of birth")
+        self.assertEqual(headers[-1], "time of birth")
+        rows = list(reader)
+        self.assertEqual(rows[0]["place of birth"].strip(), "Madurai Tamil Nadu India")
+        self.assertEqual(rows[0]["time of birth"].strip(), "14:30")
 
     def test_read_legacy_csv_text_falls_back_to_latin1(self, tmp_path=None):
         # Embed a non-UTF-8 byte (0xD1) inline in the file.
@@ -292,6 +328,34 @@ class LegacyImporterTests(TestCase):
         self.assertIsNone(profile.birth_latitude)
         hp = HoroscopeProfile.objects.get(user=user)
         self.assertIsNone(hp.pr_lat)
+
+    def test_build_payload_reads_time_of_birth(self):
+        importer = LegacyImporter(dry_run=True)
+        row = dict(self.row, **{"time of birth": "14:30"})
+        payload, reason = importer.build_payload(2, row)
+        self.assertEqual(reason, "")
+        self.assertEqual(payload["time_of_birth"].isoformat(), "14:30:00")
+
+    def test_save_persists_time_of_birth(self):
+        importer = LegacyImporter()
+        row = dict(self.row, **{"time of birth": "14:30"})
+        payload, _ = importer.build_payload(2, row)
+        user = importer.save(payload)
+        profile = UserProfile.objects.get(user=user)
+        self.assertEqual(profile.time_of_birth.isoformat(), "14:30:00")
+        self.assertEqual(profile.birth_timezone, 5.5)
+        hp = HoroscopeProfile.objects.get(user=user)
+        self.assertEqual(hp.pr_tob.isoformat(), "14:30:00")
+
+    def test_invalid_time_of_birth_fail_soft(self):
+        importer = LegacyImporter()
+        row = dict(self.row, **{"time of birth": "not-a-time"})
+        payload, _ = importer.build_payload(2, row)
+        user = importer.save(payload)
+        profile = UserProfile.objects.get(user=user)
+        self.assertIsNone(profile.time_of_birth)
+        hp = HoroscopeProfile.objects.get(user=user)
+        self.assertIsNone(hp.pr_tob)
 
     def test_save_creates_user_and_horoscope(self):
         importer = LegacyImporter()
