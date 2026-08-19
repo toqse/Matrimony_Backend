@@ -2104,7 +2104,7 @@ Staff metrics:
   - Top-performer conversion_rate: (subscription transaction count for that staff in branch) / monthly_target * 100,
     one decimal; if monthly_target is 0, 100.0 when subscriptions > 0 else 0.0.
 
-Enquiry overview:
+Enquiry overview: ........................
   - Lists enquiries for the manager's admin branch (same rules as /api/v1/admin/enquiries/ branch scope).
   - can_reassign: true for branch managers (use existing assign/reassign APIs under /api/v1/admin/enquiries/).
   - Detail/view: GET /api/v1/admin/enquiries/{id}/
