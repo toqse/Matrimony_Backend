@@ -11,7 +11,6 @@ from admin_panel.auth.models import AdminUser
 from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.my_profiles.views import _my_profiles_base_queryset
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
-from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.charts import format_dasa_balance, moon_rasi_name, star_name
 from astrology.models import AstrologyPdfCredit, HoroscopeProfile, PoruthamResult
 from astrology.porutham import calculate_porutham
@@ -68,10 +67,7 @@ def scoped_member_users_queryset(request, *, mount: str):
         staff = staff_profile_for_dashboard(user)
         if not staff:
             return None
-        user_ids = CustomerStaffAssignment.objects.filter(
-            staff=staff
-        ).values_list('user_id', flat=True)
-        return base.filter(id__in=user_ids)
+        return base
 
     if mount == 'branch':
         if role != AdminUser.ROLE_BRANCH_MANAGER:
@@ -79,9 +75,7 @@ def scoped_member_users_queryset(request, *, mount: str):
         code = _manager_branch_code(user)
         if not code:
             return base.none()
-        return base.filter(
-            Q(branch__code=code) | Q(staff_assignment__staff__branch__code=code)
-        ).distinct()
+        return base
 
     return None
 

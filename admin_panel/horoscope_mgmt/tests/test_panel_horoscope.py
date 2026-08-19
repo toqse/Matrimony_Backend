@@ -95,12 +95,12 @@ class HoroscopePanelScopingTests(TestCase):
             role=AdminUser.ROLE_ADMIN,
         )
 
-    def test_staff_scope_only_assigned_customers(self):
+    def test_staff_scope_includes_all_active_members(self):
         req = _Request(user=self.admin_panel_user)
         qs = scoped_member_users_queryset(req, mount="staff")
         self.assertIsNotNone(qs)
         self.assertTrue(qs.filter(pk=self.member_in.pk).exists())
-        self.assertFalse(qs.filter(pk=self.member_out.pk).exists())
+        self.assertTrue(qs.filter(pk=self.member_out.pk).exists())
 
     def test_admin_scope_includes_all_active_members(self):
         req = _Request(user=self.admin_super)
@@ -109,14 +109,34 @@ class HoroscopePanelScopingTests(TestCase):
         self.assertTrue(qs.filter(pk=self.member_in.pk).exists())
         self.assertTrue(qs.filter(pk=self.member_out.pk).exists())
 
-    def test_panel_porutham_rejects_when_groom_out_of_scope(self):
+    def test_staff_scope_includes_both_profiles_for_porutham(self):
         p_in = UserProfile.objects.get(user=self.member_in)
         p_out = UserProfile.objects.get(user=self.member_out)
         req = _Request(user=self.admin_panel_user)
         qs = scoped_member_users_queryset(req, mount="staff")
+        self.assertTrue(qs.filter(pk=self.member_in.pk).exists())
+        self.assertTrue(qs.filter(pk=self.member_out.pk).exists())
+        HoroscopeProfile.objects.update_or_create(
+            user=self.member_in,
+            defaults={
+                "pr_rasi": _rasi_string(1),
+                "pr_star": 1,
+                "pr_pada": 1,
+                "pr_name": "Member In",
+            },
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=self.member_out,
+            defaults={
+                "pr_rasi": _rasi_string(4),
+                "pr_star": 5,
+                "pr_pada": 2,
+                "pr_name": "Member Out",
+            },
+        )
         result, msg = panel_porutham(qs, p_in.pk, p_out.pk)
-        self.assertIsNone(result)
-        self.assertIn("scope", (msg or "").lower())
+        self.assertIsNone(msg)
+        self.assertIsNotNone(result)
 
 
 class HoroscopePanelPoruthamPayloadTests(TestCase):

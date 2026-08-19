@@ -66,7 +66,7 @@ INVALID_FILTER_MSG = (
     "Invalid filter. Must be: all, incomplete, complete, subscribed, "
     "unsubscribed, verified, unverified."
 )
-NOT_IN_SCOPE_MSG = "Profile not found or not assigned to you."
+NOT_IN_SCOPE_MSG = "Profile not found."
 VERIFY_FORBIDDEN_MSG = "Profile verification requires Branch Manager or Admin role."
 DELETE_FORBIDDEN_MSG = "Profile deletion requires Admin role."
 
@@ -110,8 +110,7 @@ def _resolve_staff_panel(request):
 
 
 def _scoped_staff_profiles_qs(staff):
-    user_ids = CustomerStaffAssignment.objects.filter(staff=staff).values_list("user_id", flat=True)
-    return _my_profiles_base_queryset().filter(id__in=user_ids)
+    return _my_profiles_base_queryset()
 
 
 def _get_user_by_matri(matri_id: str):
@@ -119,9 +118,7 @@ def _get_user_by_matri(matri_id: str):
 
 
 def _can_access_staff_profile(staff, target: User) -> bool:
-    if not target:
-        return False
-    return CustomerStaffAssignment.objects.filter(user=target, staff=staff).exists()
+    return bool(target and getattr(target, "role", None) == "user")
 
 
 def _resolve_user_for_staff_or_error(request, staff, matri_id: str):

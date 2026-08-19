@@ -102,24 +102,14 @@ def _my_profiles_base_queryset():
 
 
 def _scoped_my_profiles_qs(request):
-    code, err = _branch_manager_code_or_error(request)
+    _, err = _branch_manager_code_or_error(request)
     if err:
         return None, err
-    qs = _my_profiles_base_queryset().filter(
-        Q(branch__code=code) | Q(staff_assignment__staff__branch__code=code)
-    )
-    return qs, None
+    return _my_profiles_base_queryset(), None
 
 
 def _can_access_my_profile(request, target: User) -> bool:
-    code = _manager_branch_code(request.user)
-    if not code:
-        return False
-    if target.branch_id and target.branch and target.branch.code == code:
-        return True
-    return CustomerStaffAssignment.objects.filter(
-        user=target, staff__branch__code=code
-    ).exists()
+    return bool(target and getattr(target, "role", None) == "user")
 
 
 def _active_subscription_q():
@@ -228,7 +218,7 @@ def _resolve_user_or_error(request, matri_id: str):
         return None, Response(
             {
                 "success": False,
-                "error": {"code": 404, "message": "Profile not found or not in your branch."},
+                "error": {"code": 404, "message": "Profile not found."},
             },
             status=status.HTTP_404_NOT_FOUND,
         )
