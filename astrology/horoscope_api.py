@@ -52,3 +52,24 @@ def horoscope_fetch_payload(
     if not hp.is_exe_done():
         return horoscope_not_generated_response()
     return horoscope_generated_response(hp, serializer_class=serializer_class)
+
+
+def horoscope_pdf_ready(hp) -> bool:
+    """True when EXE output is complete enough to build Jathakam / Thalakuri PDFs."""
+    if hp is None:
+        return False
+    return bool(hp.pr_rasi and len(hp.pr_rasi) >= 11 and hp.is_exe_done())
+
+
+def horoscope_not_ready_for_pdf_response() -> dict[str, Any]:
+    return {
+        'success': False,
+        'is_horoscope_generated': False,
+        'error': {
+            'code': 400,
+            'message': (
+                'Horoscope has not been generated yet. Please contact the administrator. '
+                'PDF purchase will be available after your horoscope is calculated.'
+            ),
+        },
+    }

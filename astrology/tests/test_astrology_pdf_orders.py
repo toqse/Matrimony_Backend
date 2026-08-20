@@ -115,29 +115,6 @@ class AstrologyPdfOrderAlreadyPurchasedTests(TestCase):
         self.assertNotIn('order_id', data)
         mock_create_order.assert_not_called()
 
-    @override_settings(CACHES=LOCMEM_CACHES)
-    @patch('astrology.views.create_order')
-    def test_order_creates_razorpay_when_no_credit(self, mock_create_order):
-        mock_create_order.return_value = {
-            'order_id': 'order_test_1',
-            'amount': 2000,
-            'currency': 'INR',
-            'key_id': 'rzp_test_key',
-        }
-        request = self.factory.post(
-            '/api/v1/astrology/pdf/order/',
-            {'product': 'thalakuri'},
-            format='json',
-        )
-        force_authenticate(request, user=self.user)
-        response = AstrologyPdfOrderView.as_view()(request)
-        self.assertEqual(response.status_code, 200)
-        data = response.data['data']
-        self.assertNotIn('already_purchased', data)
-        self.assertEqual(data['order_id'], 'order_test_1')
-        mock_create_order.assert_called_once()
-
-
 class AstrologyPdfThalakuriCreditDownloadTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -196,3 +173,67 @@ class AstrologyPdfThalakuriCreditDownloadTests(TestCase):
         )
         response = AstrologyPdfThalakuriDownloadView.as_view()(request)
         self.assertEqual(response.status_code, 403)
+
+
+class AstrologyPdfOrderHoroscopeGateTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            mobile='+919876543603',
+            password='x',
+            name='Not Ready User',
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=self.user,
+            defaults={
+                'pr_rasi': '',
+                'pr_star': None,
+                'pr_name': 'Not Ready User',
+                'pr_dob': '2000-01-01',
+            },
+        )
+        self.factory = APIRequestFactory()
+
+    @override_settings(CACHES=LOCMEM_CACHES)
+    @patch('astrology.views.create_order')
+    def test_order_rejected_when_horoscope_not_generated(self, mock_create_order):
+        request = self.factory.post(
+            '/api/v1/astrology/pdf/order/',
+            {'product': 'thalakuri'},
+            format='json',
+        )
+        force_authenticate(request, user=self.user)
+        response = AstrologyPdfOrderView.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.data['is_horoscope_generated'])
+        mock_create_order.assert_not_called()
+
+    @override_settings(CACHES=LOCMEM_CACHES)
+    @patch('astrology.views.create_order')
+    def test_order_allows_already_purchased_when_horoscope_not_ready(self, mock_create_order):
+        txn = Transaction.objects.create(
+            user=self.user,
+            plan=None,
+            amount=Decimal('20'),
+            service_charge=Decimal('0'),
+            total_amount=Decimal('20'),
+            payment_method=Transaction.PAYMENT_RAZORPAY,
+            payment_status=Transaction.STATUS_SUCCESS,
+            transaction_type=Transaction.TYPE_THALAKURI_PDF,
+            transaction_id='pay_gate_test',
+        )
+        credit = AstrologyPdfCredit.objects.create(
+            user=self.user,
+            product=AstrologyPdfCredit.PRODUCT_THALAKURI,
+            transaction=txn,
+        )
+        request = self.factory.post(
+            '/api/v1/astrology/pdf/order/',
+            {'product': 'thalakuri'},
+            format='json',
+        )
+        force_authenticate(request, user=self.user)
+        response = AstrologyPdfOrderView.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['data']['already_purchased'])
+        self.assertEqual(response.data['data']['credit_id'], credit.pk)
+        mock_create_order.assert_not_called()

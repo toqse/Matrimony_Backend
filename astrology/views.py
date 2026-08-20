@@ -41,7 +41,12 @@ from .services.razorpay_pdf_orders import (
     transaction_type_for_product,
     verify_payment_signature,
 )
-from .horoscope_api import horoscope_fetch_payload, horoscope_not_found_response
+from .horoscope_api import (
+    horoscope_fetch_payload,
+    horoscope_not_found_response,
+    horoscope_not_ready_for_pdf_response,
+    horoscope_pdf_ready,
+)
 from .services.public_url_signing import (
     sign_match_report_access,
     sign_pdf_credit_access,
@@ -515,6 +520,19 @@ class AstrologyPdfOrderView(APIView):
                     ),
                 },
                 status=status.HTTP_200_OK,
+            )
+
+        from .models import HoroscopeProfile
+
+        try:
+            hp = HoroscopeProfile.objects.get(user=request.user)
+        except HoroscopeProfile.DoesNotExist:
+            hp = None
+
+        if not horoscope_pdf_ready(hp):
+            return Response(
+                horoscope_not_ready_for_pdf_response(),
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
