@@ -47,7 +47,7 @@ from profiles.models import (
     UserProfile,
     UserReligion,
 )
-from profiles.utils import get_profile_completion_data
+from profiles.utils import get_profile_completion_data, get_profile_completion_percentage
 from profiles.views import _build_profile_data_for_user
 from wishlist.models import Wishlist
 
@@ -90,6 +90,7 @@ def _my_profiles_base_queryset():
             "user_location__district",
             "user_personal",
             "user_personal__marital_status",
+            "user_family",
             "user_education",
             "user_education__highest_education",
             "user_education__occupation",
@@ -133,15 +134,13 @@ def _completion_steps(user: User):
 
 
 def _completeness_percent(user: User) -> int:
-    done = sum(1 for v in _completion_steps(user).values() if v)
-    return int((done / 6) * 100)
+    return get_profile_completion_percentage(user, ensure_loaded=False)
 
 
 def _completeness_exists_annotations():
     """
-    Exists() annotations mirroring _completion_steps / _completeness_percent.
-    location/religion/personal/education rows exist, about_me non-blank (trimmed),
-    and profile_photo set.
+    Cheap Exists() annotations for incomplete/complete list filters (row presence).
+    Displayed percentage uses get_profile_completion_percentage, not this predicate.
     """
     has_location = Exists(UserLocation.objects.filter(user_id=OuterRef('pk')))
     has_religion = Exists(UserReligion.objects.filter(user_id=OuterRef('pk')))
@@ -205,9 +204,8 @@ def _filter_by_completeness(qs, completeness: str):
 
 def _count_incomplete_profiles(qs) -> int:
     """
-    DB aggregate equivalent of sum(1 for u in qs if _completeness_percent(u) < 100).
-    Mirrors _completion_steps: location/religion/personal/education rows exist,
-    about_me non-blank (trimmed), and profile_photo set.
+    Count of rows matching the cheap incomplete-profile list filter.
+    Displayed percentage uses get_profile_completion_percentage.
     """
     return _filter_by_completeness(qs, 'incomplete').count()
 

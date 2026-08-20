@@ -71,26 +71,39 @@ def _safe_profile_rel(user, rel_name):
         return None
 
 
-def _compute_step_completion(user):
-    """Compute step completion from actual section data (single select_related fetch)."""
+_PROFILE_SECTION_RELS = (
+    'user_location',
+    'user_religion',
+    'user_personal',
+    'user_family',
+    'user_education',
+    'user_photos',
+    'user_profile',
+)
+
+
+def _has_prefetched_profile_sections(user):
+    """True when list views already select_related profile sections onto user."""
+    cache = getattr(user, '__dict__', None) or {}
+    return any(name in cache for name in _PROFILE_SECTION_RELS)
+
+
+def _compute_step_completion(user, *, ensure_loaded=True):
+    """Compute step completion from actual section data.
+
+    When ensure_loaded is True and sections are not already cached (select_related),
+    load them in one query. Admin/staff list views pass ensure_loaded=False after prefetch.
+    """
     from accounts.models import User as UserModel
 
-    # One query loads all sections when not already cached on the instance.
-    loaded = (
-        UserModel.objects.filter(pk=user.pk)
-        .select_related(
-            'user_location',
-            'user_religion',
-            'user_personal',
-            'user_family',
-            'user_education',
-            'user_photos',
-            'user_profile',
+    if ensure_loaded and not _has_prefetched_profile_sections(user):
+        loaded = (
+            UserModel.objects.filter(pk=user.pk)
+            .select_related(*_PROFILE_SECTION_RELS)
+            .first()
         )
-        .first()
-    )
-    if loaded is not None:
-        user = loaded
+        if loaded is not None:
+            user = loaded
 
     loc = _safe_profile_rel(user, 'user_location')
     rel = _safe_profile_rel(user, 'user_religion')
@@ -169,6 +182,26 @@ def _compute_step_completion(user):
     }
 
 
+def completion_percentage_from_steps(steps) -> int:
+    """Shared 7-step percent: non-family booleans + partial family_ratio."""
+    profile_steps = {key: bool(steps.get(key)) for key in PROFILE_STEP_ORDER}
+    completed_non_family_steps = sum(
+        value for key, value in profile_steps.items() if key != 'family'
+    )
+    family_ratio = float(steps.get('family_ratio') or 0.0)
+    total_steps = len(PROFILE_STEP_ORDER)
+    if not total_steps:
+        return 0
+    return int(((completed_non_family_steps + family_ratio) / total_steps) * 100)
+
+
+def get_profile_completion_percentage(user, *, ensure_loaded=True) -> int:
+    """Live completion percent (same formula as the member dashboard)."""
+    return completion_percentage_from_steps(
+        _compute_step_completion(user, ensure_loaded=ensure_loaded)
+    )
+
+
 def sync_profile_completion_flags(user):
     """Persist step flags on UserProfile based on actual profile data."""
     defaults = {
@@ -225,7 +258,6 @@ def get_profile_completion_data(user):
         },
     )
     steps = sync_profile_completion_flags(user)
-    family_ratio = steps['family_ratio']
     profile_steps = {
         'location': bool(steps['location']),
         'religion': bool(steps['religion']),
@@ -235,13 +267,7 @@ def get_profile_completion_data(user):
         'about': bool(steps['about']),
         'photos': bool(steps['photos']),
     }
-    completed_non_family_steps = sum(
-        value for key, value in profile_steps.items() if key != 'family'
-    )
-    total_steps = len(profile_steps)
-    profile_completion_percentage = int(
-        ((completed_non_family_steps + family_ratio) / total_steps) * 100
-    ) if total_steps else 0
+    profile_completion_percentage = completion_percentage_from_steps(steps)
 
     next_step = None
     for step in PROFILE_STEP_ORDER:

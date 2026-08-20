@@ -21,7 +21,7 @@ from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
 from profiles.models import UserProfile
-from profiles.utils import get_profile_completion_data
+from profiles.utils import get_profile_completion_data, get_profile_completion_percentage
 from astrology.charts import star_name as nakshatra_name_from_number
 from admin_panel.profile_filters import apply_profile_list_filters, apply_profile_status_filter
 from admin_panel.profile_porutham_filters import apply_porutham_match_filters
@@ -97,23 +97,6 @@ def _can_delete(request) -> bool:
     return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
 
-def _completion_percent_from_profile(profile) -> int:
-    """Match get_profile_completion % without DB hits (list view uses prefetched user_profile)."""
-    if profile is None:
-        return 0
-    steps = (
-        bool(profile.location_completed),
-        bool(profile.religion_completed),
-        bool(profile.personal_completed),
-        bool(getattr(profile, "family_completed", False)),
-        bool(profile.education_completed),
-        bool(profile.about_completed),
-        bool(profile.photos_completed),
-    )
-    n = len(steps)
-    return int((sum(steps) / n) * 100) if n else 0
-
-
 def _build_list_row(user: User) -> dict:
     rel = getattr(user, "user_religion", None)
     pers = getattr(user, "user_personal", None)
@@ -153,7 +136,7 @@ def _build_list_row(user: User) -> dict:
         "plan": plan_name,
         "assigned_staff": staff_name,
         "verified": bool(profile and profile.admin_verified),
-        "completion_percent": _completion_percent_from_profile(profile),
+        "completion_percent": get_profile_completion_percentage(user, ensure_loaded=False),
         "horoscope_available": bool(profile and profile.has_horoscope),
         "is_active": user.is_active,
         "is_blocked": getattr(user, "is_blocked", False),
@@ -187,6 +170,7 @@ class AdminProfileListAPIView(APIView):
             "user_religion__caste_fk",
             "user_personal__marital_status",
             "user_location__district",
+            "user_family",
             "user_education__highest_education",
             "user_education__occupation",
             "user_photos",
