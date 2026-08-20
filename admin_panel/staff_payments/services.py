@@ -7,10 +7,42 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from accounts.models import OTPRecord
+from accounts.models import OTPRecord, User
+from core.phone import extract_indian_mobile_10
 from django.core.cache import cache
 
 from .models import PaymentReceiptSequence
+
+
+def member_qs_for_payment():
+    """Members staff may collect payment from — same universe as profile detail."""
+    return User.objects.filter(role="user", is_blocked=False)
+
+
+def find_member_for_payment(*, matri_id: str = "", mobile_raw: str = "") -> User | None:
+    """
+    Resolve a member by profile ID or mobile.
+
+    Lookup is not limited to staff assignment / admin-branch IDs: staff can already
+    open any member via /staff/profiles/{matri_id}, and desk payment must match that.
+    Inactive (unverified) members are included; blocked members are not.
+    """
+    qs = member_qs_for_payment()
+    mid = (matri_id or "").strip()
+    if mid:
+        user = qs.filter(matri_id__iexact=mid).first()
+        if user:
+            return user
+    raw = (mobile_raw or "").strip()
+    if not raw:
+        return None
+    mobile10 = extract_indian_mobile_10(raw)
+    if not mobile10:
+        return None
+    from accounts.serializers import mobile_variants
+
+    canonical, prefixed, bare = mobile_variants(f"+91{mobile10}")
+    return qs.filter(mobile__in=[canonical, prefixed, bare]).first()
 
 
 def allocate_next_receipt_id() -> str:

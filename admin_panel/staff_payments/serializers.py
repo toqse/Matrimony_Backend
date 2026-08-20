@@ -4,8 +4,9 @@ from decimal import Decimal, InvalidOperation
 
 from rest_framework import serializers
 
-from accounts.models import User
 from plans.models import Plan
+
+from admin_panel.staff_payments.services import find_member_for_payment
 
 
 class PaymentFlowValidationError(serializers.ValidationError):
@@ -56,7 +57,7 @@ class StaffPaymentCreateSerializer(serializers.Serializer):
         if raw_amount is None:
             self._fail(code="INVALID_AMOUNT", message="Invalid amount.")
 
-        customer = User.objects.filter(matri_id__iexact=matri_id, role="user", is_active=True).first()
+        customer = find_member_for_payment(matri_id=matri_id)
         if not customer:
             self._fail(code="CUSTOMER_NOT_FOUND", message="Customer not found.", status_code=404)
 

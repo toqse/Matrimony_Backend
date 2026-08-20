@@ -29,10 +29,12 @@ from admin_panel.staff_payments.models import PaymentEntry
 from admin_panel.staff_payments.pagination import StaffPaymentPagination
 from accounts.services import check_otp_rate_limit, generate_otp, verify_otp as accounts_verify_otp
 from admin_panel.staff_payments.services import (
+    find_member_for_payment,
     generate_receipt_no,
     staff_payment_customer_otp_identifier,
     validate_otp,
 )
+from admin_panel.staff_mgmt.branch_sync import ensure_master_branch_from_admin_branch
 from core.phone import extract_indian_mobile_10, to_e164_display
 from admin_panel.staff_payments.serializers import (
     StaffPaymentCreateSerializer,
@@ -184,19 +186,16 @@ def _staff_entries(staff_admin: AdminUser):
 
 def _staff_payment_customer_scope_q(staff_profile: StaffProfile | None) -> Q:
     """
-    Customers a staff member may use in payment flows (lookup / OTP / create):
-    - assigned to any staff profile in the same branch (even if that profile is inactive),
-      so newly created profiles still match once assignment exists;
-    - or unassigned with profile branch matching this branch.
+    Customers a staff member may use in payment flows (lookup / OTP / create).
+
+    Staff profile detail already returns any member (`role=user`). Payment lookup
+    must match that: do not gate on CustomerStaffAssignment or branch PK equality.
+    (User.branch is master.Branch; StaffProfile.branch is admin_panel.branches.Branch,
+    so comparing those IDs never matched walk-in / website members.)
     """
     if not staff_profile:
         return Q(pk__in=[])
-    bid = staff_profile.branch_id
-    if not bid:
-        return Q(staff_assignment__staff=staff_profile)
-    return Q(staff_assignment__staff__branch_id=bid) | Q(
-        staff_assignment__isnull=True, branch_id=bid
-    )
+    return Q()
 
 
 def _customer_in_staff_payment_scope(staff_profile: StaffProfile | None, customer: User) -> bool:
@@ -213,18 +212,22 @@ def _ensure_staff_assignment_for_walk_in_payment(
     staff_profile: StaffProfile | None, customer: User
 ) -> None:
     """
-    If the customer has no assignment row yet but belongs to this branch, attach them
-    to the staff member processing payment (walk-in / add-customer then pay at desk).
+    If the customer has no assignment yet, attach them to the staff member
+    collecting payment (walk-in / website member paying at the desk).
+    Existing assignments are left unchanged.
     """
     if not staff_profile or not customer:
         return
     if CustomerStaffAssignment.objects.filter(user=customer).exists():
         return
-    bid = staff_profile.branch_id
-    if bid and customer.branch_id == bid:
-        CustomerStaffAssignment.objects.update_or_create(
-            user=customer, defaults={"staff": staff_profile}
-        )
+    CustomerStaffAssignment.objects.update_or_create(
+        user=customer, defaults={"staff": staff_profile}
+    )
+    if not customer.branch_id and staff_profile.branch_id:
+        master_branch = ensure_master_branch_from_admin_branch(staff_profile.branch)
+        if master_branch:
+            customer.branch = master_branch
+            customer.save(update_fields=["branch", "updated_at"])
 
 
 def _resolve_branch_manager(request):
@@ -457,7 +460,7 @@ class StaffPaymentCustomerOtpSendAPIView(APIView):
         if not ser.is_valid():
             return _err_response("customer_matri_id is required.", 400)
         matri = (ser.validated_data.get("customer_matri_id") or "").strip()
-        customer = User.objects.filter(matri_id__iexact=matri, role="user", is_active=True).first()
+        customer = find_member_for_payment(matri_id=matri)
         if not customer:
             return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
         if not _customer_in_staff_payment_scope(staff_profile, customer):
@@ -516,7 +519,7 @@ class StaffPaymentCustomerOtpVerifyAPIView(APIView):
             return _err_response("customer_matri_id and otp are required.", 400)
         matri = (ser.validated_data.get("customer_matri_id") or "").strip()
         otp = (ser.validated_data.get("otp") or "").strip()
-        customer = User.objects.filter(matri_id__iexact=matri, role="user", is_active=True).first()
+        customer = find_member_for_payment(matri_id=matri)
         if not customer:
             return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
         if not _customer_in_staff_payment_scope(staff_profile, customer):
@@ -809,10 +812,6 @@ class StaffPaymentReceiptPdfView(APIView):
         return response
 
 
-def _digits_only(s: str) -> str:
-    return "".join(ch for ch in (s or "") if ch.isdigit())
-
-
 class CustomerLookupAPIView(APIView):
     """
     GET /api/v1/staff/payments/customer-lookup/?matri_id=AM100001
@@ -826,21 +825,13 @@ class CustomerLookupAPIView(APIView):
     def get(self, request):
         role = normalize_admin_role(getattr(request.user, "role", ""))
         if role == AdminUser.ROLE_STAFF:
-            staff_admin, err = _resolve_staff(request)
+            _, err = _resolve_staff(request)
             if err:
                 return err
-            staff_profile = staff_profile_for_dashboard(staff_admin)
-            if not staff_profile:
-                return _err_response("Staff profile not configured. Contact admin.", 400)
-            scope_filter = _staff_payment_customer_scope_q(staff_profile)
         elif role == AdminUser.ROLE_BRANCH_MANAGER:
-            branch_manager, err = _resolve_branch_manager(request)
+            _, err = _resolve_branch_manager(request)
             if err:
                 return err
-            bid = branch_manager.branch_id
-            scope_filter = Q(staff_assignment__staff__branch_id=bid) | Q(
-                staff_assignment__isnull=True, branch_id=bid
-            )
         else:
             return _err_response("Access denied.", 403)
 
@@ -850,19 +841,12 @@ class CustomerLookupAPIView(APIView):
         if not matri_id and not mobile_raw:
             return _err_response("matri_id or mobile is required.", 400)
 
-        qs = User.objects.filter(role="user", is_active=True).filter(scope_filter)
-
-        user = None
         if matri_id:
-            user = qs.filter(matri_id__iexact=matri_id).first()
+            user = find_member_for_payment(matri_id=matri_id)
         else:
-            from accounts.serializers import mobile_variants
-
-            mobile10 = extract_indian_mobile_10(mobile_raw)
-            if not mobile10:
+            if not extract_indian_mobile_10(mobile_raw):
                 return _err_response("mobile is invalid.", 400)
-            canonical, prefixed, bare = mobile_variants(f"+91{mobile10}")
-            user = qs.filter(mobile__in=[canonical, prefixed, bare]).first()
+            user = find_member_for_payment(mobile_raw=mobile_raw)
 
         if not user:
             return _err_response("Customer not found.", 404)
