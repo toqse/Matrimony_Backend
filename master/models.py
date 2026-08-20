@@ -131,6 +131,8 @@ class MaritalStatus(TimeStampedModel):
 
 
 class Complexion(TimeStampedModel):
+    VALID_NAMES = ('Very Fair', 'Fair', 'Wheatish', 'Dark')
+
     name = models.CharField(max_length=50, unique=True)
     is_active = models.BooleanField(default=True)
 
@@ -140,6 +142,10 @@ class Complexion(TimeStampedModel):
 
     def __str__(self):
         return self.name
+
+    @classmethod
+    def active_valid_queryset(cls):
+        return cls.objects.filter(is_active=True, name__in=cls.VALID_NAMES)
 
 
 class IncomeRange(TimeStampedModel):

@@ -15,8 +15,7 @@ from .parent_status import normalize_parent_status
 def _active_complexion_values():
     from master.models import Complexion
     return list(
-        Complexion.objects.filter(is_active=True)
-        .values_list('name', flat=True)
+        Complexion.active_valid_queryset().values_list('name', flat=True)
     )
 
 

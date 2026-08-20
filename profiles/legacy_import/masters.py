@@ -41,9 +41,12 @@ COMPLEXION_ALIASES = {
     "medium": "Wheatish",
     "medium white": "Wheatish",
     "wheatish": "Wheatish",
+    "wheatish brown": "Wheatish",
     "fair": "Fair",
     "very fair": "Very Fair",
     "dark": "Dark",
+    "black": "Dark",
+    "other": "",
 }
 
 

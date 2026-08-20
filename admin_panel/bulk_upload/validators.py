@@ -50,9 +50,7 @@ def normalize_gender(raw: str) -> str:
 
 
 def _active_complexions() -> set[str]:
-    return set(
-        Complexion.objects.filter(is_active=True).values_list("name", flat=True)
-    )
+    return set(Complexion.active_valid_queryset().values_list("name", flat=True))
 
 
 def normalize_phone(raw: str) -> str | None:

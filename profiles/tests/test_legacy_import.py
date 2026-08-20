@@ -161,6 +161,9 @@ class MasterAliasTests(SimpleTestCase):
         self.assertEqual(normalize_complexion_name("White"), "Very Fair")
         self.assertEqual(normalize_complexion_name("Medium"), "Wheatish")
         self.assertEqual(normalize_complexion_name("Medium White"), "Wheatish")
+        self.assertEqual(normalize_complexion_name("Black"), "Dark")
+        self.assertEqual(normalize_complexion_name("Wheatish Brown"), "Wheatish")
+        self.assertEqual(normalize_complexion_name("Other"), "")
 
 
 class ParserTests(SimpleTestCase):

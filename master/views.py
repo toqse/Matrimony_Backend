@@ -197,7 +197,7 @@ class ComplexionList(CachedMasterListMixin, generics.ListAPIView):
     pagination_class = MasterListPagination
 
     def get_queryset(self):
-        return Complexion.objects.filter(is_active=True).order_by('name')
+        return Complexion.active_valid_queryset().order_by('name')
 
 
 class IncomeRangeList(CachedMasterListMixin, generics.ListAPIView):
