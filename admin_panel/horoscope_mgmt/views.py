@@ -17,7 +17,11 @@ from astrology.horoscope_api import (
 )
 
 from .permissions import IsPanelStaff
-from .serializers import PanelPoruthamRequestSerializer
+from .serializers import (
+    PanelDeleteSavedPoruthamSerializer,
+    PanelPoruthamRequestSerializer,
+    PanelSavePoruthamMatchesSerializer,
+)
 from . import services as horoscope_panel
 
 
@@ -233,6 +237,81 @@ class HoroscopePanelPoruthamView(APIView):
         return Response({"success": True, "data": result}, status=status.HTTP_200_OK)
 
 
+class HoroscopePanelSavedPoruthamView(APIView):
+    """GET list / POST save / DELETE unsave shared porutham matches for a fixed profile."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    mount = "admin"
+
+    def get_permissions(self):
+        if self.mount == "admin":
+            return [IsAuthenticated(), IsAdminUser()]
+        if self.mount == "staff":
+            return [IsAuthenticated(), IsPanelStaff()]
+        return [IsAuthenticated(), IsBranchManagerOnly()]
+
+    def get(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        raw = (request.query_params.get("fixed_profile_id") or "").strip()
+        try:
+            fixed_profile_id = int(raw)
+        except (TypeError, ValueError):
+            return Response(
+                {"success": False, "error": {"code": 400, "message": "fixed_profile_id is required."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        rows, msg = horoscope_panel.list_saved_porutham_matches(qs, fixed_profile_id)
+        if msg:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"success": True, "data": {"results": rows or []}}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        ser = PanelSavePoruthamMatchesSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        rows, msg = horoscope_panel.save_porutham_matches(
+            qs,
+            mode=ser.validated_data["mode"],
+            fixed_profile_id=ser.validated_data["fixed_profile_id"],
+            partner_profile_ids=ser.validated_data["partner_profile_ids"],
+            saved_by=request.user,
+        )
+        if not rows:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg or "Save failed."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = {"saved": rows}
+        if msg:
+            payload["warnings"] = msg
+        return Response({"success": True, "data": payload}, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        ser = PanelDeleteSavedPoruthamSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        deleted, msg = horoscope_panel.delete_saved_porutham_matches(
+            qs,
+            fixed_profile_id=ser.validated_data["fixed_profile_id"],
+            partner_profile_ids=ser.validated_data["partner_profile_ids"],
+        )
+        if msg:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"success": True, "data": {"deleted": deleted}}, status=status.HTTP_200_OK)
+
+
 class HoroscopePanelMatchReportView(APIView):
     """GET /api/v1/admin/horoscope/match-report/?matri_id=&partner_matri_id="""
 
@@ -356,6 +435,10 @@ BranchHoroscopePanelRecordByMatriView = _clone_view_attrs(HoroscopePanelRecordBy
 AdminHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView, "admin")
 StaffHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView, "staff")
 BranchHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView, "branch")
+
+AdminHoroscopePanelSavedPoruthamView = _clone_view_attrs(HoroscopePanelSavedPoruthamView, "admin")
+StaffHoroscopePanelSavedPoruthamView = _clone_view_attrs(HoroscopePanelSavedPoruthamView, "staff")
+BranchHoroscopePanelSavedPoruthamView = _clone_view_attrs(HoroscopePanelSavedPoruthamView, "branch")
 
 AdminHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "admin")
 StaffHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "staff")

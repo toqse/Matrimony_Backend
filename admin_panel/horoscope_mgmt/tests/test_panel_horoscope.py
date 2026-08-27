@@ -7,13 +7,16 @@ from accounts.models import User
 from admin_panel.auth.models import AdminUser
 from admin_panel.branches.models import Branch as PanelBranch
 from admin_panel.horoscope_mgmt.services import (
+    delete_saved_porutham_matches,
     list_horoscope_records,
+    list_saved_porutham_matches,
     panel_porutham,
+    save_porutham_matches,
     scoped_member_users_queryset,
 )
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.subscriptions.models import CustomerStaffAssignment
-from astrology.models import HoroscopeProfile
+from astrology.models import AdminSavedPoruthamMatch, HoroscopeProfile, PoruthamResult
 from master.models import Branch as MasterBranch
 from profiles.models import UserProfile
 
@@ -275,3 +278,122 @@ class HoroscopePanelExeDoneFilterTests(TestCase):
         profile_ids = {row["profile_id"] for row in data["results"]}
         self.assertIn(UserProfile.objects.get(user=self.eligible_user).pk, profile_ids)
         self.assertNotIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)
+
+
+class HoroscopePanelSavedPoruthamTests(TestCase):
+    def setUp(self):
+        self.master_br = MasterBranch.objects.create(name="Saved Branch", code="HP_SV_01")
+        self.admin_super = AdminUser.objects.create(
+            mobile="9000000088",
+            name="Admin Saved",
+            role=AdminUser.ROLE_ADMIN,
+        )
+
+        def _member(name: str, mobile: str, gender: str):
+            u = User.objects.create_user(mobile=mobile, password="x", name=name, role="user")
+            u.is_active = True
+            u.branch = self.master_br
+            u.gender = gender
+            u.save()
+            return u
+
+        self.bride_user = _member("Saved Bride", "+919876543601", "F")
+        self.groom_user = _member("Saved Groom", "+919876543602", "M")
+        self.bride_profile, _ = UserProfile.objects.get_or_create(user=self.bride_user, defaults={})
+        self.groom_profile, _ = UserProfile.objects.get_or_create(user=self.groom_user, defaults={})
+
+        HoroscopeProfile.objects.update_or_create(
+            user=self.bride_user,
+            defaults={
+                "pr_rasi": _rasi_string(1),
+                "pr_star": 1,
+                "pr_pada": 1,
+                "pr_name": "Saved Bride",
+            },
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=self.groom_user,
+            defaults={
+                "pr_rasi": _rasi_string(4),
+                "pr_star": 5,
+                "pr_pada": 2,
+                "pr_name": "Saved Groom",
+            },
+        )
+
+    def test_save_list_delete_shared_match_and_upsert_porutham_result(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        self.assertIsNotNone(qs)
+
+        saved, err = save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+            saved_by=self.admin_super,
+        )
+        self.assertIsNone(err)
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["partner_profile_id"], self.groom_profile.pk)
+        self.assertTrue(saved[0]["overall_result"])
+
+        self.assertEqual(
+            AdminSavedPoruthamMatch.objects.filter(
+                fixed_user=self.bride_user,
+                partner_user=self.groom_user,
+            ).count(),
+            1,
+        )
+        self.assertTrue(
+            PoruthamResult.objects.filter(
+                bride=self.bride_user,
+                groom=self.groom_user,
+            ).exists()
+        )
+
+        rows, list_err = list_saved_porutham_matches(qs, self.bride_profile.pk)
+        self.assertIsNone(list_err)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["partner_profile_id"], self.groom_profile.pk)
+
+        deleted, del_err = delete_saved_porutham_matches(
+            qs,
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+        )
+        self.assertIsNone(del_err)
+        self.assertEqual(deleted, 1)
+        self.assertFalse(
+            AdminSavedPoruthamMatch.objects.filter(
+                fixed_user=self.bride_user,
+                partner_user=self.groom_user,
+            ).exists()
+        )
+        self.assertTrue(
+            PoruthamResult.objects.filter(
+                bride=self.bride_user,
+                groom=self.groom_user,
+            ).exists()
+        )
+
+    def test_save_is_idempotent_for_same_pair(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        self.assertIsNotNone(qs)
+
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+            saved_by=self.admin_super,
+        )
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+            saved_by=self.admin_super,
+        )
+        self.assertEqual(AdminSavedPoruthamMatch.objects.count(), 1)

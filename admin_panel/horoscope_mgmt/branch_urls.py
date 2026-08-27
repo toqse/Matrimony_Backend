@@ -8,6 +8,7 @@ from .views import (
     BranchHoroscopePanelRecordByMatriView,
     BranchHoroscopePanelRecordDetailView,
     BranchHoroscopePanelRecordsView,
+    BranchHoroscopePanelSavedPoruthamView,
     BranchHoroscopePanelSummaryView,
 )
 
@@ -26,6 +27,7 @@ urlpatterns = [
     ),
     path("records/<uuid:user_id>/", BranchHoroscopePanelRecordDetailView.as_view(), name="branch_horoscope_record_detail"),
     path("porutham/", BranchHoroscopePanelPoruthamView.as_view(), name="branch_horoscope_porutham"),
+    path("porutham/saved/", BranchHoroscopePanelSavedPoruthamView.as_view(), name="branch_horoscope_porutham_saved"),
     path("match-report/", BranchHoroscopePanelMatchReportView.as_view(), name="branch_horoscope_match_report"),
     path("jathakam-pdfs/", BranchHoroscopePanelJathakamPdfsView.as_view(), name="branch_horoscope_jathakam_pdfs"),
 ]

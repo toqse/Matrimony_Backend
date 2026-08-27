@@ -184,3 +184,54 @@ class PoruthamResult(models.Model):
 
     def __str__(self):
         return f'{self.bride} vs {self.groom} | {self.overall_result}'
+
+
+class AdminSavedPoruthamMatch(TimeStampedModel):
+    """Admin/staff/branch panel: shared saved porutham matches for a fixed profile."""
+
+    MODE_FIXED_BRIDE = 'fixed_bride'
+    MODE_FIXED_GROOM = 'fixed_groom'
+    MODE_CHOICES = [
+        (MODE_FIXED_BRIDE, 'Fixed bride'),
+        (MODE_FIXED_GROOM, 'Fixed groom'),
+    ]
+
+    fixed_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='admin_saved_porutham_as_fixed',
+    )
+    partner_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='admin_saved_porutham_as_partner',
+    )
+    mode = models.CharField(max_length=20, choices=MODE_CHOICES)
+    score = models.IntegerField(default=0)
+    max_score = models.IntegerField(default=10)
+    overall_result = models.CharField(max_length=20, blank=True)
+    uthamam_count = models.IntegerField(null=True, blank=True)
+    porutham_snapshot = models.JSONField(null=True, blank=True)
+    saved_by = models.ForeignKey(
+        'admin_auth.AdminUser',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='saved_porutham_matches',
+    )
+
+    class Meta:
+        db_table = 'admin_saved_porutham_match'
+        app_label = 'astrology'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['fixed_user', 'partner_user'],
+                name='uniq_admin_saved_porutham_fixed_partner',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['fixed_user', '-updated_at'], name='admin_saved_porutham_fixed_idx'),
+        ]
+
+    def __str__(self):
+        return f'SavedPorutham<{self.fixed_user_id} x {self.partner_user_id}>'

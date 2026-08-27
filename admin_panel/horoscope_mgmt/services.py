@@ -12,7 +12,7 @@ from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.my_profiles.views import _my_profiles_base_queryset
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from astrology.charts import format_dasa_balance, moon_rasi_name, star_name
-from astrology.models import AstrologyPdfCredit, HoroscopeProfile, PoruthamResult
+from astrology.models import AstrologyPdfCredit, AdminSavedPoruthamMatch, HoroscopeProfile, PoruthamResult
 from astrology.porutham import calculate_porutham
 from master.models import Branch as MasterBranch
 from plans.models import UserPlan
@@ -483,3 +483,231 @@ def list_jathakam_pdf_credits(users_qs):
         }
         for c in qs
     ]
+
+
+def _mode_to_internal(mode: str) -> str | None:
+    m = (mode or '').strip().lower().replace('-', '_')
+    if m in {AdminSavedPoruthamMatch.MODE_FIXED_BRIDE, 'fixed_bride'}:
+        return AdminSavedPoruthamMatch.MODE_FIXED_BRIDE
+    if m in {AdminSavedPoruthamMatch.MODE_FIXED_GROOM, 'fixed_groom'}:
+        return AdminSavedPoruthamMatch.MODE_FIXED_GROOM
+    return None
+
+
+def _upsert_porutham_result(bride_user, groom_user, result: dict) -> None:
+    PoruthamResult.objects.update_or_create(
+        bride=bride_user,
+        groom=groom_user,
+        defaults={
+            'dinam': result['dinam'],
+            'ganam': result['ganam'],
+            'mahendra': result['mahendra'],
+            'sthree_deerga': result['sthree_deerga'],
+            'yoni': result['yoni'],
+            'rasi': result['rasi'],
+            'rasyadhipam': result['rasyadhipam'],
+            'vasyam': result['vasyam'],
+            'rajju_dosham': result['rajju_dosham'],
+            'vedha_dosham': result['vedha_dosham'],
+            'chovva_dosham': result['chovva_dosham'],
+            'dasa_sandhi': result['dasa_sandhi'],
+            'bride_papatha': result.get('bride_papatha'),
+            'groom_papatha': result.get('groom_papatha'),
+            'total_porutham_count': result['total_porutham_count'],
+            'uthamam_count': result['uthamam_count'],
+            'madhyamam_count': result['madhyamam_count'],
+            'adhamam_count': result['adhamam_count'],
+            'has_dosha': result['has_dosha'],
+            'overall_result': result['overall_result'],
+        },
+    )
+
+
+def _resolve_profile_pair(
+    users_qs,
+    mode: str,
+    fixed_profile_id: int,
+    partner_profile_id: int,
+) -> tuple[UserProfile | None, UserProfile | None, str | None]:
+    internal_mode = _mode_to_internal(mode)
+    if not internal_mode:
+        return None, None, 'Invalid mode. Use fixed-bride or fixed-groom.'
+
+    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+    partner_prof = UserProfile.objects.filter(pk=partner_profile_id).select_related('user').first()
+    if not fixed_prof or not partner_prof:
+        return None, None, 'Invalid profile id(s).'
+    if fixed_prof.pk == partner_prof.pk:
+        return None, None, 'Fixed profile and partner must be different.'
+    if not user_in_scope(users_qs, fixed_prof.user_id) or not user_in_scope(
+        users_qs, partner_prof.user_id
+    ):
+        return None, None, 'One or both profiles are out of scope.'
+
+    if internal_mode == AdminSavedPoruthamMatch.MODE_FIXED_BRIDE:
+        bride_prof, groom_prof = fixed_prof, partner_prof
+    else:
+        bride_prof, groom_prof = partner_prof, fixed_prof
+
+    return bride_prof, groom_prof, None
+
+
+def _porutham_snapshot(result: dict) -> dict:
+    grade_keys = [
+        'dinam', 'ganam', 'mahendra', 'sthree_deerga', 'yoni', 'rasi',
+        'rasyadhipam', 'vasyam', 'rajju_dosham', 'vedha_dosham',
+    ]
+    return {
+        'grades': {k: result.get(k) for k in grade_keys},
+        'chovva_dosham': result.get('chovva_dosham'),
+        'dasa_sandhi': result.get('dasa_sandhi'),
+        'has_dosha': result.get('has_dosha'),
+        'dosha_checks': result.get('dosha_checks'),
+        'poruthams': result.get('poruthams'),
+    }
+
+
+def save_porutham_matches(
+    users_qs,
+    *,
+    mode: str,
+    fixed_profile_id: int,
+    partner_profile_ids: list[int],
+    saved_by,
+) -> tuple[list[dict] | None, str | None]:
+    internal_mode = _mode_to_internal(mode)
+    if not internal_mode:
+        return None, 'Invalid mode. Use fixed-bride or fixed-groom.'
+    if not partner_profile_ids:
+        return None, 'Select at least one partner to save.'
+
+    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+    if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+        return None, 'Fixed profile not found or out of scope.'
+
+    saved_rows: list[dict] = []
+    errors: list[str] = []
+
+    for partner_id in partner_profile_ids:
+        bride_prof, groom_prof, err = _resolve_profile_pair(
+            users_qs, mode, fixed_profile_id, partner_id
+        )
+        if err or not bride_prof or not groom_prof:
+            errors.append(f'Partner {partner_id}: {err or "invalid"}')
+            continue
+
+        try:
+            bride_hp = bride_prof.user.horoscope_profile
+            groom_hp = groom_prof.user.horoscope_profile
+        except HoroscopeProfile.DoesNotExist:
+            errors.append(f'Partner {partner_id}: horoscope not found.')
+            continue
+
+        if not bride_hp.is_exe_done() or not groom_hp.is_exe_done():
+            errors.append(f'Partner {partner_id}: EXE has not written horoscope results yet.')
+            continue
+
+        result = calculate_porutham(bride_hp, groom_hp)
+        _upsert_porutham_result(bride_prof.user, groom_prof.user, result)
+
+        if internal_mode == AdminSavedPoruthamMatch.MODE_FIXED_BRIDE:
+            fixed_user = bride_prof.user
+            partner_user = groom_prof.user
+            partner_prof = groom_prof
+        else:
+            fixed_user = groom_prof.user
+            partner_user = bride_prof.user
+            partner_prof = bride_prof
+
+        obj, _ = AdminSavedPoruthamMatch.objects.update_or_create(
+            fixed_user=fixed_user,
+            partner_user=partner_user,
+            defaults={
+                'mode': internal_mode,
+                'score': result.get('score', result.get('uthamam_count', 0)),
+                'max_score': result.get('max_score', 10),
+                'overall_result': result.get('overall_result', ''),
+                'uthamam_count': result.get('uthamam_count'),
+                'porutham_snapshot': _porutham_snapshot(result),
+                'saved_by': saved_by,
+            },
+        )
+        saved_rows.append(_serialize_saved_match(obj, partner_prof))
+
+    if not saved_rows:
+        return None, errors[0] if errors else 'No matches could be saved.'
+
+    return saved_rows, None if not errors else '; '.join(errors)
+
+
+def list_saved_porutham_matches(
+    users_qs,
+    fixed_profile_id: int,
+) -> tuple[list[dict] | None, str | None]:
+    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+    if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+        return None, 'Fixed profile not found or out of scope.'
+
+    qs = (
+        AdminSavedPoruthamMatch.objects.filter(fixed_user=fixed_prof.user)
+        .select_related('partner_user', 'partner_user__user_profile', 'saved_by')
+        .order_by('-updated_at')
+    )
+    rows = []
+    for obj in qs:
+        partner_prof = getattr(obj.partner_user, 'user_profile', None)
+        if partner_prof and not user_in_scope(users_qs, obj.partner_user_id):
+            continue
+        rows.append(_serialize_saved_match(obj, partner_prof))
+    return rows, None
+
+
+def delete_saved_porutham_matches(
+    users_qs,
+    *,
+    fixed_profile_id: int,
+    partner_profile_ids: list[int],
+) -> tuple[int, str | None]:
+    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+    if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+        return 0, 'Fixed profile not found or out of scope.'
+    if not partner_profile_ids:
+        return 0, 'Select at least one partner to remove.'
+
+    partner_user_ids = []
+    for pid in partner_profile_ids:
+        partner_prof = UserProfile.objects.filter(pk=pid).select_related('user').first()
+        if not partner_prof or not user_in_scope(users_qs, partner_prof.user_id):
+            return 0, f'Partner profile {pid} not found or out of scope.'
+        partner_user_ids.append(partner_prof.user_id)
+
+    deleted, _ = AdminSavedPoruthamMatch.objects.filter(
+        fixed_user=fixed_prof.user,
+        partner_user_id__in=partner_user_ids,
+    ).delete()
+    return deleted, None
+
+
+def _serialize_saved_match(
+    obj: AdminSavedPoruthamMatch,
+    partner_prof: UserProfile | None,
+) -> dict[str, Any]:
+    partner_user = obj.partner_user
+    partner_profile = partner_prof or getattr(partner_user, 'user_profile', None)
+    saved_by = obj.saved_by
+    return {
+        'id': obj.pk,
+        'mode': obj.mode,
+        'fixed_user_id': str(obj.fixed_user_id),
+        'partner_user_id': str(obj.partner_user_id),
+        'partner_profile_id': partner_profile.pk if partner_profile else None,
+        'partner_matri_id': partner_user.matri_id or '',
+        'partner_name': (partner_user.name or '').strip(),
+        'score': obj.score,
+        'max_score': obj.max_score,
+        'overall_result': obj.overall_result,
+        'uthamam_count': obj.uthamam_count,
+        'saved_by_name': (saved_by.name if saved_by else '') or '',
+        'created_at': obj.created_at.isoformat(),
+        'updated_at': obj.updated_at.isoformat(),
+    }
