@@ -10,6 +10,7 @@ from django.core.validators import validate_email
 from django.db.models import Q
 
 from accounts.models import User
+from core.dob_utils import validate_profile_age
 from profiles.parent_status import normalize_parent_status
 from profiles.legacy_import.horoscope import resolve_padam, resolve_star, star_lookup
 from profiles.legacy_import.normalize import parse_int
@@ -75,12 +76,9 @@ def _parse_dob(value: str):
     if not text:
         return None
     try:
-        dob = datetime.strptime(text, "%d-%m-%Y").date()
+        return datetime.strptime(text, "%d-%m-%Y").date()
     except ValueError:
         return "__invalid__"
-    if dob > datetime.now().date():
-        return "__future__"
-    return dob
 
 
 def _resolve_name(model, name: str):
@@ -182,8 +180,11 @@ def validate_rows(data_rows: list[dict[str, str]]):
         dob = _parse_dob(r.get("dob") or "")
         if dob == "__invalid__":
             row_err.append({"row": row, "field": "dob", "message": "Date of Birth must be DD-MM-YYYY"})
-        elif dob == "__future__":
-            row_err.append({"row": row, "field": "dob", "message": "Date of Birth cannot be in the future"})
+        elif dob is not None:
+            try:
+                validate_profile_age(dob)
+            except ValueError as e:
+                row_err.append({"row": row, "field": "dob", "message": str(e)})
 
         gender = normalize_gender(r.get("gender") or "")
         if gender and gender not in {"M", "F", "O"}:

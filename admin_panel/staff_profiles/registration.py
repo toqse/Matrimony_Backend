@@ -15,6 +15,7 @@ from rest_framework import serializers as drf_serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from accounts.models import User
+from core.dob_utils import validate_profile_age
 from core.phone import normalize_phone_input, personal_mobile_in_use
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.subscriptions.models import CustomerStaffAssignment
@@ -199,9 +200,15 @@ def validate_core_create_fields(data: dict) -> tuple[dict[str, str] | None, dict
         errors["dob"] = "Invalid date format. Use DD-MM-YYYY."
     else:
         try:
-            dob_iso = datetime.strptime(dob_raw, "%d-%m-%Y").date().isoformat()
+            dob_date = datetime.strptime(dob_raw, "%d-%m-%Y").date()
         except ValueError:
             errors["dob"] = "Invalid date format. Use DD-MM-YYYY."
+        else:
+            try:
+                validate_profile_age(dob_date)
+                dob_iso = dob_date.isoformat()
+            except ValueError as e:
+                errors["dob"] = str(e)
 
     email = (data.get("email") or "").strip()
     if email:

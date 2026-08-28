@@ -3,9 +3,11 @@ from datetime import date
 import unittest
 
 from core.dob_utils import (
+    PROFILE_AGE_ERROR,
     calculate_age,
     parse_registration_dob_string,
     validate_matrimony_registration_dob,
+    validate_profile_age,
 )
 
 
@@ -68,50 +70,41 @@ class ParseRegistrationDobTests(unittest.TestCase):
         self.assertIn("Invalid date format", str(ctx.exception))
 
 
-class ValidateMatrimonyRegistrationDobTests(unittest.TestCase):
+class ValidateProfileAgeTests(unittest.TestCase):
     def test_future(self):
         with self.assertRaises(ValueError) as ctx:
-            validate_matrimony_registration_dob(
-                date(2030, 1, 1), "M", today=date(2025, 1, 1)
-            )
+            validate_profile_age(date(2030, 1, 1), today=date(2025, 1, 1))
         self.assertEqual(str(ctx.exception), "DOB cannot be in the future")
 
     def test_unrealistic(self):
         with self.assertRaises(ValueError) as ctx:
-            validate_matrimony_registration_dob(
-                date(1910, 1, 1), "M", today=date(2025, 1, 1)
-            )
+            validate_profile_age(date(1910, 1, 1), today=date(2025, 1, 1))
         self.assertEqual(str(ctx.exception), "Date of birth is not realistic.")
 
-    def test_male_min_age(self):
+    def test_age_18_rejected(self):
         with self.assertRaises(ValueError) as ctx:
-            validate_matrimony_registration_dob(
-                date(2005, 6, 15), "M", today=date(2025, 6, 15)
-            )
-        self.assertEqual(str(ctx.exception), "Minimum age for male is 21 years")
+            validate_profile_age(date(2007, 1, 1), today=date(2025, 1, 1))
+        self.assertEqual(str(ctx.exception), PROFILE_AGE_ERROR)
 
-    def test_female_min_age(self):
+    def test_age_19_ok_all_genders(self):
+        dob = date(2006, 1, 1)
+        today = date(2025, 1, 1)
+        validate_profile_age(dob, today=today)
+        for gender in ("M", "F", "O"):
+            validate_matrimony_registration_dob(dob, gender, today=today)
+
+    def test_age_79_ok(self):
+        validate_profile_age(date(1946, 1, 1), today=date(2025, 1, 1))
+
+    def test_age_80_rejected(self):
         with self.assertRaises(ValueError) as ctx:
-            validate_matrimony_registration_dob(
-                date(2010, 6, 15), "F", today=date(2025, 6, 15)
-            )
-        self.assertEqual(str(ctx.exception), "Minimum age for female is 18 years")
+            validate_profile_age(date(1945, 1, 1), today=date(2025, 1, 1))
+        self.assertEqual(str(ctx.exception), PROFILE_AGE_ERROR)
 
-    def test_max_age(self):
-        with self.assertRaises(ValueError) as ctx:
-            validate_matrimony_registration_dob(
-                date(1920, 1, 1), "F", today=date(2025, 1, 1)
-            )
-        self.assertEqual(str(ctx.exception), "Maximum age allowed is 80 years")
-
-    def test_male_21_ok(self):
+    def test_male_under_21_now_ok_if_over_18(self):
+        # Previously male min was 21; unified rule allows 19+.
         validate_matrimony_registration_dob(
-            date(2004, 6, 15), "M", today=date(2025, 6, 15)
-        )
-
-    def test_female_18_ok(self):
-        validate_matrimony_registration_dob(
-            date(2007, 6, 15), "F", today=date(2025, 6, 15)
+            date(2005, 6, 15), "M", today=date(2025, 6, 15)
         )
 
 

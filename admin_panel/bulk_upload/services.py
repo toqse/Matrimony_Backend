@@ -18,6 +18,7 @@ from django.db import transaction
 from django.db.models import Q
 
 from accounts.models import User
+from core.dob_utils import validate_profile_age
 from master.models import (
     Caste,
     City,
@@ -399,6 +400,13 @@ def validate_rows(
                     "message": "Invalid date format, use DD-MM-YYYY",
                 }
             )
+        elif dob is not None:
+            try:
+                validate_profile_age(dob)
+            except ValueError as e:
+                row_errors.append(
+                    {"row": row_index, "field": "dob", "message": str(e)}
+                )
 
         religion_name = (row.get("religion") or "").strip()
         religion_obj = None

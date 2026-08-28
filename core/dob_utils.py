@@ -10,18 +10,20 @@ from datetime import date, datetime
 from typing import Final
 
 __all__ = [
+    "PROFILE_AGE_ERROR",
     "calculate_age",
     "parse_registration_dob_string",
     "validate_matrimony_registration_dob",
+    "validate_profile_age",
 ]
 
 # Earliest realistic DOB for the platform (rejects placeholder years like 1900).
 MIN_REALISTIC_DOB: Final[date] = date(1920, 1, 1)
 
-_MAX_AGE: Final[int] = 80
-_MIN_AGE_MALE: Final[int] = 21
-_MIN_AGE_FEMALE: Final[int] = 18
-_MIN_AGE_OTHER: Final[int] = 18
+# Completed years: 18 < age < 80 (19 through 79 inclusive).
+_MIN_AGE_EXCLUSIVE: Final[int] = 18
+_MAX_AGE_EXCLUSIVE: Final[int] = 80
+PROFILE_AGE_ERROR: Final[str] = "Age must be greater than 18 and less than 80 years"
 
 _RE_DD_MM_YYYY_DASH: Final[re.Pattern[str]] = re.compile(
     r"^(?P<d>\d{2})-(?P<m>\d{2})-(?P<y>\d{4})$"
@@ -78,15 +80,14 @@ def parse_registration_dob_string(dob_str: str | None) -> date:
         ) from None
 
 
-def validate_matrimony_registration_dob(dob: date, gender: str, *, today: date | None = None) -> None:
+def validate_profile_age(dob: date, *, today: date | None = None) -> None:
     """
-    Enforce future / realistic bounds and gender-based age rules for registration.
+    Enforce future / realistic bounds and 18 < age < 80 for member profiles.
 
     Raises:
         ValueError: with a stable, API-safe message string.
     """
     today = today or date.today()
-    g = (gender or "").strip().upper()
 
     if dob > today:
         raise ValueError("DOB cannot be in the future")
@@ -95,16 +96,15 @@ def validate_matrimony_registration_dob(dob: date, gender: str, *, today: date |
         raise ValueError("Date of birth is not realistic.")
 
     age = calculate_age(dob, today=today)
+    if not (_MIN_AGE_EXCLUSIVE < age < _MAX_AGE_EXCLUSIVE):
+        raise ValueError(PROFILE_AGE_ERROR)
 
-    if age > _MAX_AGE:
-        raise ValueError("Maximum age allowed is 80 years")
 
-    if g == "M":
-        if age < _MIN_AGE_MALE:
-            raise ValueError("Minimum age for male is 21 years")
-    elif g == "F":
-        if age < _MIN_AGE_FEMALE:
-            raise ValueError("Minimum age for female is 18 years")
-    elif g == "O":
-        if age < _MIN_AGE_OTHER:
-            raise ValueError("Minimum age is 18 years")
+def validate_matrimony_registration_dob(
+    dob: date, gender: str | None = None, *, today: date | None = None
+) -> None:
+    """
+    Registration DOB rules. Gender is accepted for call-site compatibility;
+    age limits are the same for all genders (18 < age < 80).
+    """
+    validate_profile_age(dob, today=today)

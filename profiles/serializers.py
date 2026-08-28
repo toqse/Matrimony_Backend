@@ -952,7 +952,15 @@ class BasicDetailsUpdateSerializer(serializers.Serializer):
 
     def validate_dob(self, value):
         from accounts.serializers import parse_optional_dob
-        return parse_optional_dob(value)
+        from core.dob_utils import validate_profile_age
+        parsed = parse_optional_dob(value)
+        if parsed is None:
+            return None
+        try:
+            validate_profile_age(parsed)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
+        return parsed
 
     def validate_email(self, value):
         normalized = (value or '').strip().lower()
