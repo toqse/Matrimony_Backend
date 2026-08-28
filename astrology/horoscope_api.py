@@ -24,7 +24,7 @@ def horoscope_not_generated_response() -> dict[str, Any]:
         'is_horoscope_generated': False,
         'error': {
             'code': 400,
-            'message': 'Horoscope has not been generated, Please Contact the Administrator',
+            'message': 'Horoscope generation is in progress. Please wait up to 24 hours. If it has not been generated after 24 hours, please contact the Administrator.',
         },
     }
 
