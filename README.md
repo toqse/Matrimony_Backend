@@ -84,4 +84,4 @@ python manage.py runserver
 
 ## Nginx
 
-See `nginx.conf.example` for a production-ready Nginx placeholder in front of Gunicorn.
+See `nginx.conf.example` for a production-ready Nginx placeholder in front of Daphne (ASGI). Chat WebSockets need `location /ws/` proxied to Daphne; Gunicorn/WSGI cannot serve `/ws/chat/`.

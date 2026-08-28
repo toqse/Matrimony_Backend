@@ -42,29 +42,21 @@ services:
     build: .
     container_name: matrimony_backend-django-1
     restart: unless-stopped
-    # Fixed IP so host Nginx can reach Gunicorn WITHOUT docker-proxy.
+    # Fixed IP so host Nginx can reach Daphne WITHOUT docker-proxy.
     # On this VPS, published ports (127.0.0.1:8000->container) accept TCP but
     # never deliver HTTP. Container↔container and host→172.28.0.12 work.
+    # Daphne (ASGI) is required for Channels WebSockets at /ws/chat/<id>/.
     networks:
       default:
         ipv4_address: 172.28.0.12
     command:
-      - gunicorn
-      - matrimony_backend.wsgi:application
-      - --bind
-      - 0.0.0.0:8000
-      - --worker-class
-      - sync
-      - --workers
-      - "3"
-      - --timeout
-      - "30"
-      - --graceful-timeout
-      - "15"
-      - --access-logfile
-      - "-"
-      - --error-logfile
-      - "-"
+      - daphne
+      - -b
+      - 0.0.0.0
+      - -p
+      - "8000"
+      - --proxy-headers
+      - matrimony_backend.asgi:application
     volumes:
       - .:/app
     # Do not publish 8000 on the host — docker-proxy path is broken here.
