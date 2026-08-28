@@ -186,7 +186,7 @@ class MaritalStatusList(CachedMasterListMixin, generics.ListAPIView):
     pagination_class = MasterListPagination
 
     def get_queryset(self):
-        return MaritalStatus.objects.filter(is_active=True).order_by('name')
+        return MaritalStatus.objects.filter(is_active=True).for_display()
 
 
 class ComplexionList(CachedMasterListMixin, generics.ListAPIView):

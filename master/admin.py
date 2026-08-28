@@ -57,6 +57,9 @@ class HeightAdmin(admin.ModelAdmin):
 class MaritalStatusAdmin(admin.ModelAdmin):
     list_display = ['name', 'is_active']
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).for_display()
+
 
 @admin.register(Complexion)
 class ComplexionAdmin(admin.ModelAdmin):

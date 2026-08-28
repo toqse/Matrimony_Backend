@@ -412,7 +412,7 @@ class MatchFilterOptionsView(APIView):
         educations = list(Education.objects.filter(is_active=True).order_by('name').values('id', 'name'))
         occupations = list(Occupation.objects.filter(is_active=True).order_by('name').values('id', 'name'))
         marital_status = list(
-            MaritalStatus.objects.filter(is_active=True).order_by('name').values('id', 'name')
+            MaritalStatus.objects.filter(is_active=True).for_display().values('id', 'name')
         )
         heights = list(
             Height.objects.filter(is_active=True).order_by('value_cm').values(

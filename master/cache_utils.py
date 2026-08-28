@@ -18,14 +18,14 @@ RESOURCE_RELIGIONS = 'religions'
 RESOURCE_CASTES = 'castes'
 RESOURCE_MOTHER_TONGUES = 'mother-tongues'
 RESOURCE_HEIGHTS = 'heights'
-RESOURCE_MARITAL_STATUSES = 'marital-statuses'
+RESOURCE_MARITAL_STATUSES = 'marital-statuses-v2'
 RESOURCE_COMPLEXIONS = 'complexions'
 RESOURCE_INCOME_RANGES = 'income-ranges'
 RESOURCE_EDUCATIONS = 'educations'
 RESOURCE_EDUCATION_SUBJECTS = 'education-subjects'
 RESOURCE_OCCUPATIONS = 'occupations'
 RESOURCE_EMPLOYMENT_STATUSES = 'employment-statuses'
-RESOURCE_MATCH_FILTERS = 'match-filters'
+RESOURCE_MATCH_FILTERS = 'match-filters-v2'
 
 
 def master_list_cache_key(resource: str, query_string: str) -> str:

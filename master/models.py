@@ -117,9 +117,23 @@ class Height(TimeStampedModel):
         return self.display_label or f'{self.value_cm} cm'
 
 
+class MaritalStatusQuerySet(models.QuerySet):
+    def for_display(self):
+        """Never Married first, then remaining statuses alphabetically."""
+        return self.annotate(
+            _display_rank=models.Case(
+                models.When(name__iexact='Never Married', then=models.Value(0)),
+                default=models.Value(1),
+                output_field=models.IntegerField(),
+            )
+        ).order_by('_display_rank', 'name')
+
+
 class MaritalStatus(TimeStampedModel):
     name = models.CharField(max_length=50)
     is_active = models.BooleanField(default=True)
+
+    objects = MaritalStatusQuerySet.as_manager()
 
     class Meta:
         db_table = 'master_marital_status'
