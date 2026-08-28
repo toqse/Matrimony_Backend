@@ -1527,8 +1527,33 @@ class AboutDetailsUpdateSerializer(serializers.Serializer):
 
 
 class BirthDetailsUpdateSerializer(serializers.Serializer):
-    time_of_birth = serializers.TimeField(required=True)
-    place_of_birth = serializers.CharField(required=True, allow_blank=False, max_length=255)
+    """Member add/update of horoscope birth inputs (time + place required)."""
+
+    time_of_birth = serializers.TimeField(
+        required=True,
+        input_formats=['%H:%M:%S', '%H:%M'],
+    )
+    place_of_birth = serializers.CharField(
+        required=True, allow_blank=False, max_length=255
+    )
+    has_horoscope = serializers.BooleanField(required=False)
+    birth_latitude = serializers.FloatField(
+        required=False, allow_null=True, min_value=-90, max_value=90
+    )
+    birth_longitude = serializers.FloatField(
+        required=False, allow_null=True, min_value=-180, max_value=180
+    )
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            if not data.get('time_of_birth') and data.get('birth_time'):
+                data['time_of_birth'] = data['birth_time']
+            if not str(data.get('place_of_birth') or '').strip() and data.get(
+                'birth_place'
+            ):
+                data['place_of_birth'] = data['birth_place']
+        return super().to_internal_value(data)
 
     def validate_place_of_birth(self, value):
         cleaned = (value or '').strip()

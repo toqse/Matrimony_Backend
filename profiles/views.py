@@ -1072,34 +1072,74 @@ class ProfileCompleteView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+def _birth_details_block(profile):
+    """Serialize member horoscope birth inputs (same shape as GET /profile/ horoscope_details)."""
+    if not profile:
+        return {
+            'has_horoscope': False,
+            'time_of_birth': None,
+            'place_of_birth': '',
+            'birth_latitude': None,
+            'birth_longitude': None,
+            'birth_timezone': None,
+        }
+    tob = profile.time_of_birth
+    return {
+        'has_horoscope': bool(profile.has_horoscope),
+        'time_of_birth': tob.strftime('%H:%M') if tob else None,
+        'place_of_birth': profile.place_of_birth or '',
+        'birth_latitude': profile.birth_latitude,
+        'birth_longitude': profile.birth_longitude,
+        'birth_timezone': profile.birth_timezone,
+    }
+
+
 class ProfileBirthDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         profile = UserProfile.objects.filter(user=request.user).first()
-        if not profile:
-            return Response({'success': True, 'data': {}}, status=status.HTTP_200_OK)
-        data = {
-            'time_of_birth': profile.time_of_birth,
-            'place_of_birth': profile.place_of_birth,
-        }
-        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
+        return Response(
+            {'success': True, 'data': _birth_details_block(profile)},
+            status=status.HTTP_200_OK,
+        )
 
     def post(self, request):
+        return self._upsert(request)
+
+    def patch(self, request):
+        return self._upsert(request)
+
+    def _upsert(self, request):
         serializer = BirthDetailsUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         profile, _ = UserProfile.objects.get_or_create(user=request.user, defaults={})
-        profile.time_of_birth = serializer.validated_data['time_of_birth']
-        profile.place_of_birth = serializer.validated_data['place_of_birth']
-        profile.save(update_fields=['time_of_birth', 'place_of_birth', 'updated_at'])
+
+        from astrology.services.horoscope_profile_service import (
+            apply_profile_edit_horoscope,
+        )
+
+        payload = dict(request.data) if isinstance(request.data, dict) else {}
+        payload['time_of_birth'] = serializer.validated_data['time_of_birth']
+        payload['place_of_birth'] = serializer.validated_data['place_of_birth']
+        payload['birth_time'] = serializer.validated_data['time_of_birth']
+        payload['birth_place'] = serializer.validated_data['place_of_birth']
+        if 'has_horoscope' in serializer.validated_data:
+            payload['has_horoscope'] = serializer.validated_data['has_horoscope']
+        else:
+            payload['has_horoscope'] = True
+        if 'birth_latitude' in serializer.validated_data:
+            payload['birth_latitude'] = serializer.validated_data['birth_latitude']
+        if 'birth_longitude' in serializer.validated_data:
+            payload['birth_longitude'] = serializer.validated_data['birth_longitude']
+
+        apply_profile_edit_horoscope(request.user, profile, payload)
+        profile.refresh_from_db()
         _audit_member_profile(request, "Birth details updated.")
         return Response({
             'success': True,
             'message': 'Birth details updated successfully.',
-            'data': {
-                'time_of_birth': profile.time_of_birth,
-                'place_of_birth': profile.place_of_birth,
-            },
+            'data': _birth_details_block(profile),
         }, status=status.HTTP_200_OK)
 
 
