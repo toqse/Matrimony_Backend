@@ -65,6 +65,33 @@ class EnquiryCreateSerializer(serializers.ModelSerializer):
         return value
 
 
+class PublicEnquiryCreateSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    phone = serializers.CharField()
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    subject = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    message = serializers.CharField()
+
+    def validate_name(self, value):
+        if not value or not str(value).strip():
+            raise serializers.ValidationError("Name is required.")
+        return str(value).strip()
+
+    def validate_phone(self, value):
+        return normalize_phone_input(value)
+
+    def validate_email(self, value):
+        return (value or "").strip().lower() or None
+
+    def validate_subject(self, value):
+        return (value or "").strip()
+
+    def validate_message(self, value):
+        if not value or not str(value).strip():
+            raise serializers.ValidationError("Message is required.")
+        return str(value).strip()
+
+
 class EnquiryMoveSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=["contacted", "interested", "converted", "lost"],

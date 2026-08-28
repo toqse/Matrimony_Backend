@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     'admin_panel.staff_enquiries',
     'admin_panel.staff_subscriptions',
     'admin_panel.success_stories',
+    'admin_panel.testimonials',
     'admin_panel.newsletter',
     'admin_panel.app_config',
     'admin_panel.reports',

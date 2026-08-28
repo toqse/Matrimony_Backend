@@ -158,6 +158,13 @@ class Transaction(TimeStampedModel):
         (TYPE_JATHAKAM_PDF, 'Jathakam PDF'),
         (TYPE_THALAKURI_PDF, 'Thalakuri PDF'),
     ]
+    # Successful payments that count toward "Total Spent" (excludes refunds).
+    SPEND_TYPES = (
+        TYPE_PLAN_PURCHASE,
+        TYPE_PROFILE_BOOST,
+        TYPE_JATHAKAM_PDF,
+        TYPE_THALAKURI_PDF,
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

@@ -220,12 +220,6 @@ class PoruthamCheckView(APIView):
                 plan_expired_response(request.user),
                 status=status.HTTP_403_FORBIDDEN,
             )
-        allowed, _rem = can_horoscope_match(request.user)
-        if not allowed:
-            return Response(
-                horoscope_quota_exhausted_response(),
-                status=status.HTTP_403_FORBIDDEN,
-            )
         serializer = PoruthamCheckRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -281,9 +275,20 @@ class PoruthamCheckView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        already_matched = PoruthamResult.objects.filter(
+            bride=bride_user, groom=groom_user
+        ).exists()
+        if not already_matched:
+            allowed, _rem = can_horoscope_match(request.user)
+            if not allowed:
+                return Response(
+                    horoscope_quota_exhausted_response(),
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         result = calculate_porutham(bride_hp, groom_hp)
 
-        PoruthamResult.objects.update_or_create(
+        _obj, created = PoruthamResult.objects.update_or_create(
             bride=bride_user,
             groom=groom_user,
             defaults={
@@ -310,7 +315,8 @@ class PoruthamCheckView(APIView):
             },
         )
 
-        consume_horoscope_match(request.user)
+        if created:
+            consume_horoscope_match(request.user)
 
         from django.core.exceptions import ObjectDoesNotExist
 

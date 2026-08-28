@@ -14,7 +14,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,7 +24,7 @@ from admin_panel.audit_log.mixins import AuditLogMixin
 from admin_panel.audit_log.models import AuditLog
 from plans.models import Transaction
 from .models import Branch
-from .serializers import BranchSerializer
+from .serializers import BranchSerializer, PublicBranchSerializer
 
 User = get_user_model()
 
@@ -281,3 +281,15 @@ class BranchSummaryAPIView(APIView):
             "success": True,
             "data": summary
         })
+
+
+class PublicBranchListAPIView(APIView):
+    """GET /api/v1/website/branches/ — public office contact details (no token)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        qs = Branch.objects.filter(is_deleted=False, is_active=True).order_by("name", "id")
+        serializer = PublicBranchSerializer(qs, many=True)
+        return Response({"success": True, "data": serializer.data})

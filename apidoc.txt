@@ -4328,6 +4328,8 @@ GET /api/v1/dashboard/summary/
         "new_matches": 12
       }
     }
+  new_matches equals GET /api/v1/matches/ total_profiles when no extra filters
+  (age/height/location/etc.) are applied — same partner preference + visibility rules.
 
 --- New Matches ---
 GET /api/v1/dashboard/new-matches/
@@ -4515,7 +4517,11 @@ all fields in the body are optional (partial update). Auth: JWT required for all
   1. Basic details
      PATCH /api/v1/profile/basic/
      Body (JSON): { "name": "string", "gender": "male"|"female"|"other", "dob": "DD-MM-YYYY", "email": "string" }
-     Response 200: { "success": true, "data": { "name", "gender", "dob", "email", "phone" } }
+     Also accepts optional horoscope fields (has_horoscope, birth_time / time_of_birth, birth_place / place_of_birth,
+     birth_latitude, birth_longitude, birth_timezone) -> persisted to UserProfile + horoscope_profile EXE bridge.
+     See "POST /api/v1/profile/location/" for full horoscope field rules. If no horoscope keys are sent, basic save
+     is unchanged. When has_horoscope=true, dob, birth_time and birth_place are required.
+     Response 200: { "success": true, "data": { "name", "gender", "dob", "email", "phone", "horoscope": {...} } }
 
   2. Location
      PATCH /api/v1/profile/location/
@@ -4593,13 +4599,26 @@ GET /api/v1/profile/
 --- 1. Basic Details ---
 GET /api/v1/profile/basic/
   Auth: Required (JWT)
-  Response 200: { "success": true, "data": { "name", "gender", "dob", "email", "phone" } }
+  Response 200: { "success": true, "data": { "name", "gender", "dob", "email", "phone", "horoscope": { ... } } }
   Note: gender in response is "male" | "female" | "other"; phone is user mobile.
+  "horoscope" block reflects stored birth inputs from UserProfile:
+    { "has_horoscope": bool, "birth_time": "HH:MM:SS"|null, "birth_place": string,
+      "birth_latitude": float|null, "birth_longitude": float|null, "birth_timezone": float|null }
 
 PATCH /api/v1/profile/basic/
   Auth: Required (JWT)
   Body (JSON): { "name": "string", "gender": "male"|"female"|"other", "dob": "DD-MM-YYYY", "email": "string" }
-  All fields optional (partial update). Response 200: { "success": true, "data": { ... } }
+  All basic fields optional (partial update).
+  Also accepts the same optional horoscope fields as PATCH /api/v1/profile/location/
+  (has_horoscope, birth_time / time_of_birth, birth_place / place_of_birth, birth_latitude,
+  birth_longitude, birth_timezone). When has_horoscope=true, the user's date of birth, birth_time
+  and birth_place are required, else 400:
+    - "Date of birth is required when has_horoscope is true."
+    - "Birth time is required when has_horoscope is true."
+    - "Birth place is required when has_horoscope is true."
+  If no horoscope keys are sent, location-style birth data is left unchanged.
+  No horoscope is calculated at submit time; the horoscope_profile bridge is upserted with
+  is_calculated=0 and updated_at is always bumped. Response 200: { "success": true, "data": { ... } }
 
 --- 2. Photos ---
 GET /api/v1/profile/photos/
@@ -6880,6 +6899,49 @@ PATCH /api/v1/admin/app-config/
   Error 400: empty version string
   Error 401: missing/invalid token
   Error 403: non-admin panel role (staff, branch manager)
+
+--- PUBLIC CONTACT (Website) ---
+GET /api/v1/website/branches/
+  Auth: None
+  Description: Active, non-deleted branch office contact details for the public Contact Us page.
+  Response 200:
+    {
+      "success": true,
+      "data": [
+        {
+          "id": 1,
+          "name": "Cherthala",
+          "city": "Cherthala",
+          "phone": "+917907240062",
+          "email": "aiswarya@aiswaryamatrimonials.com",
+          "address": "Near Private Bus Stand, Cherthala – 688524"
+        }
+      ]
+    }
+  Notes:
+    - Public fields only (no revenue, profiles_count, or admin status flags)
+    - Inactive and soft-deleted branches are omitted
+
+POST /api/v1/website/enquiries/
+  Auth: None
+  Description: Public Contact Us form. Creates an Enquiry with source=website, status=new.
+  Body (JSON):
+    {
+      "name": "string (required)",
+      "phone": "string (required, 10-digit Indian mobile)",
+      "email": "string (optional)",
+      "subject": "string (optional)",
+      "message": "string (required)"
+    }
+  Success 201:
+    {
+      "success": true,
+      "data": { "message": "Message sent successfully. We'll get back to you shortly." }
+    }
+  Error 400: missing name/phone/message, or invalid phone/email
+  Notes:
+    - subject + message are stored on Enquiry.notes
+    - assigned_to / source from the client are ignored; source is always "website"
 
 ================================================================================
 END OF API DOCUMENTATION

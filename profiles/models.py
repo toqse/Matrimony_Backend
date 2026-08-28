@@ -5,7 +5,7 @@ from django.db import models
 from django.conf import settings
 from core.models import TimeStampedModel
 
-from core.watermark import watermark_model_images
+from core.watermark import compress_assigned_images, watermark_model_images
 
 __all__ = [
     'UserProfile',
@@ -254,4 +254,5 @@ class UserPhotos(TimeStampedModel):
             watermark_path=settings.BASE_DIR / 'WhatsApp Image 2026-04-24 at 4.40.09 PM.png',
             exclude_fields=('aadhaar_front', 'aadhaar_back'),
         )
+        compress_assigned_images(self, ('aadhaar_front', 'aadhaar_back'))
         super().save(*args, **kwargs)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.db.models import Count, Q
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -21,6 +22,7 @@ from .serializers import (
     EnquiryMoveSerializer,
     EnquiryNoteCreateSerializer,
     EnquirySerializer,
+    PublicEnquiryCreateSerializer,
 )
 
 
@@ -638,3 +640,49 @@ class EnquiryKanbanView(_AdminUserMixin, APIView):
             }
 
         return Response({"success": True, "data": result})
+
+
+class PublicEnquiryCreateAPIView(APIView):
+    """POST /api/v1/website/enquiries/ — public Contact Us form (no token)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = PublicEnquiryCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": 400,
+                        "message": _first_serializer_error(serializer),
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        subject = data.get("subject") or ""
+        message = data["message"]
+        notes = f"{subject}\n\n{message}" if subject else message
+
+        Enquiry.objects.create(
+            name=data["name"],
+            phone=data["phone"],
+            email=data.get("email") or None,
+            source="website",
+            status="new",
+            notes=notes,
+            created_by=None,
+            assigned_to=None,
+        )
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "message": "Message sent successfully. We'll get back to you shortly.",
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )

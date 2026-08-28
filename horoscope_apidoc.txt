@@ -32,11 +32,11 @@ Without an active plan, a member may still:
 
 With an **active plan**, these additionally apply:
 - GET `/api/v1/astrology/horoscope/<user_uuid>/` — another member’s public horoscope summary (see §3).
-- POST `/api/v1/astrology/porutham/` — compatibility check (consumes quota on success).
+- POST `/api/v1/astrology/porutham/` — compatibility check (consumes quota on the **first** successful match of a bride/groom pair).
 
 Horoscope match quota (`Plan.horoscope_match_limit`; `0` = unlimited):
-- **POST `/api/v1/astrology/porutham/`** — each successful **200** consumes **one** unit on `UserPlan.horoscope_used`
-  (`consume_horoscope_match`).
+- **POST `/api/v1/astrology/porutham/`** — the first successful **200** for a given bride/groom pair consumes **one** unit on `UserPlan.horoscope_used`
+  (`consume_horoscope_match`). Rechecking the **same** pair does not consume quota and is still allowed when remaining quota is 0.
 - There is **no** `POST /astrology/generate/` anymore; quota is **not** consumed by chart or PDF download stubs.
 
 HTTP 403:

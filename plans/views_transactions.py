@@ -22,7 +22,7 @@ def build_transaction_summary(user):
     total_spent = Transaction.objects.filter(
         user=user,
         payment_status=Transaction.STATUS_SUCCESS,
-        transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+        transaction_type__in=Transaction.SPEND_TYPES,
     ).aggregate(total=Sum('total_amount'))['total'] or 0
 
     active_plan_name = None

@@ -67,6 +67,52 @@ def apply_partner_age_preference(qs, viewer_rel):
     return qs
 
 
+def count_unique_match_profiles(qs) -> int:
+    """Count distinct users so JOIN/annotation duplication cannot inflate totals."""
+    return qs.values("pk").distinct().count()
+
+
+def apply_saved_partner_preferences(qs, user, *, apply_religion=True, apply_age=True):
+    """Apply the viewer's saved partner religion/caste and age prefs (My Matches defaults)."""
+    viewer_rel = UserReligion.objects.filter(user=user).first()
+    if not viewer_rel:
+        return qs
+    if apply_religion:
+        qs = apply_partner_preference(qs, viewer_rel)
+    if apply_age:
+        qs = apply_partner_age_preference(qs, viewer_rel)
+    return qs
+
+
+def apply_profile_visibility_for_viewer(qs, user):
+    """Hidden profiles always excluded; premium-only profiles hidden from viewers without a plan."""
+    from plans.services import _get_user_plan
+
+    qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
+    if _get_user_plan(user) is None:
+        qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
+    return qs
+
+
+def preferred_match_queryset(user):
+    """
+    Unfiltered My Matches pool: opposite gender, completion visibility,
+    saved partner religion/caste + age, and profile visibility.
+    Dashboard new_matches KPI must use this so it matches GET /matches/ total
+    when no extra sidebar filters are applied.
+    """
+    qs = User.objects.filter(is_active=True).exclude(pk=user.pk)
+    gender = getattr(user, "gender", None)
+    if gender == "M":
+        qs = qs.filter(gender="F")
+    elif gender == "F":
+        qs = qs.filter(gender="M")
+    qs = filter_visible_profiles_queryset(qs)
+    qs = apply_saved_partner_preferences(qs, user)
+    qs = apply_profile_visibility_for_viewer(qs, user)
+    return qs.distinct()
+
+
 def match_queryset_for_user(target_user: User):
     """Active members, opposite gender, exclude self, visibility rules."""
     qs = User.objects.filter(is_active=True, role="user").exclude(pk=target_user.pk)

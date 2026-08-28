@@ -5,6 +5,20 @@ from core.phone import extract_indian_mobile_10, mobile_10_from_stored, normaliz
 from .models import Branch
 from .services import generate_branch_code
 
+
+class PublicBranchSerializer(serializers.ModelSerializer):
+    """Public contact fields only — no revenue, staff counts, or status flags."""
+
+    class Meta:
+        model = Branch
+        fields = ["id", "name", "city", "phone", "email", "address"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["phone"] = to_e164_display(instance.phone)
+        return data
+
+
 class BranchSerializer(serializers.ModelSerializer):
     profiles_count = serializers.IntegerField(read_only=True)
     revenue = serializers.FloatField(read_only=True)

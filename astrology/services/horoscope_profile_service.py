@@ -23,6 +23,7 @@ from datetime import date, datetime, time, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from django.utils import timezone as dj_timezone
 from rest_framework import serializers
 
 logger = logging.getLogger(__name__)
@@ -366,6 +367,10 @@ def create_horoscope_profile(
         user=user,
         defaults=defaults,
     )
+    # Guarantee updated_at even when chart inputs are unchanged (auto_now can
+    # be skipped by the UserProfile sync signal's early return).
+    horoscope_profile.updated_at = dj_timezone.now()
+    horoscope_profile.save(update_fields=['updated_at'])
     return horoscope_profile
 
 

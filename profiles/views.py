@@ -583,6 +583,49 @@ class ProfileViewsView(APIView):
 class BasicDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    _HOROSCOPE_KEYS = (
+        'has_horoscope', 'birth_time', 'time_of_birth', 'birth_place',
+        'place_of_birth', 'birth_latitude', 'latitude', 'birth_longitude',
+        'longitude', 'birth_timezone', 'timezone',
+    )
+
+    def _horoscope_block(self, request):
+        profile = UserProfile.objects.filter(user=request.user).first()
+        return {
+            'has_horoscope': bool(getattr(profile, 'has_horoscope', False)),
+            'birth_time': profile.time_of_birth if profile else None,
+            'birth_place': getattr(profile, 'place_of_birth', '') if profile else '',
+            'birth_latitude': getattr(profile, 'birth_latitude', None) if profile else None,
+            'birth_longitude': getattr(profile, 'birth_longitude', None) if profile else None,
+            'birth_timezone': getattr(profile, 'birth_timezone', None) if profile else None,
+        }
+
+    def _apply_horoscope(self, request):
+        """
+        Persist optional horoscope birth inputs and upsert the EXE bridge row.
+
+        No-op when the payload carries no horoscope fields, so plain name/email
+        PATCH stays unchanged. Raises DRF ValidationError on invalid input
+        (e.g. has_horoscope=true without time/place).
+        """
+        if not any(k in request.data for k in self._HOROSCOPE_KEYS):
+            return
+        from astrology.services.horoscope_profile_service import (
+            HoroscopeInputSerializer,
+            apply_profile_edit_horoscope,
+        )
+
+        dob = getattr(request.user, 'dob', None)
+        horo = HoroscopeInputSerializer(
+            data=request.data, context={'date_of_birth': dob}
+        )
+        horo.is_valid(raise_exception=True)
+        profile, _ = UserProfile.objects.get_or_create(
+            user=request.user, defaults={}
+        )
+        payload = dict(request.data) if isinstance(request.data, dict) else {}
+        apply_profile_edit_horoscope(request.user, profile, payload)
+
     def get(self, request):
         user = request.user
         ser = BasicDetailsReadSerializer(user)
@@ -603,17 +646,32 @@ class BasicDetailsView(APIView):
         data['profile_photo'] = profile_photo
         data['location'] = location_str or ''
         data['matri_id'] = user.matri_id or ''
+        data['horoscope'] = self._horoscope_block(request)
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
         ser = BasicDetailsUpdateSerializer(request.user, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
+        if any(k in request.data for k in self._HOROSCOPE_KEYS):
+            from astrology.services.horoscope_profile_service import (
+                HoroscopeInputSerializer,
+            )
+            dob = ser.validated_data.get('dob', getattr(request.user, 'dob', None))
+            if dob is None:
+                dob = getattr(request.user, 'dob', None)
+            horo = HoroscopeInputSerializer(
+                data=request.data, context={'date_of_birth': dob}
+            )
+            horo.is_valid(raise_exception=True)
         try:
             ser.save()
         except IntegrityError:
             raise ValidationError({'email': ['Email already exists. Please use a different email.']})
+        self._apply_horoscope(request)
         _audit_member_profile(request, "Basic details updated.")
-        return Response({'success': True, 'data': BasicDetailsReadSerializer(ser.instance).data}, status=status.HTTP_200_OK)
+        data = dict(BasicDetailsReadSerializer(ser.instance).data)
+        data['horoscope'] = self._horoscope_block(request)
+        return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
 
 class ProfileLocationView(APIView):

@@ -605,7 +605,33 @@ class UserProfileAboutSerializer(serializers.Serializer):
         return obj
 
 
+_PHOTO_MAX_BYTES = 2 * 1024 * 1024
+_PHOTO_SIZE_ERROR = "Photo must be JPEG, PNG, or WebP and at most 2MB."
+
+
+class MaxSizeImageField(serializers.ImageField):
+    """Reject files over 2MB before Pillow tries to decode them."""
+
+    default_error_messages = {
+        **serializers.ImageField.default_error_messages,
+        "max_size": _PHOTO_SIZE_ERROR,
+    }
+
+    def to_internal_value(self, data):
+        size = getattr(data, "size", None)
+        if size is not None and size > _PHOTO_MAX_BYTES:
+            self.fail("max_size")
+        return super().to_internal_value(data)
+
+
 class UserPhotosSerializer(serializers.ModelSerializer):
+    profile_photo = MaxSizeImageField(required=False, allow_null=True)
+    full_photo = MaxSizeImageField(required=False, allow_null=True)
+    selfie_photo = MaxSizeImageField(required=False, allow_null=True)
+    family_photo = MaxSizeImageField(required=False, allow_null=True)
+    aadhaar_front = MaxSizeImageField(required=False, allow_null=True)
+    aadhaar_back = MaxSizeImageField(required=False, allow_null=True)
+
     class Meta:
         model = UserPhotos
         fields = [

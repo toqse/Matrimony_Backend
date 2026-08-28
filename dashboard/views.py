@@ -3,7 +3,6 @@ Dashboard APIs: summary, new-matches, suggestions, today-picks.
 All require JWT authentication.
 """
 from datetime import timedelta
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
@@ -13,10 +12,16 @@ from rest_framework.permissions import IsAuthenticated
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
 from profiles.utils import get_profile_completion_data, filter_visible_profiles_queryset
-from plans.models import ProfileView, Interest, UserPlan
+from plans.models import ProfileView, Interest
 from plans.services import _get_user_plan, get_plan_info_for_response
-from user_settings.models import UserSettings
 from matches.rotation import annotate_daily_rotation_rank
+from matches.services import (
+    apply_partner_age_preference,
+    apply_partner_preference,
+    apply_profile_visibility_for_viewer,
+    count_unique_match_profiles,
+    preferred_match_queryset,
+)
 from matches.utils import age_from_dob, compute_match_percentage
 from core.media import absolute_media_url
 
@@ -49,43 +54,12 @@ def _match_queryset(user):
 
 
 def _apply_partner_preference(qs, user):
-    """Apply viewer's partner religion/caste preference."""
-    from profiles.models import UserReligion
+    """Apply viewer's saved partner religion/caste and age (same as unfiltered My Matches)."""
     viewer_rel = UserReligion.objects.filter(user=user).first()
-    if viewer_rel:
-        pref_type = getattr(viewer_rel, 'partner_preference_type', None) or UserReligion.PARTNER_PREFERENCE_ALL
-        caste_map = getattr(viewer_rel, 'partner_caste_preferences', None) or {}
-        normalized_caste_map = {}
-        for key, value in caste_map.items():
-            try:
-                rid = int(str(key).strip())
-            except (TypeError, ValueError):
-                continue
-            if isinstance(value, list):
-                normalized_caste_map[rid] = [int(cid) for cid in value if str(cid).strip().isdigit()]
-        if pref_type == UserReligion.PARTNER_PREFERENCE_OWN:
-            if not viewer_rel.religion_id:
-                return qs.none()
-            qs = qs.filter(user_religion__religion_id=viewer_rel.religion_id)
-            own_castes = normalized_caste_map.get(int(viewer_rel.religion_id), [])
-            if own_castes:
-                qs = qs.filter(user_religion__caste_fk_id__in=own_castes)
-        elif pref_type == UserReligion.PARTNER_PREFERENCE_SPECIFIC:
-            religion_ids = [int(x) for x in (getattr(viewer_rel, 'partner_religion_ids', None) or [])]
-            if religion_ids:
-                religion_filter = Q()
-                for religion_id in religion_ids:
-                    caste_ids = normalized_caste_map.get(religion_id, [])
-                    if caste_ids:
-                        religion_filter |= Q(
-                            user_religion__religion_id=religion_id,
-                            user_religion__caste_fk_id__in=caste_ids,
-                        )
-                    else:
-                        religion_filter |= Q(user_religion__religion_id=religion_id)
-                qs = qs.filter(religion_filter)
-            else:
-                qs = qs.none()
+    if not viewer_rel:
+        return qs
+    qs = apply_partner_preference(qs, viewer_rel)
+    qs = apply_partner_age_preference(qs, viewer_rel)
     return qs
 
 
@@ -190,6 +164,9 @@ class DashboardSummaryView(APIView):
     """
     GET /api/v1/dashboard/summary/
     Returns summary stats for dashboard header.
+
+    new_matches is the unfiltered My Matches total (saved partner prefs + visibility),
+    so it matches GET /api/v1/matches/ total_profiles when no extra sidebar filters are applied.
     """
     permission_classes = [IsAuthenticated]
 
@@ -209,13 +186,8 @@ class DashboardSummaryView(APIView):
         interests_received = Interest.objects.filter(receiver=user).count()
         interests_sent = Interest.objects.filter(sender=user).count()
 
-        qs = _match_queryset(user)
-        qs = _apply_partner_preference(qs, user)
-        qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
-        viewer_has_plan = _get_user_plan(user) is not None
-        if not viewer_has_plan:
-            qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
-        new_matches = qs.distinct().count()
+        qs = preferred_match_queryset(user)
+        new_matches = count_unique_match_profiles(qs)
 
         plan = get_plan_info_for_response(user)
 
@@ -248,13 +220,8 @@ class NewMatchesView(APIView):
         except (TypeError, ValueError):
             limit = 4
 
-        qs = _match_queryset(user)
-        qs = _apply_partner_preference(qs, user)
-        qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
-        viewer_has_plan = _get_user_plan(user) is not None
-        if not viewer_has_plan:
-            qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
-        qs = qs.select_related(*_CARD_SELECT_RELATED).distinct()
+        qs = preferred_match_queryset(user)
+        qs = qs.select_related(*_CARD_SELECT_RELATED)
         qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')[:limit]
 
         viewer_ctx = _load_viewer_match_context(user)
@@ -279,10 +246,7 @@ class SuggestionsView(APIView):
 
         qs = _match_queryset(user)
         qs = _apply_partner_preference(qs, user)
-        qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
-        viewer_has_plan = _get_user_plan(user) is not None
-        if not viewer_has_plan:
-            qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
+        qs = apply_profile_visibility_for_viewer(qs, user)
 
         # Nearby matches: filter by same city (no coordinates).
         # If viewer city is not set, return empty suggestions (city-only mode).
@@ -314,7 +278,7 @@ class SuggestionsView(APIView):
 
         qs = qs.select_related(*_CARD_SELECT_RELATED).distinct()
         qs = annotate_daily_rotation_rank(qs).order_by('daily_rotation_rank', 'pk')
-        total = qs.count()
+        total = count_unique_match_profiles(qs)
         start = (page - 1) * page_size
         page_qs = qs[start:start + page_size]
 
@@ -345,10 +309,7 @@ class TodayPicksView(APIView):
         user = request.user
         qs = _match_queryset(user)
         qs = _apply_partner_preference(qs, user)
-        qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
-        viewer_has_plan = _get_user_plan(user) is not None
-        if not viewer_has_plan:
-            qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
+        qs = apply_profile_visibility_for_viewer(qs, user)
         qs = qs.filter(user_photos__profile_photo__isnull=False)
         qs = qs.select_related(
             'user_education', 'user_education__occupation',

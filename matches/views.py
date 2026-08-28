@@ -17,12 +17,15 @@ from plans.services import (
     can_send_interest,
     can_chat,
     user_has_active_plan,
-    _get_user_plan,
 )
-from user_settings.models import UserSettings
 from wishlist.models import Wishlist
 
-from .services import apply_partner_age_preference, apply_partner_preference
+from .services import (
+    apply_partner_age_preference,
+    apply_partner_preference,
+    apply_profile_visibility_for_viewer,
+    count_unique_match_profiles,
+)
 from .rotation import annotate_daily_rotation_rank
 from .utils import age_from_dob, dob_range_for_age, build_user_match_score_sql_expression
 from .serializers import MatchListProfileSerializer, format_last_seen
@@ -115,11 +118,7 @@ def _match_list_response(request, *, home_slider=False):
             qs = apply_partner_preference(qs, viewer_rel)
         if not has_age_filter:
             qs = apply_partner_age_preference(qs, viewer_rel)
-    # Profile visibility: hidden -> exclude; premium_only -> show only to viewers with active plan
-    qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_HIDDEN)
-    viewer_has_plan = _get_user_plan(request.user) is not None
-    if not viewer_has_plan:
-        qs = qs.exclude(user_settings__profile_visibility=UserSettings.PROFILE_VISIBILITY_PREMIUM)
+    qs = apply_profile_visibility_for_viewer(qs, request.user)
     qs = qs.distinct()
 
     # Search: name, matri_id, education, occupation
@@ -187,6 +186,8 @@ def _match_list_response(request, *, home_slider=False):
         qs = qs.filter(user_photos__profile_photo__isnull=False)
 
     qs = qs.distinct()
+    # Count unique users before score/rotation annotations (those add JOINs that inflate COUNT).
+    total = count_unique_match_profiles(qs)
 
     viewed_subq = ProfileViewModel.objects.filter(
         viewer=request.user,
@@ -239,7 +240,6 @@ def _match_list_response(request, *, home_slider=False):
         limit = max(1, min(50, int(request.query_params.get('limit', 10))))
     except (TypeError, ValueError):
         limit = 10
-    total = qs.count()
     start = (page - 1) * limit
     qs = qs.select_related(
         'user_personal', 'user_personal__height', 'user_personal__marital_status',
@@ -432,3 +432,8 @@ class MatchFilterOptionsView(APIView):
         }
         mc.set_cached_master_list(mc.RESOURCE_MATCH_FILTERS, '', payload)
         return Response(payload, status=status.HTTP_200_OK)
+
+
+# Back-compat aliases used by profiles.tests.test_partner_caste_preferences
+_apply_partner_preference = apply_partner_preference
+_apply_partner_age_preference = apply_partner_age_preference
