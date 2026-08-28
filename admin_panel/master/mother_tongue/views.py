@@ -9,6 +9,8 @@ from admin_panel.auth.models import AdminUser
 from master.models import MotherTongue
 from profiles.models import UserReligion
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import MotherTongueSerializer
 
 
@@ -31,7 +33,7 @@ class MotherTongueListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        qs = MotherTongue.objects.filter(is_active=True)
+        qs = MotherTongue.objects.all()
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -95,3 +97,11 @@ class MotherTongueDetailAPIView(APIView):
         obj.is_active = False
         obj.save(update_fields=["is_active", "updated_at"])
         return Response({"success": True, "data": {"id": obj.id, "is_active": obj.is_active}})
+
+
+class MotherTongueToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = MotherTongue
+    not_found_message = "Mother tongue not found."
+
+    def serialize(self, obj):
+        return MotherTongueSerializer(obj).data

@@ -11,6 +11,8 @@ from master.cache_utils import RESOURCE_CITIES, RESOURCE_DISTRICTS, invalidate_m
 from master.models import City, Country, District, State
 from profiles.models import UserLocation
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import (
     DistrictListSerializer,
     DistrictStateTabSerializer,
@@ -75,7 +77,7 @@ class DistrictListCreateAPIView(APIView):
         if not state:
             return _error("State not found.", 404)
 
-        qs = District.objects.filter(is_active=True, state_id=state.id)
+        qs = District.objects.filter(state_id=state.id)
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -149,3 +151,21 @@ class DistrictDetailAPIView(APIView):
 
         invalidate_master_resources(RESOURCE_DISTRICTS, RESOURCE_CITIES)
         return Response({"success": True, "data": {"id": obj.id, "is_active": obj.is_active}})
+
+
+class DistrictToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = District
+    not_found_message = "District not found."
+
+    def get_object(self, pk: int):
+        return District.objects.select_related("state").filter(pk=pk).first()
+
+    def serialize(self, obj):
+        return DistrictListSerializer(obj).data
+
+    def cascade_deactivate(self, obj):
+        City.objects.filter(district_id=obj.id, is_active=True).update(is_active=False)
+
+    def invalidate(self, obj, activating: bool):
+        if not activating:
+            invalidate_master_resources(RESOURCE_DISTRICTS, RESOURCE_CITIES)

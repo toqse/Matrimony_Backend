@@ -17,6 +17,8 @@ from master.cache_utils import (
 from master.models import City, Country, District, State
 from profiles.models import UserLocation
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import CountryListSerializer, CountryWriteSerializer
 
 
@@ -46,7 +48,7 @@ class CountryListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        qs = Country.objects.filter(is_active=True)
+        qs = Country.objects.all()
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search))
@@ -130,3 +132,28 @@ class CountryDetailAPIView(APIView):
             RESOURCE_COUNTRIES, RESOURCE_STATES, RESOURCE_DISTRICTS, RESOURCE_CITIES
         )
         return Response({"success": True, "data": {"id": obj.id, "is_active": obj.is_active}})
+
+
+class CountryToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = Country
+    not_found_message = "Country not found."
+
+    def serialize(self, obj):
+        return CountryListSerializer(
+            CountryListSerializer.setup_eager_loading(Country.objects.filter(pk=obj.pk)).first()
+        ).data
+
+    def cascade_deactivate(self, obj):
+        state_ids = list(State.objects.filter(country_id=obj.id, is_active=True).values_list("id", flat=True))
+        district_ids = list(
+            District.objects.filter(state_id__in=state_ids, is_active=True).values_list("id", flat=True)
+        )
+        State.objects.filter(id__in=state_ids).update(is_active=False)
+        District.objects.filter(id__in=district_ids).update(is_active=False)
+        City.objects.filter(district_id__in=district_ids, is_active=True).update(is_active=False)
+
+    def invalidate(self, obj, activating: bool):
+        if not activating:
+            invalidate_master_resources(
+                RESOURCE_COUNTRIES, RESOURCE_STATES, RESOURCE_DISTRICTS, RESOURCE_CITIES
+            )

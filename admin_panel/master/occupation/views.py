@@ -8,6 +8,8 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from master.models import Occupation
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import OccupationListSerializer, OccupationWriteSerializer
 
 
@@ -37,7 +39,7 @@ class OccupationListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        qs = Occupation.objects.filter(is_active=True)
+        qs = Occupation.objects.all()
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -110,3 +112,12 @@ class OccupationDetailAPIView(APIView):
             {"id": obj.id, "is_active": obj.is_active},
             message="Occupation deactivated successfully",
         )
+
+
+class OccupationToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = Occupation
+    not_found_message = "Occupation not found."
+    include_message = True
+
+    def serialize(self, obj):
+        return OccupationListSerializer(obj).data

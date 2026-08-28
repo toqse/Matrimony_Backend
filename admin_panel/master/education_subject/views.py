@@ -8,6 +8,8 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from master.models import EducationSubject
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import EducationSubjectListSerializer, EducationSubjectWriteSerializer
 
 
@@ -37,7 +39,7 @@ class EducationSubjectListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        qs = EducationSubject.objects.filter(is_active=True).prefetch_related("educations")
+        qs = EducationSubject.objects.all().prefetch_related("educations")
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -120,3 +122,15 @@ class EducationSubjectDetailAPIView(APIView):
             {"id": obj.id, "is_active": obj.is_active},
             message="Education subject deactivated successfully",
         )
+
+
+class EducationSubjectToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = EducationSubject
+    not_found_message = "Education subject not found."
+    include_message = True
+
+    def get_object(self, pk: int):
+        return EducationSubject.objects.filter(pk=pk).prefetch_related("educations").first()
+
+    def serialize(self, obj):
+        return EducationSubjectListSerializer(obj).data

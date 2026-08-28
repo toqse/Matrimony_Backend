@@ -9,6 +9,8 @@ from admin_panel.auth.models import AdminUser
 from master.models import Caste, Religion
 from profiles.models import UserReligion
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import CasteListSerializer, CasteReligionTabSerializer, CasteWriteSerializer
 
 
@@ -55,7 +57,7 @@ class CasteListCreateAPIView(APIView):
         if not religion:
             return _error("Religion not found.", 404)
 
-        qs = Caste.objects.filter(is_active=True, religion_id=religion.id)
+        qs = Caste.objects.filter(religion_id=religion.id)
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -129,3 +131,14 @@ class CasteDetailAPIView(APIView):
         obj.is_active = False
         obj.save(update_fields=["is_active", "updated_at"])
         return Response({"success": True, "data": {"id": obj.id, "is_active": obj.is_active}})
+
+
+class CasteToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = Caste
+    not_found_message = "Caste not found."
+
+    def get_object(self, pk: int):
+        return Caste.objects.select_related("religion").filter(pk=pk).first()
+
+    def serialize(self, obj):
+        return CasteListSerializer(obj).data

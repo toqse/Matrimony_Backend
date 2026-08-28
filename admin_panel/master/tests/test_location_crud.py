@@ -178,11 +178,53 @@ class LocationMasterCRUDTests(TestCase):
         self.assertFalse(extra_city.is_active)
 
         res = self.client.get(COUNTRIES)
-        names = [row["name"] for row in res.data["data"]["results"]]
-        self.assertNotIn("India", names)
+        india = next(row for row in res.data["data"]["results"] if row["name"] == "India")
+        self.assertFalse(india["is_active"])
 
     def test_soft_delete_city(self):
         res = self.client.delete(f"{CITIES}{self.city.id}/")
         self.assertEqual(res.status_code, 200)
         self.city.refresh_from_db()
         self.assertFalse(self.city.is_active)
+
+    def test_deactivate_country_when_used_by_profile(self):
+        member = User.objects.create_user(mobile="9300000402", password="x", role="user")
+        UserLocation.objects.create(user=member, country=self.country)
+
+        res = self.client.patch(f"{COUNTRIES}{self.country.id}/toggle-status/")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertFalse(res.data["data"]["is_active"])
+
+        self.country.refresh_from_db()
+        self.state.refresh_from_db()
+        self.district.refresh_from_db()
+        self.city.refresh_from_db()
+        self.assertFalse(self.country.is_active)
+        self.assertFalse(self.state.is_active)
+        self.assertFalse(self.district.is_active)
+        self.assertFalse(self.city.is_active)
+
+        res = self.client.patch(f"{COUNTRIES}{self.country.id}/toggle-status/")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data["data"]["is_active"])
+        self.country.refresh_from_db()
+        self.state.refresh_from_db()
+        self.assertTrue(self.country.is_active)
+        self.assertFalse(self.state.is_active)
+
+    def test_deactivate_city_when_used_by_profile(self):
+        member = User.objects.create_user(mobile="9300000403", password="x", role="user")
+        UserLocation.objects.create(user=member, city=self.city)
+
+        res = self.client.delete(f"{CITIES}{self.city.id}/")
+        self.assertEqual(res.status_code, 400)
+
+        res = self.client.patch(f"{CITIES}{self.city.id}/toggle-status/")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.city.refresh_from_db()
+        self.assertFalse(self.city.is_active)
+
+    def test_staff_cannot_toggle_country(self):
+        self.client.force_authenticate(user=self.staff)
+        res = self.client.patch(f"{COUNTRIES}{self.country.id}/toggle-status/")
+        self.assertEqual(res.status_code, 403)

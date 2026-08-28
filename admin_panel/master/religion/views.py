@@ -10,6 +10,8 @@ from admin_panel.auth.models import AdminUser
 from master.models import Caste, Religion
 from profiles.models import UserReligion
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import ReligionListSerializer, ReligionWriteSerializer
 
 
@@ -32,7 +34,7 @@ class ReligionListCreateAPIView(APIView):
         return getattr(request.user, "role", None) == AdminUser.ROLE_ADMIN
 
     def get(self, request):
-        qs = Religion.objects.filter(is_active=True)
+        qs = Religion.objects.all()
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -107,3 +109,16 @@ class ReligionDetailAPIView(APIView):
             Caste.objects.filter(religion_id=obj.id, is_active=True).update(is_active=False)
 
         return Response({"success": True, "data": {"id": obj.id, "is_active": obj.is_active}})
+
+
+class ReligionToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = Religion
+    not_found_message = "Religion not found."
+
+    def serialize(self, obj):
+        return ReligionListSerializer(
+            ReligionListSerializer.setup_eager_loading(Religion.objects.filter(pk=obj.pk)).first()
+        ).data
+
+    def cascade_deactivate(self, obj):
+        Caste.objects.filter(religion_id=obj.id, is_active=True).update(is_active=False)

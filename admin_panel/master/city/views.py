@@ -9,6 +9,8 @@ from admin_panel.auth.models import AdminUser
 from master.models import City, District, State
 from profiles.models import UserLocation
 
+from admin_panel.master.toggle import MasterToggleStatusAPIView
+
 from .serializers import CityDistrictTabSerializer, CityListSerializer, CityWriteSerializer
 
 
@@ -69,7 +71,7 @@ class CityListCreateAPIView(APIView):
         if not district:
             return _error("District not found.", 404)
 
-        qs = City.objects.filter(is_active=True, district_id=district.id)
+        qs = City.objects.filter(district_id=district.id)
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search))
@@ -137,3 +139,14 @@ class CityDetailAPIView(APIView):
         obj.is_active = False
         obj.save(update_fields=["is_active", "updated_at"])
         return Response({"success": True, "data": {"id": obj.id, "is_active": obj.is_active}})
+
+
+class CityToggleStatusAPIView(MasterToggleStatusAPIView):
+    model = City
+    not_found_message = "City not found."
+
+    def get_object(self, pk: int):
+        return City.objects.select_related("district").filter(pk=pk).first()
+
+    def serialize(self, obj):
+        return CityListSerializer(obj).data
