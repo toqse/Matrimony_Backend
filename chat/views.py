@@ -3,18 +3,22 @@ REST APIs for chat list and message history.
 """
 from datetime import timedelta
 
-from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.db.models import Q, Count, OuterRef, Subquery, Case, When, F
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from django.db.models import Count, F, IntegerField, OuterRef, Q, Subquery, Case, When
+from django.db.models.functions import Coalesce
 from django.utils import timezone
+from rest_framework import status
+from rest_framework.parsers import JSONParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from accounts.models import User
-from plans.models import Conversation, Message, Interest
-from plans.services import has_accepted_interest_between, get_user_plan_status, plan_expired_response
-from matches.serializers import format_last_seen
 from core.media import absolute_media_url
+from matches.serializers import format_last_seen
+from plans.models import Conversation, Interest, Message
+from plans.services import get_user_plan_status, has_accepted_interest_between, plan_expired_response
 
 
 def _parse_page_params(request, default_page_size=20, max_page_size=100):
@@ -70,6 +74,87 @@ def _accepted_other_user_ids_subquery(user):
     )
 
 
+def _serialize_message(m):
+    return {
+        'id': m.id,
+        'sender_id': str(m.sender_id),
+        'sender_matri_id': m.sender.matri_id or '',
+        'sender_name': m.sender.name or '',
+        'text': m.text,
+        'created_at': m.created_at.isoformat() if m.created_at else None,
+        'read_at': m.read_at.isoformat() if m.read_at else None,
+    }
+
+
+def _participant_error_response(request, conversation_id):
+    """
+    Load conversation and verify the current user may use it.
+
+    Returns (conv, other, None) on success, or (None, None, Response) on failure.
+    """
+    user = request.user
+    if get_user_plan_status(user) != 'active':
+        return None, None, Response(
+            plan_expired_response(user), status=status.HTTP_403_FORBIDDEN
+        )
+    try:
+        conv = Conversation.objects.select_related('user1', 'user2').get(
+            pk=conversation_id
+        )
+    except Conversation.DoesNotExist:
+        return None, None, Response(
+            {
+                'success': False,
+                'error': {'code': 404, 'message': 'Conversation not found.'},
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    if user.pk != conv.user1_id and user.pk != conv.user2_id:
+        return None, None, Response(
+            {
+                'success': False,
+                'error': {
+                    'code': 403,
+                    'message': 'Not a participant in this conversation.',
+                },
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    other = _other_user(conv, user)
+    if not has_accepted_interest_between(user, other):
+        return None, None, Response(
+            {
+                'success': False,
+                'error': {
+                    'code': 403,
+                    'message': 'Please accept the interest request to view messages.',
+                },
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return conv, other, None
+
+
+def _broadcast_chat_message(*, conversation_id, user, msg):
+    """Notify WebSocket clients; must not fail the REST write if Redis is down."""
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+    payload = {
+        'type': 'chat_message',
+        'message_id': msg.id,
+        'sender_id': str(user.pk),
+        'sender_matri_id': getattr(user, 'matri_id', None) or '',
+        'sender_name': getattr(user, 'name', None) or '',
+        'text': msg.text,
+        'created_at': msg.created_at.isoformat() if msg.created_at else None,
+    }
+    try:
+        async_to_sync(channel_layer.group_send)(f'chat_{conversation_id}', payload)
+    except Exception:
+        pass
+
+
 class ChatListView(APIView):
     """
     GET /api/v1/chat/list/
@@ -84,7 +169,25 @@ class ChatListView(APIView):
         page, page_size = _parse_page_params(request, default_page_size=20, max_page_size=100)
 
         accepted_others = _accepted_other_user_ids_subquery(user)
-        last_msg_qs = Message.objects.filter(conversation_id=OuterRef('pk')).order_by('-created_at')
+        last_text_qs = (
+            Message.objects.filter(conversation_id=OuterRef('pk'))
+            .order_by('-created_at', '-id')
+        )
+        last_at_qs = (
+            Message.objects.filter(conversation_id=OuterRef('pk'))
+            .order_by('-created_at', '-id')
+        )
+        unread_qs = (
+            Message.objects.filter(
+                conversation_id=OuterRef('pk'),
+                read_at__isnull=True,
+            )
+            .exclude(sender_id=user.pk)
+            .order_by()
+            .values('conversation_id')
+            .annotate(c=Count('id'))
+            .values('c')
+        )
 
         convs = (
             Conversation.objects.filter(Q(user1=user) | Q(user2=user))
@@ -97,11 +200,11 @@ class ChatListView(APIView):
                 'user1__user_photos', 'user2__user_photos',
             )
             .annotate(
-                last_msg_text=Subquery(last_msg_qs.values('text')[:1]),
-                last_msg_at=Subquery(last_msg_qs.values('created_at')[:1]),
-                unread_count=Count(
-                    'messages',
-                    filter=Q(messages__read_at__isnull=True) & ~Q(messages__sender_id=user.pk),
+                last_msg_text=Subquery(last_text_qs.values('text')[:1]),
+                last_msg_at=Subquery(last_at_qs.values('created_at')[:1]),
+                unread_count=Coalesce(
+                    Subquery(unread_qs, output_field=IntegerField()),
+                    0,
                 ),
             )
             .order_by('-updated_at')
@@ -148,35 +251,21 @@ class ChatListView(APIView):
 
 class ChatMessagesView(APIView):
     """
-    GET /api/v1/chat/messages/<conversation_id>/
-    Returns paginated messages for a conversation. User must be a participant.
-    Optional: ?page=1&limit=20
+    GET  /api/v1/chat/messages/<conversation_id>/
+         Paginated messages. Page 1 is the newest window, ordered oldest→newest
+         within the page so the last list preview is always included.
+    POST /api/v1/chat/messages/<conversation_id>/
+         Persist a message (WebSocket is live delivery only).
+    Optional GET: ?page=1&limit=20
     """
     permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
 
     def get(self, request, conversation_id):
+        conv, other, err = _participant_error_response(request, conversation_id)
+        if err:
+            return err
         user = request.user
-        if get_user_plan_status(user) != 'active':
-            return Response(plan_expired_response(user), status=status.HTTP_403_FORBIDDEN)
-        try:
-            conv = Conversation.objects.select_related('user1', 'user2').get(pk=conversation_id)
-        except Conversation.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': {'code': 404, 'message': 'Conversation not found.'},
-            }, status=status.HTTP_404_NOT_FOUND)
-        if user.pk != conv.user1_id and user.pk != conv.user2_id:
-            return Response({
-                'success': False,
-                'error': {'code': 403, 'message': 'Not a participant in this conversation.'},
-            }, status=status.HTTP_403_FORBIDDEN)
-
-        other = _other_user(conv, user)
-        if not has_accepted_interest_between(user, other):
-            return Response({
-                'success': False,
-                'error': {'code': 403, 'message': 'Please accept the interest request to view messages.'},
-            }, status=status.HTTP_403_FORBIDDEN)
 
         # Mark all messages from the other user as read when this user
         # loads the conversation, so unread_count in the chat list stays in sync.
@@ -194,10 +283,15 @@ class ChatMessagesView(APIView):
         except (TypeError, ValueError):
             limit = 20
 
-        qs = Message.objects.filter(conversation=conv).select_related('sender').order_by('created_at')
+        qs = (
+            Message.objects.filter(conversation=conv)
+            .select_related('sender')
+            .order_by('-created_at', '-id')
+        )
         total = qs.count()
         start = (page - 1) * limit
         messages = list(qs[start:start + limit])
+        messages.reverse()
 
         last_seen = getattr(other, 'last_seen', None)
         return Response({
@@ -214,20 +308,47 @@ class ChatMessagesView(APIView):
                 'total': total,
                 'page': page,
                 'limit': limit,
-                'messages': [
-                    {
-                        'id': m.id,
-                        'sender_id': str(m.sender_id),
-                        'sender_matri_id': m.sender.matri_id or '',
-                        'sender_name': m.sender.name or '',
-                        'text': m.text,
-                        'created_at': m.created_at.isoformat() if m.created_at else None,
-                        'read_at': m.read_at.isoformat() if m.read_at else None,
-                    }
-                    for m in messages
-                ],
+                'messages': [_serialize_message(m) for m in messages],
             },
         }, status=status.HTTP_200_OK)
+
+    def post(self, request, conversation_id):
+        conv, _other, err = _participant_error_response(request, conversation_id)
+        if err:
+            return err
+        user = request.user
+        text = (
+            (request.data.get('message') or request.data.get('text') or '')
+            .strip()
+            if isinstance(request.data, dict)
+            else ''
+        )
+        if not text:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 400, 'message': 'Message text required.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        msg = Message.objects.create(
+            conversation=conv,
+            sender=user,
+            text=text,
+        )
+        conv.updated_at = timezone.now()
+        conv.save(update_fields=['updated_at'])
+        msg.sender = user
+        _broadcast_chat_message(conversation_id=conv.id, user=user, msg=msg)
+
+        return Response(
+            {
+                'success': True,
+                'data': _serialize_message(msg),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class ChatUserStatusView(APIView):
