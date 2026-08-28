@@ -113,26 +113,82 @@ def _normalize_partner_caste_preferences(raw_value):
         raise serializers.ValidationError(
             {'partner_caste_preferences': 'Expected an object like {"<religion_id>": [<caste_id>, ...]}.'}
         )
-    normalized = {}
+
+    from django.db.models import Q
+    from master.models import Caste, Religion
+
+    pending = []
+    unresolved_religion_names = []
     for key, value in raw_value.items():
+        key_str = str(key).strip()
         try:
-            religion_id = int(str(key).strip())
+            religion_id = int(key_str)
+            pending.append((religion_id, value, key))
         except (TypeError, ValueError):
-            raise serializers.ValidationError(
-                {'partner_caste_preferences': f'Invalid religion key: {key}.'}
-            )
+            if not key_str:
+                raise serializers.ValidationError(
+                    {'partner_caste_preferences': f'Invalid religion key: {key}.'}
+                )
+            unresolved_religion_names.append(key_str)
+            pending.append((key_str, value, key))
+
+    name_to_religion_id = {}
+    if unresolved_religion_names:
+        rel_q = Q()
+        for name in unresolved_religion_names:
+            rel_q |= Q(name__iexact=name)
+        for rel in Religion.objects.filter(rel_q, is_active=True):
+            name_to_religion_id[rel.name.lower()] = rel.id
+
+    resolved_rows = []
+    pending_caste_names = []
+    for religion_ref, value, orig_key in pending:
+        if isinstance(religion_ref, int):
+            religion_id = religion_ref
+        else:
+            religion_id = name_to_religion_id.get(str(religion_ref).lower())
+            if religion_id is None:
+                raise serializers.ValidationError(
+                    {'partner_caste_preferences': f'Invalid religion key: {orig_key}.'}
+                )
         if not isinstance(value, list):
             raise serializers.ValidationError(
                 {'partner_caste_preferences': f'Religion {religion_id} must map to a list of caste ids.'}
             )
-        caste_ids = []
-        for caste_id in value:
+        resolved_rows.append((religion_id, value))
+        for caste_ref in value:
             try:
-                caste_ids.append(int(caste_id))
+                int(caste_ref)
             except (TypeError, ValueError):
+                caste_name = str(caste_ref).strip()
+                if caste_name:
+                    pending_caste_names.append((religion_id, caste_name))
+
+    caste_name_to_id = {}
+    if pending_caste_names:
+        caste_q = Q()
+        for religion_id, caste_name in pending_caste_names:
+            caste_q |= Q(religion_id=religion_id, name__iexact=caste_name)
+        for caste in Caste.objects.filter(caste_q, is_active=True):
+            caste_name_to_id[(caste.religion_id, caste.name.lower())] = caste.id
+
+    normalized = {}
+    for religion_id, value in resolved_rows:
+        caste_ids = []
+        for caste_ref in value:
+            try:
+                caste_ids.append(int(caste_ref))
+                continue
+            except (TypeError, ValueError):
+                pass
+            resolved_caste_id = caste_name_to_id.get(
+                (religion_id, str(caste_ref).strip().lower())
+            )
+            if resolved_caste_id is None:
                 raise serializers.ValidationError(
-                    {'partner_caste_preferences': f'Invalid caste id "{caste_id}" for religion {religion_id}.'}
+                    {'partner_caste_preferences': f'Invalid caste id "{caste_ref}" for religion {religion_id}.'}
                 )
+            caste_ids.append(resolved_caste_id)
         normalized[religion_id] = caste_ids
     return normalized
 
@@ -645,23 +701,7 @@ class ReligionDetailsReadSerializer(serializers.Serializer):
     def get_partner_caste_preferences(self, obj):
         raw = getattr(obj, 'partner_caste_preferences', None) or {}
         normalized = _normalize_partner_caste_preferences(raw)
-        if not normalized:
-            return {}
-
-        from master.models import Caste, Religion
-        rel_ids = list(normalized.keys())
-        all_caste_ids = [cid for caste_ids in normalized.values() for cid in caste_ids]
-        religion_names = {
-            r.id: r.name for r in Religion.objects.filter(pk__in=rel_ids, is_active=True)
-        }
-        caste_names = {
-            c.id: c.name for c in Caste.objects.filter(pk__in=all_caste_ids, is_active=True)
-        }
-        out = {}
-        for rid, caste_ids in normalized.items():
-            key = religion_names.get(rid, str(rid))
-            out[key] = [caste_names.get(cid, str(cid)) for cid in caste_ids]
-        return out
+        return {str(rid): list(caste_ids) for rid, caste_ids in normalized.items()}
 
     def get_partner_religion_ids(self, obj):
         ids = obj.partner_religion_ids or []

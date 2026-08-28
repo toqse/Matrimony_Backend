@@ -29,6 +29,55 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEZONE = 5.5
 
+# Cleared when birth inputs change so GET horoscope/me is not_generated and
+# the Windows EXE can rewrite the chart. Do not include EXE input fields.
+EXE_OUTPUT_RESET: dict[str, Any] = {
+    'pr_rasi': '',
+    'pr_amsa': '',
+    'pr_bhav': '',
+    'pr_star': None,
+    'pr_pada': None,
+    'pr_dasabalance': None,
+    'lagnam': '',
+    'rasi_sign': '',
+    'star_name': '',
+    'nakshatra_pada': None,
+    'gana': '',
+    'yoni': '',
+    'rajju': '',
+}
+
+
+def _float_close(left: Any, right: Any) -> bool:
+    if left is None and right is None:
+        return True
+    if left is None or right is None:
+        return False
+    try:
+        return abs(float(left) - float(right)) < 1e-4
+    except (TypeError, ValueError):
+        return False
+
+
+def horoscope_chart_inputs_changed(
+    hp,
+    *,
+    dob: date | None,
+    birth_time: time | None,
+    birth_latitude: float | None,
+    birth_longitude: float | None,
+    birth_timezone: float | None,
+) -> bool:
+    """True when EXE input fields that affect the chart differ from ``hp``."""
+    tz = birth_timezone if birth_timezone is not None else DEFAULT_TIMEZONE
+    return (
+        hp.pr_dob != dob
+        or hp.pr_tob != birth_time
+        or not _float_close(hp.pr_lat, birth_latitude)
+        or not _float_close(hp.pr_lon, birth_longitude)
+        or not _float_close(hp.pr_tz, tz)
+    )
+
 # Frontend / legacy field names -> canonical serializer keys.
 HOROSCOPE_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     'birth_place': ('place_of_birth', 'placeOfBirth', 'birthPlace', 'pob'),
@@ -273,11 +322,16 @@ def create_horoscope_profile(
     resets the calculation status (``is_calculated=False``, ``calculated_at=None``)
     so the Horoscope Generator workflow can process it later.
 
+    When an existing row's chart inputs change, EXE output and derived fields
+    are cleared so ``is_exe_done()`` is false until the generator rewrites them.
+
     Returns the ``HoroscopeProfile`` instance.
     """
     from astrology.models import HoroscopeProfile
 
     tz = birth_timezone if birth_timezone is not None else DEFAULT_TIMEZONE
+    resolved_dob = dob if dob is not None else getattr(user, 'dob', None)
+    resolved_name = (name if name is not None else getattr(user, 'name', '')) or ''
     logger.info(
         "create_horoscope_profile user=%s | Received Latitude=%r | "
         "Received Longitude=%r | Received Timezone=%r (stored pr_tz=%r)",
@@ -287,18 +341,30 @@ def create_horoscope_profile(
         birth_timezone,
         tz,
     )
+    existing = HoroscopeProfile.objects.filter(user=user).first()
+    defaults: dict[str, Any] = {
+        'pr_name': resolved_name,
+        'pr_dob': resolved_dob,
+        'pr_tob': birth_time,
+        'pr_lat': birth_latitude,
+        'pr_lon': birth_longitude,
+        'pr_tz': tz,
+        'is_calculated': False,
+        'calculated_at': None,
+    }
+    if existing is not None and horoscope_chart_inputs_changed(
+        existing,
+        dob=resolved_dob,
+        birth_time=birth_time,
+        birth_latitude=birth_latitude,
+        birth_longitude=birth_longitude,
+        birth_timezone=tz,
+    ):
+        defaults.update(EXE_OUTPUT_RESET)
+
     horoscope_profile, _ = HoroscopeProfile.objects.update_or_create(
         user=user,
-        defaults={
-            'pr_name': (name if name is not None else getattr(user, 'name', '')) or '',
-            'pr_dob': dob if dob is not None else getattr(user, 'dob', None),
-            'pr_tob': birth_time,
-            'pr_lat': birth_latitude,
-            'pr_lon': birth_longitude,
-            'pr_tz': tz,
-            'is_calculated': False,
-            'calculated_at': None,
-        },
+        defaults=defaults,
     )
     return horoscope_profile
 
@@ -407,9 +473,9 @@ def apply_profile_edit_horoscope(user, profile, data: dict[str, Any]):
 
     Reuses the same safe path as profile creation: validates with
     ``HoroscopeInputSerializer`` and persists via ``apply_profile_creation_horoscope``
-    (which resets ``HoroscopeProfile.is_calculated`` to False and NEVER touches the
-    EXE-calculated output fields). The member's current ``dob`` is used for
-    validation.
+    (which resets ``HoroscopeProfile.is_calculated`` to False and clears stale EXE
+    output fields when birth inputs change). The member's current ``dob`` is used
+    for validation.
 
     Accepts a nested ``horoscope_details`` object and/or top-level alias keys
     (e.g. ``time_of_birth``, ``place_of_birth``, ``latitude``). Returns the

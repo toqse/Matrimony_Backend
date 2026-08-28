@@ -89,6 +89,10 @@ class BirthDetailsHoroscopeTests(TestCase):
                 'pr_lat': 9.0,
                 'pr_lon': 76.0,
                 'pr_tz': 5.5,
+                'pr_rasi': 'AAAAAAAAAAA',
+                'pr_star': 5,
+                'pr_pada': 2,
+                'star_name': 'Rohini',
                 'is_calculated': True,
             },
         )
@@ -128,8 +132,17 @@ class BirthDetailsHoroscopeTests(TestCase):
         hp = HoroscopeProfile.objects.get(user=self.user)
         self.assertAlmostEqual(float(hp.pr_lat), 11.2588, places=3)
         self.assertAlmostEqual(float(hp.pr_lon), 75.7804, places=3)
+        self.assertEqual(hp.pr_tob, time(6, 15))
         self.assertFalse(hp.is_calculated)
         self.assertIsNone(hp.calculated_at)
+        self.assertFalse(hp.pr_rasi)
+        self.assertIsNone(hp.pr_star)
+        self.assertFalse(hp.is_exe_done())
+
+        me_resp = self.client.get('/api/v1/astrology/horoscope/me/')
+        self.assertEqual(me_resp.status_code, 200, me_resp.content)
+        self.assertFalse(me_resp.data.get('success'))
+        self.assertFalse(me_resp.data.get('is_horoscope_generated'))
 
     def test_post_missing_place_returns_400(self):
         resp = self.client.post(

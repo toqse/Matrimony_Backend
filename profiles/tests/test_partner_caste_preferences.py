@@ -6,7 +6,12 @@ from accounts.models import User
 from master.models import Caste, Religion
 from matches.views import _apply_partner_age_preference, _apply_partner_preference
 from profiles.models import UserReligion
-from profiles.serializers import PartnerPreferencesReadSerializer, PartnerPreferencesUpdateSerializer
+from profiles.serializers import (
+    PartnerPreferencesReadSerializer,
+    PartnerPreferencesUpdateSerializer,
+    ReligionDetailsReadSerializer,
+    ReligionDetailsUpdateSerializer,
+)
 
 
 class PartnerCastePreferenceSerializerTests(TestCase):
@@ -86,6 +91,34 @@ class PartnerCastePreferenceSerializerTests(TestCase):
             {'Hindu': ['Brahmin', 'Nair'], 'Christian': ['Roman Catholic']},
         )
         self.assertNotIn('partner_religion_ids', data)
+
+    def test_religion_details_read_returns_id_keyed_caste_map(self):
+        self.user_rel.partner_preference_type = UserReligion.PARTNER_PREFERENCE_OWN
+        self.user_rel.partner_caste_preferences = {
+            str(self.rel_hindu.id): [self.caste_brahmin.id],
+        }
+        self.user_rel.save()
+        data = ReligionDetailsReadSerializer(self.user_rel).data
+        self.assertEqual(
+            data['partner_caste_preferences'],
+            {str(self.rel_hindu.id): [self.caste_brahmin.id]},
+        )
+
+    def test_religion_details_update_accepts_religion_and_caste_names(self):
+        request = type('R', (), {'user': self.user})()
+        serializer = ReligionDetailsUpdateSerializer(
+            data={
+                'partner_preference_type': UserReligion.PARTNER_PREFERENCE_OWN,
+                'partner_caste_preferences': {'Hindu': ['Brahmin']},
+            },
+            partial=True,
+            context={'request': request},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data['partner_caste_preferences'],
+            {self.rel_hindu.id: [self.caste_brahmin.id]},
+        )
 
 
 class PartnerCastePreferenceMatchFilterTests(TestCase):

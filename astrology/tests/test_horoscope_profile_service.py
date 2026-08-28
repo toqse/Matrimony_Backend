@@ -170,6 +170,60 @@ class CreateHoroscopeProfileServiceTests(TestCase):
         self.assertAlmostEqual(hp.pr_tz, DEFAULT_TIMEZONE)
         self.assertFalse(hp.is_calculated)
 
+    def test_create_horoscope_profile_clears_outputs_when_inputs_change(self):
+        hp = HoroscopeProfile.objects.get(user=self.user)
+        hp.pr_tob = time(8, 0)
+        hp.pr_lat = 9.0
+        hp.pr_lon = 76.0
+        hp.pr_tz = 5.5
+        hp.pr_rasi = 'AAAAAAAAAAA'
+        hp.pr_star = 5
+        hp.star_name = 'Rohini'
+        hp.is_calculated = True
+        hp.save()
+
+        updated = create_horoscope_profile(
+            user=self.user,
+            name=self.user.name,
+            dob=self.user.dob,
+            birth_time=time(6, 15),
+            birth_latitude=11.2588,
+            birth_longitude=75.7804,
+            birth_timezone=5.5,
+        )
+        self.assertEqual(updated.pr_tob, time(6, 15))
+        self.assertFalse(updated.pr_rasi)
+        self.assertIsNone(updated.pr_star)
+        self.assertEqual(updated.star_name, '')
+        self.assertFalse(updated.is_calculated)
+        self.assertFalse(updated.is_exe_done())
+
+    def test_create_horoscope_profile_keeps_outputs_when_inputs_unchanged(self):
+        hp = HoroscopeProfile.objects.get(user=self.user)
+        hp.pr_tob = time(8, 0)
+        hp.pr_lat = 9.0
+        hp.pr_lon = 76.0
+        hp.pr_tz = 5.5
+        hp.pr_dob = self.user.dob
+        hp.pr_rasi = 'AAAAAAAAAAA'
+        hp.pr_star = 5
+        hp.is_calculated = True
+        hp.save()
+
+        updated = create_horoscope_profile(
+            user=self.user,
+            name=self.user.name,
+            dob=self.user.dob,
+            birth_time=time(8, 0),
+            birth_latitude=9.0,
+            birth_longitude=76.0,
+            birth_timezone=5.5,
+        )
+        self.assertEqual(updated.pr_rasi, 'AAAAAAAAAAA')
+        self.assertEqual(updated.pr_star, 5)
+        self.assertFalse(updated.is_calculated)
+        self.assertTrue(updated.is_exe_done())
+
 
 class ApplyProfileCreationHoroscopeTests(TestCase):
     def test_profile_without_horoscope(self):

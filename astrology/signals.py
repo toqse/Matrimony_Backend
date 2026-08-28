@@ -34,11 +34,15 @@ def create_horoscope_profile_on_register(sender, instance, created, **kwargs):
 @receiver(post_save, sender=UserProfile)
 def sync_birth_to_horoscope_profile(sender, instance, **kwargs):
     """
-    Keeps HoroscopeProfile input fields in sync when member updates
-    their birth time or birth place coordinates.
-    Never overwrites EXE output fields (pr_rasi, pr_star, etc.).
+    Keep HoroscopeProfile input fields in sync when birth time or coordinates
+    change. If those chart inputs change, clear EXE outputs so the generator
+    rewrites the chart and GET horoscope/me does not serve the old one.
     """
     from .models import HoroscopeProfile
+    from astrology.services.horoscope_profile_service import (
+        EXE_OUTPUT_RESET,
+        horoscope_chart_inputs_changed,
+    )
 
     user = instance.user
     try:
@@ -60,14 +64,29 @@ def sync_birth_to_horoscope_profile(sender, instance, **kwargs):
         }
         if profile_tz is not None:
             updates['pr_tz'] = profile_tz
-        changed = any(getattr(hp, k) != v for k, v in updates.items())
+        changed = horoscope_chart_inputs_changed(
+            hp,
+            dob=updates['pr_dob'],
+            birth_time=updates['pr_tob'],
+            birth_latitude=updates['pr_lat'],
+            birth_longitude=updates['pr_lon'],
+            birth_timezone=updates.get('pr_tz', hp.pr_tz),
+        )
+        name_or_other = any(getattr(hp, k) != v for k, v in updates.items())
+        if not changed and not name_or_other:
+            return
+        for k, v in updates.items():
+            setattr(hp, k, v)
+        update_fields = list(updates.keys()) + ['updated_at']
         if changed:
-            for k, v in updates.items():
-                setattr(hp, k, v)
             hp.is_calculated = False
-            hp.save(
-                update_fields=list(updates.keys()) + ['is_calculated', 'updated_at']
+            hp.calculated_at = None
+            for k, v in EXE_OUTPUT_RESET.items():
+                setattr(hp, k, v)
+            update_fields.extend(
+                ['is_calculated', 'calculated_at', *EXE_OUTPUT_RESET.keys()]
             )
+        hp.save(update_fields=update_fields)
     except Exception as exc:
         logger.warning(
             'sync_birth_to_horoscope_profile failed user=%s: %s', user.pk, exc
