@@ -38,7 +38,12 @@ from profiles.serializers import (
     empty_location_details_read_data,
     empty_religion_details_read_data,
 )
-from profiles.utils import get_profile_completion_data, mark_profile_step_completed, sync_profile_completion_flags
+from profiles.utils import (
+    assign_height_cm,
+    get_profile_completion_data,
+    mark_profile_step_completed,
+    sync_profile_completion_flags,
+)
 
 
 def _target_member(matri_id: str) -> tuple[User | None, Response | None]:
@@ -188,7 +193,7 @@ class AdminProfilePersonalSectionView(APIView):
         if height_val is None and vd.get("height") is not None:
             height_val = vd["height"]
         if height_val is not None:
-            pers.height_text = f"{height_val} cm"
+            assign_height_cm(pers, height_val)
         weight_val = vd.get("weight_kg")
         if weight_val is None and vd.get("weight") is not None:
             weight_val = vd["weight"]

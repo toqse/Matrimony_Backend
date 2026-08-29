@@ -3,8 +3,10 @@ Profile completion helpers: step tracking, percentage, next step, status.
 About Me generator: professional matrimony-style paragraph from profile data.
 """
 import math
-from django.db.models import IntegerField, Value
-from django.db.models.functions import Cast, Coalesce
+import re
+from django.db import connection
+from django.db.models import F, Func, IntegerField, Value
+from django.db.models.functions import Cast, Coalesce, NullIf
 from .parent_status import PARENT_STATUS_VALUES
 from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
@@ -24,6 +26,91 @@ PROFILE_STEP_ORDER = (
 
 # Visibility threshold: 6/7 completed steps -> int(85.71) == 85
 PROFILE_VISIBILITY_MIN_PERCENTAGE = 85
+
+
+class _SubstringIndex(Func):
+    """MySQL SUBSTRING_INDEX(str, delim, count)."""
+    function = 'SUBSTRING_INDEX'
+    arity = 3
+
+
+def height_cm_from_personal(pers):
+    """Integer cm from Height FK, else leading digits of height_text ('165 cm' -> 165)."""
+    if not pers:
+        return None
+    if getattr(pers, 'height_id', None) and getattr(pers, 'height', None):
+        try:
+            return int(pers.height.value_cm)
+        except (TypeError, ValueError):
+            pass
+    txt = (getattr(pers, 'height_text', None) or '').strip()
+    if txt:
+        m = re.match(r'^(\d+)', txt)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def get_or_create_height_for_cm(cm: int):
+    """Return a master.Height row for this centimetre value."""
+    from master.models import Height
+    existing = Height.objects.filter(value_cm=cm).first()
+    if existing is not None:
+        return existing
+    return Height.objects.create(
+        value_cm=cm,
+        display_label=f'{cm} cm',
+        is_active=True,
+    )
+
+
+def assign_height_cm(pers, cm):
+    """Set height_text and Height FK on UserPersonal (caller must save)."""
+    if cm is None:
+        return
+    cm_int = int(cm)
+    pers.height_text = f'{cm_int} cm'
+    pers.height = get_or_create_height_for_cm(cm_int)
+
+
+def _height_text_leading_int_expr():
+    """SQL expression: leading integer from user_personal.height_text."""
+    text = F('user_personal__height_text')
+    vendor = connection.vendor
+    if vendor == 'mysql':
+        return Cast(_SubstringIndex(text, Value(' '), Value(1)), IntegerField())
+    if vendor == 'postgresql':
+        return Cast(
+            Func(text, Value(r'^[0-9]+'), function='substring'),
+            IntegerField(),
+        )
+    return Cast(text, IntegerField())
+
+
+def _effective_height_cm_expr():
+    """Height FK value_cm, else parsed height_text. 0 / empty becomes NULL."""
+    return Coalesce(
+        F('user_personal__height__value_cm'),
+        NullIf(_height_text_leading_int_expr(), Value(0)),
+        output_field=IntegerField(),
+    )
+
+
+def apply_height_cm_range(qs, height_min=None, height_max=None):
+    """
+    Inclusive cm filter using Height FK or height_text ('165 cm').
+    Profiles with no usable height are excluded when a range is applied.
+    """
+    if height_min is None and height_max is None:
+        return qs
+    qs = qs.filter(user_personal__isnull=False).annotate(
+        _effective_height_cm=_effective_height_cm_expr(),
+    )
+    if height_min is not None:
+        qs = qs.filter(_effective_height_cm__gte=height_min)
+    if height_max is not None:
+        qs = qs.filter(_effective_height_cm__lte=height_max)
+    return qs.filter(_effective_height_cm__gt=0)
 
 
 def _family_completion_ratio(user, fam=None):

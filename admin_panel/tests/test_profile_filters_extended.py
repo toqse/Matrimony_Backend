@@ -87,6 +87,16 @@ class ProfileFiltersExtendedTests(TestCase):
 
         UserPersonal.objects.update_or_create(user=self.user_short, defaults={"height": self.short})
         UserPersonal.objects.update_or_create(user=self.user_tall, defaults={"height": self.tall})
+
+        self.user_text_height = _create_member(
+            mobile=_mobile(),
+            name="Text Height",
+            gender="F",
+        )
+        UserPersonal.objects.update_or_create(
+            user=self.user_text_height,
+            defaults={"height_text": "165 cm"},
+        )
         UserEducation.objects.update_or_create(user=self.user_short, defaults={"annual_income": self.income_low})
         UserEducation.objects.update_or_create(user=self.user_tall, defaults={"annual_income": self.income_high})
 
@@ -117,6 +127,7 @@ class ProfileFiltersExtendedTests(TestCase):
             pk__in=[
                 self.user_short.pk,
                 self.user_tall.pk,
+                self.user_text_height.pk,
                 self.user_no_chart.pk,
                 self.user_with_chart.pk,
             ],
@@ -127,10 +138,22 @@ class ProfileFiltersExtendedTests(TestCase):
         ids = set(qs.values_list("pk", flat=True))
         self.assertIn(self.user_tall.pk, ids)
         self.assertNotIn(self.user_short.pk, ids)
+        self.assertNotIn(self.user_text_height.pk, ids)
 
         qs = apply_profile_list_filters(self.base_qs, _req({"height_to_cm": "160"}))
         ids = set(qs.values_list("pk", flat=True))
         self.assertIn(self.user_short.pk, ids)
+        self.assertNotIn(self.user_tall.pk, ids)
+        self.assertNotIn(self.user_text_height.pk, ids)
+
+    def test_height_range_filter_includes_height_text(self):
+        qs = apply_profile_list_filters(
+            self.base_qs,
+            _req({"height_from_cm": "160", "height_to_cm": "170"}),
+        )
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.user_text_height.pk, ids)
+        self.assertNotIn(self.user_short.pk, ids)
         self.assertNotIn(self.user_tall.pk, ids)
 
     def test_income_filter(self):

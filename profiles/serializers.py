@@ -10,6 +10,7 @@ from .models import (
 )
 from core.media import absolute_media_url
 from .parent_status import normalize_parent_status
+from .utils import get_or_create_height_for_cm, height_cm_from_personal
 
 
 def _active_complexion_values():
@@ -503,6 +504,8 @@ class UserPersonalSerializer(serializers.Serializer):
             'colour': complexion or '',
             'height_text': height_text,
         }
+        if height_cm is not None:
+            defaults['height'] = get_or_create_height_for_cm(int(height_cm))
         if 'blood_group' in validated_data:
             defaults['blood_group'] = validated_data.get('blood_group') or ''
         if number_of_children is not None:
@@ -761,19 +764,7 @@ class PersonalDetailsReadSerializer(serializers.Serializer):
 
     def get_height_cm(self, obj):
         """Integer cm for dropdowns when known; null otherwise."""
-        if getattr(obj, 'height_id', None) and obj.height:
-            try:
-                return int(obj.height.value_cm)
-            except (TypeError, ValueError):
-                pass
-        txt = (obj.height_text or '').strip()
-        if txt:
-            import re
-
-            m = re.match(r'^(\d+)', txt)
-            if m:
-                return int(m.group(1))
-        return None
+        return height_cm_from_personal(obj)
 
     def get_children_count(self, obj):
         """

@@ -6,6 +6,8 @@ from datetime import date, datetime
 from django.db.models import Q
 from django.utils import timezone
 
+from profiles.utils import apply_height_cm_range
+
 from admin_panel.planet_house_filter import (
     PLANET_KEY_TO_INDEX,
     filter_users_by_planet_house,
@@ -163,15 +165,12 @@ def apply_profile_list_filters(qs, request):
         qs = qs.filter(dob__isnull=False, dob__gt=min_dob)
 
     height_from = _qp(request, "height_from_cm", "height_min")
-    if height_from.isdigit():
-        qs = qs.filter(
-            user_personal__height__value_cm__gte=int(height_from),
-        )
     height_to = _qp(request, "height_to_cm", "height_max")
-    if height_to.isdigit():
-        qs = qs.filter(
-            user_personal__height__value_cm__lte=int(height_to),
-        )
+    qs = apply_height_cm_range(
+        qs,
+        int(height_from) if height_from.isdigit() else None,
+        int(height_to) if height_to.isdigit() else None,
+    )
 
     income_id = _qp(request, "income_id")
     if income_id.isdigit():

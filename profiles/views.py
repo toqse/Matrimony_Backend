@@ -17,6 +17,7 @@ from .models import (
     UserFamily, UserEducation, UserPhotos,
 )
 from .utils import (
+    assign_height_cm,
     mark_profile_step_completed,
     generate_about_me,
     generate_about_me_suggestions,
@@ -890,7 +891,7 @@ class ProfilePersonalView(APIView):
         if height_val is None and ser.validated_data.get('height') is not None:
             height_val = ser.validated_data['height']
         if height_val is not None:
-            pers.height_text = f"{height_val} cm"
+            assign_height_cm(pers, height_val)
         weight_val = ser.validated_data.get('weight_kg')
         if weight_val is None and ser.validated_data.get('weight') is not None:
             weight_val = ser.validated_data['weight']

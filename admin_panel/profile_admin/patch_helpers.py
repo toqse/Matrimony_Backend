@@ -16,7 +16,7 @@ from profiles.serializers import (
     PersonalDetailsUpdateSerializer,
     ReligionDetailsUpdateSerializer,
 )
-from profiles.utils import sync_profile_completion_flags
+from profiles.utils import assign_height_cm, sync_profile_completion_flags
 
 
 def apply_basic_details(user, payload: dict):
@@ -87,7 +87,7 @@ def apply_personal(user, payload: dict):
     if height_val is None and vd.get("height") is not None:
         height_val = vd["height"]
     if height_val is not None:
-        pers.height_text = f"{height_val} cm"
+        assign_height_cm(pers, height_val)
     weight_val = vd.get("weight_kg")
     if weight_val is None and vd.get("weight") is not None:
         weight_val = vd["weight"]

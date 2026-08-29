@@ -9,7 +9,11 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
-from profiles.utils import filter_visible_profiles_queryset
+from profiles.utils import (
+    apply_height_cm_range,
+    filter_visible_profiles_queryset,
+    height_cm_from_personal,
+)
 from plans.models import Interest, ProfileView as ProfileViewModel
 from plans.services import (
     bulk_interest_ui_states_for_viewer,
@@ -139,7 +143,7 @@ def _match_list_response(request, *, home_slider=False):
         if dob_max is not None:
             qs = qs.filter(dob__lte=dob_max)
 
-    # Height filter (on UserPersonal -> Height.value_cm)
+    # Height filter: Height FK value_cm, else parsed height_text (e.g. "165 cm")
     try:
         height_min = int(request.query_params.get('height_min')) if request.query_params.get('height_min') else None
     except (TypeError, ValueError):
@@ -148,12 +152,7 @@ def _match_list_response(request, *, home_slider=False):
         height_max = int(request.query_params.get('height_max')) if request.query_params.get('height_max') else None
     except (TypeError, ValueError):
         height_max = None
-    if height_min is not None or height_max is not None:
-        qs = qs.filter(user_personal__isnull=False)
-    if height_min is not None:
-        qs = qs.filter(user_personal__height__value_cm__gte=height_min)
-    if height_max is not None:
-        qs = qs.filter(user_personal__height__value_cm__lte=height_max)
+    qs = apply_height_cm_range(qs, height_min, height_max)
 
     # Optional filters (FK ids; skip 0/any so "Any" in UI does not filter to id=0)
     if religion_id is not None:
@@ -287,14 +286,7 @@ def _match_list_response(request, *, home_slider=False):
         rel = getattr(u, 'user_religion', None)
         loc = getattr(u, 'user_location', None)
 
-        height_val = None
-        if pers and pers.height_id and getattr(pers, 'height', None):
-            height_val = pers.height.value_cm
-        elif pers and getattr(pers, 'height_text', None) and str(pers.height_text).replace(' ', '').isdigit():
-            try:
-                height_val = int(str(pers.height_text).replace(' ', ''))
-            except ValueError:
-                pass
+        height_val = height_cm_from_personal(pers)
 
         photo_url = None
         if photos and photos.profile_photo:
