@@ -353,6 +353,81 @@ class HoroscopePanelExeDoneFilterTests(TestCase):
         self.assertNotIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)
 
 
+class HoroscopePanelStarRasiRajjuFilterTests(TestCase):
+    """Porutham picker list (exe_done) must honour star / rasi / rajju query params."""
+
+    def setUp(self):
+        self.master_br = MasterBranch.objects.create(name="Picker Filter Branch", code="HP_PF_01")
+        self.admin_super = AdminUser.objects.create(
+            mobile="9000000091",
+            name="Admin Picker Filter",
+            role=AdminUser.ROLE_ADMIN,
+        )
+
+        def _male(name: str, mobile: str):
+            u = User.objects.create_user(
+                mobile=mobile,
+                password="x",
+                name=name,
+                role="user",
+                gender="M",
+            )
+            u.is_active = True
+            u.branch = self.master_br
+            u.save()
+            UserProfile.objects.get_or_create(user=u, defaults={})
+            return u
+
+        self.kanni_udara = _male("Kanni Udara", "+919876543601")
+        self.midhunam_kanda = _male("Midhunam Kanda", "+919876543602")
+
+        HoroscopeProfile.objects.update_or_create(
+            user=self.kanni_udara,
+            defaults={
+                "pr_rasi": _rasi_string(6),
+                "pr_star": 14,
+                "pr_pada": 1,
+                "rasi_sign": "",
+                "rajju": "",
+            },
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=self.midhunam_kanda,
+            defaults={
+                "pr_rasi": _rasi_string(3),
+                "pr_star": 8,
+                "pr_pada": 1,
+                "rasi_sign": "",
+                "rajju": "",
+            },
+        )
+
+    def _ids(self, params: dict) -> set:
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        list_req = _list_req({"gender": "M", "exe_done": "true", **params})
+        data, err = list_horoscope_records(qs, request=list_req, page=1, page_size=50)
+        self.assertIsNone(err)
+        return {row["profile_id"] for row in data["results"]}
+
+    def test_rasi_id_filters_exe_done_picker_list(self):
+        kanni_id = UserProfile.objects.get(user=self.kanni_udara).pk
+        other_id = UserProfile.objects.get(user=self.midhunam_kanda).pk
+        ids = self._ids({"rasi_id": "6"})
+        self.assertEqual(ids, {kanni_id})
+        self.assertNotIn(other_id, ids)
+
+    def test_pr_star_filters_exe_done_picker_list(self):
+        kanda_id = UserProfile.objects.get(user=self.midhunam_kanda).pk
+        ids = self._ids({"pr_star": "8"})
+        self.assertEqual(ids, {kanda_id})
+
+    def test_rajju_filters_exe_done_picker_list_from_star(self):
+        kanda_id = UserProfile.objects.get(user=self.midhunam_kanda).pk
+        ids = self._ids({"rajju": "Kanda"})
+        self.assertEqual(ids, {kanda_id})
+
+
 class HoroscopePanelSavedPoruthamTests(TestCase):
     def setUp(self):
         self.master_br = MasterBranch.objects.create(name="Saved Branch", code="HP_SV_01")

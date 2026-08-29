@@ -316,6 +316,13 @@ class ProfileTextSearchCaseTests(TestCase):
         ids = set(qs.values_list("pk", flat=True))
         self.assertEqual(ids, {self.user.pk})
 
+    def test_quick_search_matches_reg_no(self):
+        self.user.reg_no = "10038V"
+        self.user.save(update_fields=["reg_no"])
+        qs = apply_profile_list_filters(self.base_qs, _req({"search": "10038v"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.user.pk})
+
 
 class PoruthamProfileFilterTests(TestCase):
     def setUp(self):

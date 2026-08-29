@@ -35,6 +35,7 @@ from profiles.legacy_import.normalize import (
     parse_int,
     parse_phone,
     parse_tob,
+    reg_no_from_row,
     time_of_birth_from_row,
 )
 
@@ -114,6 +115,13 @@ class NormalizeTests(SimpleTestCase):
             "09:05:00",
         )
         self.assertIsNone(time_of_birth_from_row({}))
+
+    def test_reg_no_from_row_aliases(self):
+        self.assertEqual(reg_no_from_row({"reg_no": "10038V"}), "10038V")
+        self.assertEqual(reg_no_from_row({"registration number": " 101 "}), "101")
+        self.assertEqual(reg_no_from_row({"regno": "10048V"}), "10048V")
+        self.assertEqual(reg_no_from_row({"reg_no": "No Info"}), "")
+        self.assertEqual(reg_no_from_row({}), "")
 
 
 class StarLookupTests(SimpleTestCase):
@@ -208,6 +216,21 @@ class ParserTests(SimpleTestCase):
         rows = list(reader)
         self.assertEqual(rows[0]["place of birth"].strip(), "Madurai Tamil Nadu India")
         self.assertEqual(rows[0]["time of birth"].strip(), "14:30")
+
+    def test_parse_legacy_csv_accepts_optional_reg_no_column(self):
+        with_reg = SAMPLE_CSV.replace(
+            "star, padam\n",
+            "star, padam, Place of Birth, Time of Birth, reg_no\n",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India, 14:30, 10038V\n",
+        )
+        headers, reader = parse_legacy_csv(with_reg)
+        self.assertEqual(headers[-3], "place of birth")
+        self.assertEqual(headers[-2], "time of birth")
+        self.assertEqual(headers[-1], "reg_no")
+        rows = list(reader)
+        self.assertEqual(rows[0]["reg_no"].strip(), "10038V")
 
     def test_read_legacy_csv_text_falls_back_to_latin1(self, tmp_path=None):
         # Embed a non-UTF-8 byte (0xD1) inline in the file.
@@ -359,6 +382,33 @@ class LegacyImporterTests(TestCase):
         self.assertIsNone(profile.time_of_birth)
         hp = HoroscopeProfile.objects.get(user=user)
         self.assertIsNone(hp.pr_tob)
+
+    def test_build_payload_reads_reg_no(self):
+        importer = LegacyImporter(dry_run=True)
+        row = dict(self.row, **{"reg_no": "10038V"})
+        payload, reason = importer.build_payload(2, row)
+        self.assertEqual(reason, "")
+        self.assertEqual(payload["reg_no"], "10038V")
+
+    def test_save_persists_reg_no(self):
+        importer = LegacyImporter()
+        row = dict(self.row, **{"reg_no": "10038V"})
+        payload, _ = importer.build_payload(2, row)
+        user = importer.save(payload)
+        self.assertEqual(user.reg_no, "10038V")
+
+    def test_blank_reg_no_persists_empty(self):
+        importer = LegacyImporter()
+        payload, _ = importer.build_payload(2, self.row)
+        user = importer.save(payload)
+        self.assertEqual(user.reg_no, "")
+
+    def test_no_info_reg_no_persists_empty(self):
+        importer = LegacyImporter()
+        row = dict(self.row, **{"reg_no": "No Info"})
+        payload, _ = importer.build_payload(2, row)
+        user = importer.save(payload)
+        self.assertEqual(user.reg_no, "")
 
     def test_save_creates_user_and_horoscope(self):
         importer = LegacyImporter()

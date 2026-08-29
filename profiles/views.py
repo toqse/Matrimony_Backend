@@ -183,6 +183,7 @@ def _build_profile_data_for_user(user, request=None, include_contact=False, incl
     data = {
         'id': str(user.pk),
         'matri_id': user.matri_id or '',
+        'reg_no': getattr(user, 'reg_no', None) or '',
         'basic_details': basic_data,
         'photos': PhotosDetailsReadSerializer(photos, context={'request': request}).data if photos else _empty_photos(),
         'religion_details': ReligionDetailsReadSerializer(rel).data if rel else empty_religion_details_read_data(),

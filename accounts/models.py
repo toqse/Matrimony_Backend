@@ -79,6 +79,13 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     matri_id = models.CharField(max_length=20, unique=True, editable=False, db_index=True, null=True, blank=True)
+    reg_no = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Optional legacy registration number from bulk upload (not unique).",
+    )
     email = models.EmailField(unique=True, null=True, blank=True)
     mobile = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
     password = models.CharField(max_length=128)

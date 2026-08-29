@@ -65,14 +65,14 @@ def parse_dob(dob_str):
 
 def parse_optional_dob(dob_str):
     """
-    For PATCH profile basic: None or blank -> None; else DD-MM-YYYY or YYYY-MM-DD.
+    For PATCH profile basic: None or blank -> None; else DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD.
     """
     if dob_str is None:
         return None
     s = str(dob_str).strip()
     if not s:
         return None
-    for fmt in ('%d-%m-%Y', '%Y-%m-%d'):
+    for fmt in ('%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d'):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:

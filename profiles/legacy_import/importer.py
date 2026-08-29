@@ -28,6 +28,7 @@ from .normalize import (
     parse_gender,
     parse_int,
     parse_phone,
+    reg_no_from_row,
     time_of_birth_from_row,
 )
 
@@ -189,6 +190,7 @@ class LegacyImporter:
             "star_warning": star_warning,
             "place_of_birth": place_of_birth_from_row(row),
             "time_of_birth": time_of_birth_from_row(row),
+            "reg_no": reg_no_from_row(row),
         }
         return payload, ""
 
@@ -208,6 +210,7 @@ class LegacyImporter:
             is_active=True,
             mobile_verified=bool(payload["phone"]),
             email_verified=bool(payload["email"]),
+            reg_no=payload.get("reg_no") or "",
         )
         user.set_password(User.objects.make_random_password())
         user.save()

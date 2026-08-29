@@ -263,6 +263,7 @@ def _apply_legacy_search(qs, search: str):
         _ci_contains("name", search)
         | _ci_contains("matri_id", search)
         | _ci_contains("mobile", search)
+        | _ci_contains("reg_no", search)
     )
     digits_only = "".join(ch for ch in search if ch.isdigit())
     if digits_only and digits_only != search:

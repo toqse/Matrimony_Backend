@@ -24,6 +24,13 @@ TOB_HEADER_ALIASES = (
     "birth time",
 )
 
+REG_NO_HEADER_ALIASES = (
+    "reg_no",
+    "regno",
+    "registration no",
+    "registration number",
+)
+
 TOB_PARSE_FORMATS = ("%H:%M:%S", "%H:%M")
 
 
@@ -105,6 +112,15 @@ def time_of_birth_from_row(row: dict) -> Optional[time]:
         if parsed is not None:
             return parsed
     return None
+
+
+def reg_no_from_row(row: dict) -> str:
+    """Return the first non-empty registration-number alias from a parsed CSV row."""
+    for key in REG_NO_HEADER_ALIASES:
+        value = clean(row.get(key))
+        if value:
+            return value[:50]
+    return ""
 
 
 def parse_int(value: object, *, min_value: int = 0) -> int:
