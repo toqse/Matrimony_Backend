@@ -89,8 +89,8 @@ class LegacyTemplateDownloadTests(TestCase):
         self.assertIn("Place of Birth", columns)
         self.assertIn("Time of Birth", columns)
         self.assertIn("reg_no", columns)
-        self.assertEqual(columns[-2], "Time of Birth")
-        self.assertEqual(columns[-1], "reg_no")
+        self.assertEqual(columns[0], "reg_no")
+        self.assertEqual(columns[-1], "Time of Birth")
         self.assertEqual(len(columns), 46)
 
     def test_template_csv_download_has_legacy_headers(self):
@@ -99,13 +99,14 @@ class LegacyTemplateDownloadTests(TestCase):
             {"file_format": "csv"},
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("matrimony_import_template.csv", resp["Content-Disposition"])
+        self.assertIn("matrimony_import_template_with_reg_no.csv", resp["Content-Disposition"])
         first_line = resp.content.decode("utf-8-sig").splitlines()[0]
         self.assertIn("Mother Toungue", first_line)
         self.assertIn("Place of Birth", first_line)
         self.assertIn("Time of Birth", first_line)
         self.assertIn("reg_no", first_line)
-        self.assertTrue(first_line.rstrip().endswith("reg_no"))
+        self.assertTrue(first_line.lstrip("\ufeff").startswith("reg_no"))
+        self.assertTrue(first_line.rstrip().endswith("Time of Birth"))
 
     def test_get_legacy_template_columns_matches_file(self):
         columns = get_legacy_template_columns()
@@ -313,6 +314,42 @@ class LegacyBulkUploadEndToEndTests(TestCase):
         ).replace(
             "Karthika, 2\n",
             "Karthika, 2,,,\n",
+        )
+        validate_resp = self._validate(csv_text.encode("utf-8"))
+        token = validate_resp.json()["data"]["validation_token"]
+
+        import_resp = self.client.post(
+            reverse("bulk-upload-import"),
+            {"validation_token": token},
+            format="json",
+        )
+        self.assertEqual(import_resp.status_code, 200)
+        self.assertEqual(import_resp.json()["data"]["imported"], 2)
+
+        sobhana = User.objects.get(mobile="8157012545")
+        self.assertEqual(sobhana.reg_no, "10038V")
+        sudheesh = User.objects.get(mobile="8129450610")
+        self.assertEqual(sudheesh.reg_no, "")
+
+    def test_import_persists_leading_reg_no(self):
+        csv_text = LEGACY_CSV.replace(
+            "Name, Phone Number",
+            "reg_no, Name, Phone Number",
+        ).replace(
+            "star, padam\n",
+            "star, padam, Place of Birth, Time of Birth\n",
+        ).replace(
+            "SOBHANA.G.K,",
+            "10038V, SOBHANA.G.K,",
+        ).replace(
+            "SUDHEESH,",
+            ", SUDHEESH,",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India, 14:30\n",
+        ).replace(
+            "Karthika, 2\n",
+            "Karthika, 2,,\n",
         )
         validate_resp = self._validate(csv_text.encode("utf-8"))
         token = validate_resp.json()["data"]["validation_token"]

@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 from typing import Iterator
 
-from .normalize import norm_header
+from .normalize import REG_NO_HEADER_ALIASES, norm_header
 
 EXPECTED_COLUMNS = [
     "name",
@@ -71,10 +71,14 @@ def parse_legacy_csv(text: str) -> tuple[list[str], Iterator[dict[str, str]]]:
 
     Raises ValueError if the headers do not begin with EXPECTED_COLUMNS so that
     we don't silently misalign columns from a different export.
+
+    An optional leading `reg_no` column is allowed (current download template).
+    Trailing Place of Birth / Time of Birth / `reg_no` columns are also allowed.
     """
     reader = csv.DictReader(io.StringIO(text))
     headers = [norm_header(h) for h in (reader.fieldnames or [])]
-    if headers[: len(EXPECTED_COLUMNS)] != EXPECTED_COLUMNS:
+    start = 1 if headers and headers[0] in REG_NO_HEADER_ALIASES else 0
+    if headers[start : start + len(EXPECTED_COLUMNS)] != EXPECTED_COLUMNS:
         raise ValueError("CSV headers do not match the expected legacy export format.")
     reader.fieldnames = headers
     return headers, reader

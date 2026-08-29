@@ -11,7 +11,11 @@ from openpyxl import Workbook
 from .parser import TEMPLATE_COLUMNS
 
 TEMPLATE_FILENAME = "Matrimony_Bulk_Upload_Template.xlsx"
-LEGACY_IMPORT_TEMPLATE_FILENAME = "matrimony_import_template.csv"
+LEGACY_IMPORT_TEMPLATE_FILENAME = "matrimony_import_template_with_reg_no.csv"
+_LEGACY_IMPORT_TEMPLATE_ALIASES = (
+    LEGACY_IMPORT_TEMPLATE_FILENAME,
+    "matrimony_import_template.csv",
+)
 
 # Extra columns included in the curated modern workbook (optional on upload).
 _TEMPLATE_OPTIONAL_COLUMNS = (
@@ -31,11 +35,22 @@ def _base_dir() -> Path:
 def legacy_import_template_candidates() -> list[Path]:
     module_dir = _module_dir()
     base = _base_dir()
-    return [
-        base / "profiles" / "legacy_import" / "legacy_bulk_upload_template.csv",
+    paths: list[Path] = [
         base.parent / LEGACY_IMPORT_TEMPLATE_FILENAME,
-        module_dir / "templates" / LEGACY_IMPORT_TEMPLATE_FILENAME,
+        base / "profiles" / "legacy_import" / "legacy_bulk_upload_template.csv",
     ]
+    for name in _LEGACY_IMPORT_TEMPLATE_ALIASES:
+        paths.append(base.parent / name)
+        paths.append(module_dir / "templates" / name)
+    # Keep order stable while dropping duplicates from alias overlap.
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
 
 
 def resolve_legacy_import_template_path() -> Path | None:

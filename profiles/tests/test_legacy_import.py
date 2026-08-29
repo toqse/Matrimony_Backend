@@ -232,6 +232,27 @@ class ParserTests(SimpleTestCase):
         rows = list(reader)
         self.assertEqual(rows[0]["reg_no"].strip(), "10038V")
 
+    def test_parse_legacy_csv_accepts_leading_reg_no_column(self):
+        with_reg = SAMPLE_CSV.replace(
+            "Name, Phone Number",
+            "reg_no, Name, Phone Number",
+        ).replace(
+            "star, padam\n",
+            "star, padam, Place of Birth, Time of Birth\n",
+        ).replace(
+            "SOBHANA.G.K,",
+            "10038V, SOBHANA.G.K,",
+        ).replace(
+            "Bharani, 4\n",
+            "Bharani, 4, Madurai Tamil Nadu India, 14:30\n",
+        )
+        headers, reader = parse_legacy_csv(with_reg)
+        self.assertEqual(headers[0], "reg_no")
+        self.assertEqual(headers[1], "name")
+        self.assertEqual(headers[-1], "time of birth")
+        rows = list(reader)
+        self.assertEqual(rows[0]["reg_no"].strip(), "10038V")
+
     def test_read_legacy_csv_text_falls_back_to_latin1(self, tmp_path=None):
         # Embed a non-UTF-8 byte (0xD1) inline in the file.
         path = Path("legacy_import_latin1_fixture.csv")
