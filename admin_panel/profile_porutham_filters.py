@@ -65,7 +65,7 @@ def _passes_porutham_filters(result: dict, request) -> bool:
             return False
 
     star_match = _qp(request, "star_match").lower()
-    if star_match == "yes":
+    if star_match in {"yes", "true", "1"}:
         poruthams = result.get("poruthams") or {}
         if not (poruthams.get("dinam") and poruthams.get("ganam")):
             return False

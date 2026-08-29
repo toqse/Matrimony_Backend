@@ -403,3 +403,163 @@ class PoruthamProfileFilterTests(TestCase):
         )
         self.assertIsNone(err)
         self.assertEqual(qs.count(), 0)
+
+    def test_star_match_accepts_true_as_yes(self):
+        qs_yes, err_yes = apply_porutham_match_filters(
+            self.base_qs,
+            _req({"match_matri_id": self.bride.matri_id, "star_match": "yes"}),
+        )
+        qs_true, err_true = apply_porutham_match_filters(
+            self.base_qs,
+            _req({"match_matri_id": self.bride.matri_id, "star_match": "true"}),
+        )
+        self.assertIsNone(err_yes)
+        self.assertIsNone(err_true)
+        self.assertEqual(
+            set(qs_yes.values_list("pk", flat=True)),
+            set(qs_true.values_list("pk", flat=True)),
+        )
+
+
+class HoroscopeMatchingFilterTests(TestCase):
+    def setUp(self):
+        self.kanni_chart = _create_member(mobile=_mobile(), name="Kanni Chart", gender="F")
+        HoroscopeProfile.objects.update_or_create(
+            user=self.kanni_chart,
+            defaults={
+                "pr_star": 14,
+                "pr_pada": 1,
+                "pr_rasi": _rasi_chart(6),
+                "rasi_sign": "",
+                "rajju": "",
+            },
+        )
+
+        self.midhunam_named = _create_member(mobile=_mobile(), name="Named Rasi", gender="F")
+        HoroscopeProfile.objects.update_or_create(
+            user=self.midhunam_named,
+            defaults={
+                "pr_star": 5,
+                "pr_pada": 1,
+                "pr_rasi": _rasi_chart(3),
+                "rasi_sign": "Midhunam",
+            },
+        )
+
+        self.kanda_from_star = _create_member(mobile=_mobile(), name="Kanda Star", gender="M")
+        HoroscopeProfile.objects.update_or_create(
+            user=self.kanda_from_star,
+            defaults={
+                "pr_star": 8,
+                "pr_pada": 1,
+                "pr_rasi": _rasi_chart(2),
+                "rasi_sign": "",
+                "rajju": "",
+            },
+        )
+
+        self.padam_alias = _create_member(mobile=_mobile(), name="Pada Alias", gender="M")
+        HoroscopeProfile.objects.update_or_create(
+            user=self.padam_alias,
+            defaults={
+                "pr_star": 20,
+                "pr_pada": 1,
+                "pr_rasi": _rasi_chart(1),
+                "rasi_sign": "",
+                "rajju": "Pada",
+            },
+        )
+
+        self.star_name_only = _create_member(mobile=_mobile(), name="Star Name Only", gender="F")
+        HoroscopeProfile.objects.update_or_create(
+            user=self.star_name_only,
+            defaults={
+                "pr_star": None,
+                "star_name": "Rohini",
+                "pr_rasi": _rasi_chart(2),
+            },
+        )
+
+        self.flag_only = _create_member(mobile=_mobile(), name="Flag Only", gender="F")
+        UserProfile.objects.get_or_create(user=self.flag_only)
+        UserProfile.objects.filter(user=self.flag_only).update(has_horoscope=True)
+
+        self.dosham_yes = _create_member(mobile=_mobile(), name="Dosham Yes", gender="F")
+        UserProfile.objects.get_or_create(user=self.dosham_yes)
+        UserProfile.objects.filter(user=self.dosham_yes).update(horoscope_data={"dosham": "Yes"})
+        HoroscopeProfile.objects.update_or_create(
+            user=self.dosham_yes,
+            defaults={"pr_star": 4, "pr_rasi": _rasi_chart(4)},
+        )
+
+        self.dosham_no = _create_member(mobile=_mobile(), name="Dosham No", gender="F")
+        UserProfile.objects.get_or_create(user=self.dosham_no)
+        UserProfile.objects.filter(user=self.dosham_no).update(horoscope_data={})
+        HoroscopeProfile.objects.update_or_create(
+            user=self.dosham_no,
+            defaults={"pr_star": 4, "pr_rasi": _rasi_chart(4)},
+        )
+
+        self.base_qs = User.objects.filter(
+            pk__in=[
+                self.kanni_chart.pk,
+                self.midhunam_named.pk,
+                self.kanda_from_star.pk,
+                self.padam_alias.pk,
+                self.star_name_only.pk,
+                self.flag_only.pk,
+                self.dosham_yes.pk,
+                self.dosham_no.pk,
+            ],
+        )
+
+    def test_rasi_id_matches_moon_sign_when_rasi_sign_empty(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"rasi_id": "6"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.kanni_chart.pk})
+
+    def test_rasi_id_still_matches_stored_rasi_sign(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"rasi_id": "3"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.midhunam_named.pk})
+
+    def test_rajju_matches_pr_star_when_field_empty(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"rajju": "Kanda"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.kanda_from_star.pk, ids)
+        self.assertNotIn(self.kanni_chart.pk, ids)
+
+    def test_rajju_matches_padam_alias(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"rajju": "Padam"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.padam_alias.pk, ids)
+        self.assertNotIn(self.kanda_from_star.pk, ids)
+
+    def test_star_id_matches_star_name_when_pr_star_empty(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"pr_star": "4"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.star_name_only.pk, ids)
+
+    def test_has_horoscope_yes_requires_ready_chart(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"has_horoscope": "true"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.kanni_chart.pk, ids)
+        self.assertNotIn(self.flag_only.pk, ids)
+
+    def test_has_horoscope_no_includes_checkbox_without_chart(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"has_horoscope": "false"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.flag_only.pk, ids)
+        self.assertNotIn(self.kanni_chart.pk, ids)
+
+    def test_dosham_yes_matches_stored_horoscope_data(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"dosham": "true"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.dosham_yes.pk, ids)
+        self.assertNotIn(self.dosham_no.pk, ids)
+
+    def test_dosham_no_excludes_stored_yes(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"dosham": "false"}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.dosham_no.pk, ids)
+        self.assertNotIn(self.dosham_yes.pk, ids)

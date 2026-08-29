@@ -7,6 +7,7 @@ from accounts.models import User
 from admin_panel.auth.models import AdminUser
 from admin_panel.branches.models import Branch as PanelBranch
 from admin_panel.horoscope_mgmt.services import (
+    build_summary_counts,
     delete_saved_porutham_matches,
     list_horoscope_records,
     list_saved_porutham_matches,
@@ -140,6 +141,78 @@ class HoroscopePanelScopingTests(TestCase):
         result, msg = panel_porutham(qs, p_in.pk, p_out.pk)
         self.assertIsNone(msg)
         self.assertIsNotNone(result)
+
+
+class HoroscopePanelSummaryCountTests(TestCase):
+    def setUp(self):
+        self.master_br = MasterBranch.objects.create(name="Sum Branch", code="HP_SM_01")
+        self.other_br = MasterBranch.objects.create(name="Other Branch", code="HP_SM_02")
+        self.admin_super = AdminUser.objects.create(
+            mobile="9000000077",
+            name="Admin Summary",
+            role=AdminUser.ROLE_ADMIN,
+        )
+        self.manager = AdminUser.objects.create(
+            mobile="9000000078",
+            name="Branch Manager",
+            role=AdminUser.ROLE_BRANCH_MANAGER,
+            branch_id=self.master_br.pk,
+        )
+
+        def _member(name: str, mobile: str, branch: MasterBranch):
+            u = User.objects.create_user(mobile=mobile, password="x", name=name, role="user")
+            u.is_active = True
+            u.branch = branch
+            u.save()
+            UserProfile.objects.get_or_create(user=u, defaults={})
+            return u
+
+        self.ready = _member("Ready Chart", "+919876543601", self.master_br)
+        self.pending = _member("Pending Chart", "+919876543602", self.master_br)
+        self.other = _member("Other Branch Member", "+919876543603", self.other_br)
+
+        HoroscopeProfile.objects.update_or_create(
+            user=self.ready,
+            defaults={
+                "pr_rasi": _rasi_string(1),
+                "pr_star": 1,
+                "pr_pada": 1,
+                "pr_name": "Ready Chart",
+                "is_calculated": False,
+            },
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=self.pending,
+            defaults={
+                "pr_rasi": "",
+                "pr_star": None,
+                "pr_name": "Pending Chart",
+                "is_calculated": True,
+            },
+        )
+
+    def test_generated_uses_ready_chart_not_is_calculated(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        scoped = qs.filter(pk__in=[self.ready.pk, self.pending.pk, self.other.pk])
+        data = build_summary_counts(scoped)
+        self.assertEqual(data["total_horoscopes"], 3)
+        self.assertEqual(data["jathagam_generated"], 1)
+        self.assertEqual(data["pending_generation"], 2)
+        self.assertNotIn("mangal_dosham", data)
+
+    def test_branch_manager_scope_excludes_other_branches(self):
+        req = _Request(user=self.manager)
+        qs = scoped_member_users_queryset(req, mount="branch")
+        self.assertIsNotNone(qs)
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.ready.pk, ids)
+        self.assertIn(self.pending.pk, ids)
+        self.assertNotIn(self.other.pk, ids)
+        data = build_summary_counts(qs.filter(pk__in=[self.ready.pk, self.pending.pk, self.other.pk]))
+        self.assertEqual(data["total_horoscopes"], 2)
+        self.assertEqual(data["jathagam_generated"], 1)
+        self.assertEqual(data["pending_generation"], 1)
 
 
 class HoroscopePanelPoruthamPayloadTests(TestCase):

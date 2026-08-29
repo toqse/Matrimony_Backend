@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db.models import Q, Sum
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Length
 
 from accounts.models import User
 from admin_panel.auth.models import AdminUser
@@ -75,34 +75,37 @@ def scoped_member_users_queryset(request, *, mount: str):
         code = _manager_branch_code(user)
         if not code:
             return base.none()
-        return base
+        return base.filter(
+            Q(branch__code=code) | Q(staff_assignment__staff__branch__code=code)
+        ).distinct()
 
     return None
 
 
 def build_summary_counts(users_qs) -> dict[str, int]:
+    """KPI totals for the same member set as the horoscope records list.
+
+    Generated = ready chart (11-char pr_rasi), matching record ``is_ready``.
+    Pending = remaining members in scope (total - generated).
+    """
     total = users_qs.count()
-    calculated = HoroscopeProfile.objects.filter(
-        user__in=users_qs.values('pk'),
-        is_calculated=True,
-    ).count()
-    pending = HoroscopeProfile.objects.filter(
-        user__in=users_qs.values('pk'),
-        is_calculated=False,
-        pr_lat__isnull=False,
-        pr_tob__isnull=False,
-    ).count()
+    generated = (
+        HoroscopeProfile.objects.filter(user__in=users_qs.values("pk"))
+        .annotate(_rasi_len=Length("pr_rasi"))
+        .filter(_rasi_len__gte=11)
+        .count()
+    )
     match_total = (
-        UserPlan.objects.filter(user__in=users_qs.values('pk'))
-        .aggregate(s=Coalesce(Sum('horoscope_used'), 0))
-        .get('s') or 0
+        UserPlan.objects.filter(user__in=users_qs.values("pk"))
+        .aggregate(s=Coalesce(Sum("horoscope_used"), 0))
+        .get("s")
+        or 0
     )
     return {
-        'total_horoscopes': total,
-        'jathagam_generated': calculated,
-        'pending_generation': pending,
-        'match_calculations': int(match_total),
-        'mangal_dosham': 0,
+        "total_horoscopes": total,
+        "jathagam_generated": generated,
+        "pending_generation": max(0, total - generated),
+        "match_calculations": int(match_total),
     }
 
 

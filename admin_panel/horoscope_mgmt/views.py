@@ -72,6 +72,11 @@ class HoroscopePanelSummaryView(APIView):
         qs, err = _resolve_qs(request, self.mount)
         if err:
             return err
+        qs = horoscope_panel._list_users_filtered(
+            qs,
+            search="",
+            branch_id=request.query_params.get("branch_id"),
+        )
         data = horoscope_panel.build_summary_counts(qs)
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 

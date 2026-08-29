@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from django.db.models import CharField, Q, TextField
-from django.db.models.functions import Lower
+from django.db.models.functions import Length, Lower, Substr, Upper
 from django.utils import timezone
 
 from profiles.utils import apply_height_cm_range
@@ -13,7 +13,7 @@ from admin_panel.planet_house_filter import (
     PLANET_KEY_TO_INDEX,
     filter_users_by_planet_house,
 )
-from astrology.porutham import RASI_NAMES
+from astrology.porutham import RASI_NAMES, STAR_NAMES, bride_chovva, chart_to_array, groom_chovva
 
 CharField.register_lookup(Lower)
 TextField.register_lookup(Lower)
@@ -75,13 +75,142 @@ def _parse_iso_date(raw: str) -> date | None:
         return None
 
 
-def _horoscope_chart_q():
-    """EXE chart string present (11 planet positions)."""
-    return Q(horoscope_profile__pr_rasi__isnull=False) & ~Q(horoscope_profile__pr_rasi="")
+# Same Padam/Kanda/Udara mapping used when derived rajju is filled from pr_star.
+_STAR_RAJJU = (
+    "",
+    "Padam", "Padam", "Padam", "Padam", "Padam", "Padam",
+    "Kanda", "Kanda", "Kanda", "Kanda", "Kanda", "Kanda",
+    "Udara", "Udara", "Udara", "Udara", "Udara", "Udara",
+    "Kanda", "Kanda", "Kanda", "Kanda", "Kanda", "Kanda",
+    "Padam", "Padam", "Padam",
+)
+
+_RAJJU_ALIAS_GROUPS = (
+    frozenset({"padam", "pada"}),
+    frozenset({"kanda", "kanta", "kati"}),
+    frozenset({"udara", "nabhi"}),
+    frozenset({"siro", "sira", "siras"}),
+)
+
+_DOSHAM_FALSE_VALUES = frozenset({"", "no", "false", "0", "none", "nil", "n", "na"})
 
 
-def _has_horoscope_q():
-    return Q(user_profile__has_horoscope=True) | _horoscope_chart_q()
+def _apply_has_horoscope_filter(qs, raw: str):
+    """Check horoscope = ready 11-char pr_rasi, not the registration checkbox."""
+    raw = (raw or "").lower()
+    qs = qs.alias(_chart_len=Length("horoscope_profile__pr_rasi"))
+    ready = Q(_chart_len__gte=11)
+    not_ready = Q(_chart_len__isnull=True) | Q(_chart_len__lt=11)
+    if raw in {"true", "1", "yes"}:
+        return qs.filter(ready)
+    if raw in {"false", "0", "no"}:
+        return qs.filter(not_ready)
+    return qs
+
+
+def _star_match_q(star_num: int) -> Q:
+    q = Q(horoscope_profile__pr_star=star_num)
+    if 1 <= star_num < len(STAR_NAMES) and STAR_NAMES[star_num]:
+        q |= _ci_contains("horoscope_profile__star_name", STAR_NAMES[star_num])
+    return q
+
+
+def _rasi_id_from_name(name: str) -> int | None:
+    needle = (name or "").casefold().strip()
+    if not needle:
+        return None
+    for idx, rasi_name in enumerate(RASI_NAMES):
+        if idx and rasi_name.casefold() == needle:
+            return idx
+    return None
+
+
+def _apply_rasi_id_filter(qs, rasi_id: int):
+    """Match stored rasi_sign or moon sign from pr_rasi (Chandran, 3rd character)."""
+    rasi_name = RASI_NAMES[rasi_id]
+    letter = chr(ord("A") + rasi_id - 1)
+    qs = qs.alias(_moon_l=Upper(Substr("horoscope_profile__pr_rasi", 3, 1)))
+    return qs.filter(
+        _ci_contains("horoscope_profile__rasi_sign", rasi_name) | Q(_moon_l=letter)
+    )
+
+
+def _rajju_names(label: str) -> set[str]:
+    needle = (label or "").casefold().strip()
+    if not needle:
+        return set()
+    for group in _RAJJU_ALIAS_GROUPS:
+        if needle in group:
+            return set(group)
+    return {needle}
+
+
+def _rajju_q(label: str) -> Q:
+    names = _rajju_names(label)
+    q = Q()
+    for name in names:
+        q |= _ci_contains("horoscope_profile__rajju", name)
+    star_ids = [
+        idx for idx, value in enumerate(_STAR_RAJJU) if value and value.casefold() in names
+    ]
+    if star_ids:
+        q |= Q(horoscope_profile__pr_star__in=star_ids)
+    return q
+
+
+def _truthy_dosham(value) -> bool:
+    if value is True or value == 1:
+        return True
+    if value is False or value is None or value == 0:
+        return False
+    text = str(value).strip().casefold()
+    if text in _DOSHAM_FALSE_VALUES:
+        return False
+    return bool(text)
+
+
+def _chart_has_chovva(pr_rasi: str | None, gender: str | None) -> bool:
+    if not pr_rasi or len(pr_rasi) < 11:
+        return False
+    arr = chart_to_array(pr_rasi)
+    if not arr:
+        return False
+    g = (gender or "").upper()
+    if g == "F":
+        return bool(bride_chovva(arr))
+    if g == "M":
+        return bool(groom_chovva(arr))
+    return bool(bride_chovva(arr) or groom_chovva(arr))
+
+
+def _filter_users_by_dosham(qs, want_yes: bool):
+    """Yes = stored horoscope_data.dosham or Kuja/chovva on the rasi chart."""
+    from accounts.models import User
+    from astrology.models import HoroscopeProfile
+    from profiles.models import UserProfile
+
+    yes_ids: set = set()
+    scoped = qs.values("pk")
+
+    for profile in UserProfile.objects.filter(user_id__in=scoped).only("user_id", "horoscope_data"):
+        data = profile.horoscope_data if isinstance(profile.horoscope_data, dict) else {}
+        if _truthy_dosham(data.get("dosham")):
+            yes_ids.add(profile.user_id)
+
+    genders = dict(User.objects.filter(pk__in=scoped).values_list("pk", "gender"))
+    for hp in (
+        HoroscopeProfile.objects.filter(user_id__in=scoped)
+        .exclude(pr_rasi="")
+        .filter(pr_rasi__isnull=False)
+        .only("user_id", "pr_rasi")
+        .iterator(chunk_size=500)
+    ):
+        if _chart_has_chovva(hp.pr_rasi, genders.get(hp.user_id)):
+            yes_ids.add(hp.user_id)
+
+    if want_yes:
+        return qs.filter(pk__in=yes_ids) if yes_ids else qs.none()
+    return qs.exclude(pk__in=yes_ids)
 
 
 def _active_subscription_q():
@@ -233,29 +362,30 @@ def apply_profile_list_filters(qs, request):
 
     pr_star = _qp(request, "pr_star", "star_id")
     if pr_star.isdigit() and 1 <= int(pr_star) <= 27:
-        qs = qs.filter(horoscope_profile__pr_star=int(pr_star))
+        qs = qs.filter(_star_match_q(int(pr_star)))
     else:
         star = _qp(request, "star")
         if star:
             if star.isdigit() and 1 <= int(star) <= 27:
-                qs = qs.filter(horoscope_profile__pr_star=int(star))
+                qs = qs.filter(_star_match_q(int(star)))
             else:
                 qs = qs.filter(_ci_contains("horoscope_profile__star_name", star))
 
     rasi_id = _qp(request, "rasi_id")
     if rasi_id.isdigit() and 1 <= int(rasi_id) <= 12:
-        rasi_name = RASI_NAMES[int(rasi_id)]
-        qs = qs.filter(_ci_contains("horoscope_profile__rasi_sign", rasi_name))
+        qs = _apply_rasi_id_filter(qs, int(rasi_id))
     else:
         rasi = _qp(request, "rasi")
         if rasi:
-            qs = qs.filter(_ci_contains("horoscope_profile__rasi_sign", rasi))
+            mapped = _rasi_id_from_name(rasi)
+            if mapped:
+                qs = _apply_rasi_id_filter(qs, mapped)
+            else:
+                qs = qs.filter(_ci_contains("horoscope_profile__rasi_sign", rasi))
 
-    has_horoscope = _qp(request, "has_horoscope").lower()
-    if has_horoscope in {"true", "1", "yes"}:
-        qs = qs.filter(_has_horoscope_q())
-    elif has_horoscope in {"false", "0", "no"}:
-        qs = qs.exclude(_has_horoscope_q())
+    has_horoscope = _qp(request, "has_horoscope")
+    if has_horoscope:
+        qs = _apply_has_horoscope_filter(qs, has_horoscope)
 
     planet_key = _qp(request, "planet").lower()
     planet_house_raw = _qp(request, "planet_house")
@@ -268,19 +398,13 @@ def apply_profile_list_filters(qs, request):
 
     rajju = _qp(request, "rajju")
     if rajju:
-        qs = qs.filter(_ci_contains("horoscope_profile__rajju", rajju))
+        qs = qs.filter(_rajju_q(rajju))
 
     dosham = _qp(request, "dosham").lower()
     if dosham in {"true", "1", "yes"}:
-        qs = qs.exclude(
-            Q(user_profile__horoscope_data__dosham__isnull=True)
-            | Q(user_profile__horoscope_data__dosham="")
-        )
+        qs = _filter_users_by_dosham(qs, True)
     elif dosham in {"false", "0", "no"}:
-        qs = qs.filter(
-            Q(user_profile__horoscope_data__dosham__isnull=True)
-            | Q(user_profile__horoscope_data__dosham="")
-        )
+        qs = _filter_users_by_dosham(qs, False)
 
     gender = _qp(request, "gender").upper()
     if gender in {"M", "F", "O"}:
