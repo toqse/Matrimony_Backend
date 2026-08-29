@@ -290,7 +290,7 @@ def consume_horoscope_match(user):
 
 def get_plan_info_for_response(user):
     """
-    Build plan info dict for API responses: plan_name, valid_until,
+    Build plan info dict for API responses: plan_id, plan_name, valid_until,
     profile_views_remaining, interests_remaining, chat_remaining,
     contact_view_remaining, horoscope_remaining.
     """
@@ -298,6 +298,7 @@ def get_plan_info_for_response(user):
     if not up:
         return {
             'is_plan_active': False,
+            'plan_id': None,
             'plan_name': None,
             'valid_until': None,
             'profile_views_remaining': 0,
@@ -336,6 +337,7 @@ def get_plan_info_for_response(user):
 
     return {
         'is_plan_active': True,
+        'plan_id': p.id,
         'plan_name': p.name,
         'valid_until': up.valid_until.strftime('%d-%m-%Y') if up.valid_until else None,
         'profile_views_remaining': _rem(p.profile_view_limit, up.profile_views_used, getattr(up, 'profile_view_bonus', 0) or 0),
@@ -481,6 +483,59 @@ def compute_service_charge_remaining(user):
     return user_plan, remaining
 
 
+ACTIVE_SAME_PLAN = 'ACTIVE_SAME_PLAN'
+
+
+class SamePlanAlreadyActiveError(Exception):
+    """Raised when checkout would re-purchase the member's currently active plan."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.code = ACTIVE_SAME_PLAN
+
+
+def resolve_current_active_user_plan(any_up, today):
+    """Subscription row considered 'currently active' (same rule as plan purchase / upgrade)."""
+    if not any_up or not any_up.is_active:
+        return None
+    if any_up.valid_until is not None and any_up.valid_until < today:
+        return None
+    return any_up
+
+
+def same_plan_new_purchase_blocked_message(old_up, plan, *, for_staff: bool = False):
+    """If the member already holds this plan as an active subscription, return a blocking message."""
+    if not old_up or old_up.plan_id != plan.id:
+        return None
+    if for_staff:
+        return f'Customer already has an active {plan.name} plan. Use renew instead.'
+    return (
+        f'You already have an active {plan.name} plan. '
+        'Choose a different plan to upgrade, or wait until it expires.'
+    )
+
+
+def user_same_plan_active_preflight(user, plan):
+    """
+    For member checkout: return an error message if a new sale of this plan must be
+    rejected (None if the purchase may proceed). activate_plan_purchase remains
+    authoritative (row lock).
+    """
+    from .models import UserPlan
+
+    today = timezone.now().date()
+    up = UserPlan.objects.filter(user=user).select_related('plan').first()
+    old_up = resolve_current_active_user_plan(up, today)
+    return same_plan_new_purchase_blocked_message(old_up, plan)
+
+
+def active_same_plan_error_body(message: str) -> dict:
+    return {
+        'success': False,
+        'error': {'code': ACTIVE_SAME_PLAN, 'message': message},
+    }
+
+
 def activate_plan_purchase(
     *,
     user,
@@ -512,11 +567,11 @@ def activate_plan_purchase(
             .filter(user=user)
             .first()
         )
-        old_up = (
-            any_up
-            if (any_up and any_up.is_active and (any_up.valid_until is None or any_up.valid_until >= today))
-            else None
-        )
+        old_up = resolve_current_active_user_plan(any_up, today)
+
+        blocked = same_plan_new_purchase_blocked_message(old_up, plan)
+        if blocked:
+            raise SamePlanAlreadyActiveError(blocked)
 
         plan_price = plan.price or Decimal('0')
         valid_from = today

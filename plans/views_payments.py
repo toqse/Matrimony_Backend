@@ -22,11 +22,14 @@ from .serializers import PlanOrderSerializer, PlanVerifySerializer, ServiceCharg
 from .services import (
     RAZORPAY_PURPOSE_PLAN_PURCHASE,
     RAZORPAY_PURPOSE_SERVICE_CHARGE,
+    SamePlanAlreadyActiveError,
     activate_plan_purchase,
+    active_same_plan_error_body,
     compute_plan_purchase_amounts,
     compute_service_charge_remaining,
     pay_remaining_service_charge,
     plan_purchase_response_data,
+    user_same_plan_active_preflight,
 )
 
 
@@ -48,6 +51,13 @@ def _razorpay_api_error(exc):
     return Response(
         {'success': False, 'error': {'code': 502, 'message': str(exc)}},
         status=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
+def _same_plan_conflict(message: str):
+    return Response(
+        active_same_plan_error_body(message),
+        status=status.HTTP_409_CONFLICT,
     )
 
 
@@ -114,6 +124,9 @@ class PlanOrderView(APIView):
 
         plan = Plan.objects.get(pk=ser.validated_data['plan_id'])
         payment_option = ser.validated_data['payment_option']
+        blocked_msg = user_same_plan_active_preflight(request.user, plan)
+        if blocked_msg:
+            return _same_plan_conflict(blocked_msg)
         amount_inr, _, _, _ = compute_plan_purchase_amounts(request.user, plan, payment_option)
         if amount_inr <= 0:
             return Response(
@@ -245,13 +258,16 @@ class PlanVerifyView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        _, txn, extra = activate_plan_purchase(
-            user=request.user,
-            plan=plan,
-            payment_option=payment_option,
-            payment_method=Transaction.PAYMENT_RAZORPAY,
-            razorpay_payment_id=payment_id,
-        )
+        try:
+            _, txn, extra = activate_plan_purchase(
+                user=request.user,
+                plan=plan,
+                payment_option=payment_option,
+                payment_method=Transaction.PAYMENT_RAZORPAY,
+                razorpay_payment_id=payment_id,
+            )
+        except SamePlanAlreadyActiveError as exc:
+            return _same_plan_conflict(str(exc))
         return Response(
             {
                 'success': True,

@@ -25,10 +25,12 @@ from .serializers import (
 )
 from .services import (
     PlanLimitService,
+    SamePlanAlreadyActiveError,
     can_send_interest,
     can_chat,
     can_view_contact,
     activate_plan_purchase,
+    active_same_plan_error_body,
     pay_remaining_service_charge,
     plan_purchase_response_data,
     compute_service_charge_remaining,
@@ -38,6 +40,7 @@ from .services import (
     plan_expired_response,
     get_user_plan_status,
     has_accepted_interest_between,
+    user_same_plan_active_preflight,
 )
 
 
@@ -236,12 +239,25 @@ class PlanPurchaseView(APIView):
         plan = Plan.objects.get(pk=plan_id)
         user = request.user
 
-        _, txn, extra = activate_plan_purchase(
-            user=user,
-            plan=plan,
-            payment_option=payment_option,
-            payment_method=payment_method,
-        )
+        blocked_msg = user_same_plan_active_preflight(user, plan)
+        if blocked_msg:
+            return Response(
+                active_same_plan_error_body(blocked_msg),
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            _, txn, extra = activate_plan_purchase(
+                user=user,
+                plan=plan,
+                payment_option=payment_option,
+                payment_method=payment_method,
+            )
+        except SamePlanAlreadyActiveError as exc:
+            return Response(
+                active_same_plan_error_body(str(exc)),
+                status=status.HTTP_409_CONFLICT,
+            )
 
         return Response({
             'success': True,

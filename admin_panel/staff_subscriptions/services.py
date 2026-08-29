@@ -13,25 +13,16 @@ from admin_panel.subscriptions.models import CustomerStaffAssignment
 from admin_panel.subscriptions.serializers import _status_label
 from admin_panel.staff_mgmt.models import StaffProfile
 from plans.models import Plan, ServiceCharge, Transaction, UserPlan
+from plans.services import resolve_current_active_user_plan
+from plans.services import same_plan_new_purchase_blocked_message as _same_plan_blocked_core
 
 
 VALID_STATUS = frozenset({"active", "expired", "cancelled"})
 
 
-def resolve_current_active_user_plan(any_up: UserPlan | None, today) -> UserPlan | None:
-    """Subscription row considered 'currently active' (same rule as plan purchase / upgrade)."""
-    if not any_up or not any_up.is_active:
-        return None
-    if any_up.valid_until is not None and any_up.valid_until < today:
-        return None
-    return any_up
-
-
 def same_plan_new_purchase_blocked_message(old_up: UserPlan | None, plan: Plan) -> str | None:
     """If customer already holds this plan as an active subscription, return a blocking message."""
-    if old_up and old_up.plan_id == plan.id:
-        return f"Customer already has an active {plan.name} plan. Use renew instead."
-    return None
+    return _same_plan_blocked_core(old_up, plan, for_staff=True)
 
 
 def staff_subscription_same_plan_active_preflight(customer: User, plan: Plan) -> str | None:
@@ -44,6 +35,8 @@ def staff_subscription_same_plan_active_preflight(customer: User, plan: Plan) ->
     up = UserPlan.objects.filter(user=customer).select_related("plan").first()
     old_up = resolve_current_active_user_plan(up, today)
     return same_plan_new_purchase_blocked_message(old_up, plan)
+
+
 STAFF_PAYMENT_MODES = frozenset({"cash", "upi", "card", "netbanking"})
 
 
