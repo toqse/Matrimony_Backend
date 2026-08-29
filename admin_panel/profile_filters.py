@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from django.db.models import Q
+from django.db.models import CharField, Q, TextField
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from profiles.utils import apply_height_cm_range
@@ -13,6 +14,9 @@ from admin_panel.planet_house_filter import (
     filter_users_by_planet_house,
 )
 from astrology.porutham import RASI_NAMES
+
+CharField.register_lookup(Lower)
+TextField.register_lookup(Lower)
 
 PROFILE_STATUS_FILTERS = frozenset(
     {
@@ -40,11 +44,27 @@ def _qp(request, *keys: str) -> str:
     return ""
 
 
+def _ci_contains(field: str, value: str) -> Q:
+    """Case-insensitive substring match via LOWER(), portable across DB engines."""
+    needle = (value or "").casefold()
+    if not needle:
+        return Q()
+    return Q(**{f"{field}__lower__contains": needle})
+
+
+def _ci_exact(field: str, value: str) -> Q:
+    """Case-insensitive exact match via LOWER(), portable across DB engines."""
+    needle = (value or "").casefold()
+    if not needle:
+        return Q()
+    return Q(**{f"{field}__lower": needle})
+
+
 def _apply_phone_filter(qs, phone: str):
-    search_filter = Q(mobile__icontains=phone)
+    search_filter = _ci_contains("mobile", phone)
     digits_only = "".join(ch for ch in phone if ch.isdigit())
     if digits_only and digits_only != phone:
-        search_filter |= Q(mobile__icontains=digits_only)
+        search_filter |= _ci_contains("mobile", digits_only)
     return qs.filter(search_filter)
 
 
@@ -111,13 +131,13 @@ def apply_profile_status_filter(qs, filter_value: str):
 
 def _apply_legacy_search(qs, search: str):
     search_filter = (
-        Q(name__icontains=search)
-        | Q(matri_id__icontains=search)
-        | Q(mobile__icontains=search)
+        _ci_contains("name", search)
+        | _ci_contains("matri_id", search)
+        | _ci_contains("mobile", search)
     )
     digits_only = "".join(ch for ch in search if ch.isdigit())
     if digits_only and digits_only != search:
-        search_filter |= Q(mobile__icontains=digits_only)
+        search_filter |= _ci_contains("mobile", digits_only)
     return qs.filter(search_filter)
 
 
@@ -139,11 +159,11 @@ def apply_profile_list_filters(qs, request):
     """
     matri_id = _qp(request, "matri_id")
     if matri_id:
-        qs = qs.filter(matri_id__icontains=matri_id)
+        qs = qs.filter(_ci_contains("matri_id", matri_id))
 
     name = _qp(request, "name")
     if name:
-        qs = qs.filter(name__icontains=name)
+        qs = qs.filter(_ci_contains("name", name))
 
     phone = _qp(request, "phone", "mobile", "mobile_number", "phone_number")
     if phone:
@@ -220,16 +240,16 @@ def apply_profile_list_filters(qs, request):
             if star.isdigit() and 1 <= int(star) <= 27:
                 qs = qs.filter(horoscope_profile__pr_star=int(star))
             else:
-                qs = qs.filter(horoscope_profile__star_name__icontains=star)
+                qs = qs.filter(_ci_contains("horoscope_profile__star_name", star))
 
     rasi_id = _qp(request, "rasi_id")
     if rasi_id.isdigit() and 1 <= int(rasi_id) <= 12:
         rasi_name = RASI_NAMES[int(rasi_id)]
-        qs = qs.filter(horoscope_profile__rasi_sign__icontains=rasi_name)
+        qs = qs.filter(_ci_contains("horoscope_profile__rasi_sign", rasi_name))
     else:
         rasi = _qp(request, "rasi")
         if rasi:
-            qs = qs.filter(horoscope_profile__rasi_sign__icontains=rasi)
+            qs = qs.filter(_ci_contains("horoscope_profile__rasi_sign", rasi))
 
     has_horoscope = _qp(request, "has_horoscope").lower()
     if has_horoscope in {"true", "1", "yes"}:
@@ -248,7 +268,7 @@ def apply_profile_list_filters(qs, request):
 
     rajju = _qp(request, "rajju")
     if rajju:
-        qs = qs.filter(horoscope_profile__rajju__icontains=rajju)
+        qs = qs.filter(_ci_contains("horoscope_profile__rajju", rajju))
 
     dosham = _qp(request, "dosham").lower()
     if dosham in {"true", "1", "yes"}:
@@ -270,7 +290,7 @@ def apply_profile_list_filters(qs, request):
     if plan.isdigit():
         qs = qs.filter(user_plan__plan_id=int(plan))
     elif plan:
-        qs = qs.filter(user_plan__plan__name__iexact=plan)
+        qs = qs.filter(_ci_exact("user_plan__plan__name", plan))
 
     verified = _qp(request, "verified").lower()
     if verified in {"true", "1", "yes"}:

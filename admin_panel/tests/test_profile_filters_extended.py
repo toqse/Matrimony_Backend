@@ -272,6 +272,51 @@ class PlanetHouseFilterTests(TestCase):
         self.assertNotIn(self.user_short_chart.pk, ids)
 
 
+class ProfileTextSearchCaseTests(TestCase):
+    def setUp(self):
+        tag = uuid.uuid4().hex[:8].upper()
+        self.matri_id = f"AMCS{tag}"
+        self.phone = f"+9198{uuid.uuid4().int % 10**8:08d}"
+        self.user = _create_member(
+            mobile=self.phone,
+            name="TEST 119",
+            gender="F",
+            matri_id=self.matri_id,
+        )
+        self.other = _create_member(
+            mobile=_mobile(),
+            name="Other Person",
+            gender="M",
+        )
+        self.base_qs = User.objects.filter(pk__in=[self.user.pk, self.other.pk])
+
+    def test_name_search_is_case_insensitive(self):
+        for query in ("TEST 119", "test 119", "Test 119"):
+            qs = apply_profile_list_filters(self.base_qs, _req({"name": query}))
+            ids = set(qs.values_list("pk", flat=True))
+            self.assertEqual(ids, {self.user.pk}, msg=f"name={query!r}")
+
+    def test_matri_id_search_is_case_insensitive(self):
+        qs = apply_profile_list_filters(self.base_qs, _req({"matri_id": self.matri_id.lower()}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.user.pk})
+
+        qs = apply_profile_list_filters(self.base_qs, _req({"matri_id": self.matri_id}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.user.pk})
+
+    def test_phone_search_matches_digits_and_formatted_input(self):
+        digits = "".join(ch for ch in self.phone if ch.isdigit())
+        formatted = f"{digits[:2]}-{digits[2:]}"
+        qs = apply_profile_list_filters(self.base_qs, _req({"phone": formatted}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.user.pk})
+
+        qs = apply_profile_list_filters(self.base_qs, _req({"phone": self.phone}))
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.user.pk})
+
+
 class PoruthamProfileFilterTests(TestCase):
     def setUp(self):
         tag = uuid.uuid4().hex[:8].upper()
@@ -330,6 +375,16 @@ class PoruthamProfileFilterTests(TestCase):
         )
         self.assertIsNone(qs)
         self.assertEqual(err, REFERENCE_NOT_FOUND_MSG)
+
+    def test_match_matri_id_is_case_insensitive(self):
+        qs, err = apply_porutham_match_filters(
+            self.base_qs,
+            _req({"match_matri_id": self.bride.matri_id.lower(), "min_porutham_count": "0"}),
+        )
+        self.assertIsNone(err)
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertIn(self.groom_match.pk, ids)
+        self.assertIn(self.groom_other.pk, ids)
 
     def test_porutham_filter_with_reference_returns_subset(self):
         qs, err = apply_porutham_match_filters(

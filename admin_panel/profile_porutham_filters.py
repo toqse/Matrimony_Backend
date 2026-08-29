@@ -5,7 +5,7 @@ from accounts.models import User
 from astrology.models import HoroscopeProfile
 from astrology.porutham import UTHAMAM, calculate_porutham
 
-from .profile_filters import _qp
+from .profile_filters import _ci_exact, _qp
 
 PORUTHAM_CANDIDATE_CAP = 500
 
@@ -82,7 +82,7 @@ def apply_porutham_match_filters(qs, request):
     if not match_matri_id:
         return qs, None
 
-    ref_user = User.objects.filter(matri_id__iexact=match_matri_id, role="user").first()
+    ref_user = User.objects.filter(_ci_exact("matri_id", match_matri_id), role="user").first()
     if not ref_user:
         return None, REFERENCE_NOT_FOUND_MSG
 
