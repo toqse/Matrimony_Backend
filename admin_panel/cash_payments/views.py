@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 
+from django.db import transaction as db_transaction
 from django.db.models import Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
@@ -13,11 +14,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from admin_panel.audit_log.models import AuditLog
+from admin_panel.audit_log.utils import create_audit_log
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
+from admin_panel.commissions.models import Commission
 from admin_panel.pagination import StandardPagination
 from admin_panel.staff_mgmt.models import StaffProfile
-from plans.models import Plan, Transaction
+from admin_panel.staff_payments.models import PaymentEntry
+from plans.models import Plan, Transaction, UserPlan
 
 from .models import PaymentReview
 from .serializers import PaymentDetailSerializer, PaymentTableSerializer, payment_mode_label, payment_status_label
@@ -337,6 +342,90 @@ class RejectPaymentAPIView(APIView):
             defaults={"reviewed_by": request.user, "reviewed_at": timezone.now(), "rejection_reason": reason},
         )
         return Response({"success": True, "data": PaymentDetailSerializer(obj).data})
+
+
+def _void_verified_cash_payment(txn: Transaction) -> dict:
+    """
+    Remove a verified cash plan purchase from the ledger.
+    Deletes the staff payment entry and matching unpaid commissions.
+    If this was the customer's only successful plan purchase, removes their UserPlan.
+    """
+    if payment_mode_label(txn) != "cash":
+        raise ValueError("Only cash payments can be voided")
+    if payment_status_label(txn) != "verified":
+        raise ValueError("Only verified cash payments can be voided")
+
+    user = txn.user
+    sale_amount = txn.total_amount
+    matching_commissions = Commission.objects.filter(customer=user, sale_amount=sale_amount)
+    if txn.plan_id:
+        matching_commissions = matching_commissions.filter(
+            Q(plan_id=txn.plan_id) | Q(subscription__plan_id=txn.plan_id)
+        )
+
+    remaining_success = (
+        Transaction.objects.filter(
+            user=user,
+            transaction_type=Transaction.TYPE_PLAN_PURCHASE,
+            payment_status=Transaction.STATUS_SUCCESS,
+        )
+        .exclude(pk=txn.pk)
+        .exists()
+    )
+    user_plan = UserPlan.objects.filter(user=user).first()
+    if not remaining_success and user_plan:
+        if Commission.objects.filter(subscription=user_plan, status=Commission.STATUS_PAID).exists():
+            raise ValueError("Cannot void a payment with a paid commission")
+    elif matching_commissions.filter(status=Commission.STATUS_PAID).exists():
+        raise ValueError("Cannot void a payment with a paid commission")
+
+    with db_transaction.atomic():
+        matching_commissions.exclude(status=Commission.STATUS_PAID).delete()
+        PaymentEntry.objects.filter(transaction=txn).delete()
+        PaymentReview.objects.filter(transaction=txn).delete()
+        txn.delete()
+        plan_removed = False
+        if not remaining_success:
+            leftover = UserPlan.objects.filter(user=user).first()
+            if leftover:
+                Commission.objects.filter(subscription=leftover).delete()
+                leftover.delete()
+                plan_removed = True
+        return {"removed": True, "plan_removed": plan_removed}
+
+
+class VoidPaymentAPIView(APIView):
+    """PATCH /api/v1/admin/payments/{id}/void/ — admin-only removal of a verified cash payment."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        if getattr(request.user, "role", None) != AdminUser.ROLE_ADMIN:
+            return Response(
+                {"success": False, "error": {"code": 403, "message": "Only admin can void payments"}},
+                status=403,
+            )
+        obj = _scoped_queryset(request).filter(pk=pk).first()
+        if not obj:
+            return Response({"success": False, "error": {"code": 404, "message": "Payment not found"}}, status=404)
+        receipt = obj.transaction_id or ""
+        customer_name = (getattr(obj.user, "name", "") or "").strip()
+        try:
+            result = _void_verified_cash_payment(obj)
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": str(exc)}},
+                status=400,
+            )
+        create_audit_log(
+            request,
+            action=AuditLog.ACTION_DELETE,
+            resource=f"payment:{pk}",
+            details=f"Voided cash payment #{pk} ({receipt}).",
+            target_profile_name=customer_name,
+        )
+        return Response({"success": True, "data": {"id": pk, **result}})
 
 
 class PaymentsExportCSVAPIView(APIView):

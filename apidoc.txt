@@ -3696,6 +3696,22 @@ PATCH /api/v1/admin/payments/{id}/reject/
   Response 200: { "success": true, "data": { ...payment detail with status=rejected... } }
 
 ----------------------------------------------------------------------------
+PATCH /api/v1/admin/payments/{id}/void/
+  Auth: Required (Admin JWT; Admin only)
+  Description:
+    Remove a verified cash payment from the ledger.
+    Deletes the staff cash-entry row and matching unpaid commissions.
+    If this was the customer's only successful plan purchase, the UserPlan is removed.
+  Validation:
+    - role must be admin -> "Only admin can void payments"
+    - payment mode must be cash -> "Only cash payments can be voided"
+    - status must be verified -> "Only verified cash payments can be voided"
+    - paid commission exists -> "Cannot void a payment with a paid commission"
+  Response 200:
+    { "success": true, "data": { "id": 145, "removed": true, "plan_removed": true } }
+  Error 404: "Payment not found"
+
+----------------------------------------------------------------------------
 POST /api/v1/admin/payments/
   Auth: Required (Admin JWT)
   Description: Create manual cash payment record (pending verification).

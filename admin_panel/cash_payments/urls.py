@@ -8,6 +8,7 @@ from .views import (
     PaymentsSummaryAPIView,
     RejectPaymentAPIView,
     VerifyPaymentAPIView,
+    VoidPaymentAPIView,
 )
 
 urlpatterns = [
@@ -18,4 +19,5 @@ urlpatterns = [
     path("<int:pk>/", PaymentDetailAPIView.as_view(), name="admin-payments-detail"),
     path("<int:pk>/verify/", VerifyPaymentAPIView.as_view(), name="admin-payments-verify"),
     path("<int:pk>/reject/", RejectPaymentAPIView.as_view(), name="admin-payments-reject"),
+    path("<int:pk>/void/", VoidPaymentAPIView.as_view(), name="admin-payments-void"),
 ]
