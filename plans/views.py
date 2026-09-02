@@ -87,13 +87,13 @@ class AdminPlanViewSet(ModelViewSet):
 class PlanListView(APIView):
     """
     GET /api/v1/plans/
-    List active plans with service_charge and total_price based on request user's gender.
+    List active published plans with service_charge and total_price based on request user's gender.
     Auth: Required (JWT) so service charge is applied by user gender.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        plans = Plan.objects.filter(is_active=True).order_by('price')
+        plans = Plan.objects.filter(is_active=True, is_published=True).order_by('price')
         # Service charge from user profile (gender): Male 15000, Female 10000, Other 5000
         gender = getattr(request.user, 'gender', None) or 'M'
         if not gender:
@@ -136,12 +136,12 @@ class WebsitePlanListView(APIView):
     """
     GET /api/v1/website/plans/
     Public plan list for website (no token required).
-    Returns active plans and pricing breakdown for each gender.
+    Returns active published plans and pricing breakdown for each gender.
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
-        plans = Plan.objects.filter(is_active=True).order_by('price')
+        plans = Plan.objects.filter(is_active=True, is_published=True).order_by('price')
         service_charges = {
             row.gender: row.amount for row in ServiceCharge.objects.all()
         }

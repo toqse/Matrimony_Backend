@@ -98,3 +98,19 @@ class AdminPlansViewSet(viewsets.ModelViewSet):
                 },
             }
         )
+
+    @action(detail=True, methods=["patch"], url_path="toggle-publish")
+    def toggle_publish(self, request, pk=None):
+        plan = self.get_object()
+        plan.is_published = not plan.is_published
+        plan.save(update_fields=["is_published", "updated_at"])
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "id": plan.id,
+                    "is_published": plan.is_published,
+                    "status": "published" if plan.is_published else "unpublished",
+                },
+            }
+        )

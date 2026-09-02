@@ -10,6 +10,11 @@ from profiles.models import UserLocation, UserEducation, UserPhotos
 from core.media import absolute_media_url
 
 
+def _online_purchasable_plan_exists(plan_id):
+    """Website/member checkout: active and published only."""
+    return Plan.objects.filter(pk=plan_id, is_active=True, is_published=True).exists()
+
+
 class PlanSerializer(serializers.ModelSerializer):
     """Admin CRUD: full plan fields."""
     class Meta:
@@ -18,7 +23,7 @@ class PlanSerializer(serializers.ModelSerializer):
             'id', 'name', 'price', 'duration_days',
             'profile_view_limit', 'interest_limit', 'chat_limit',
             'horoscope_match_limit', 'contact_view_limit',
-            'description', 'is_active', 'created_at',
+            'description', 'is_published', 'is_active', 'created_at',
         ]
         read_only_fields = ['created_at']
 
@@ -69,7 +74,7 @@ class PlanPurchaseSerializer(serializers.Serializer):
     )
 
     def validate_plan_id(self, value):
-        if not Plan.objects.filter(pk=value, is_active=True).exists():
+        if not _online_purchasable_plan_exists(value):
             raise serializers.ValidationError('Invalid or inactive plan.')
         return value
 
@@ -96,7 +101,7 @@ class PlanOrderSerializer(serializers.Serializer):
     )
 
     def validate_plan_id(self, value):
-        if not Plan.objects.filter(pk=value, is_active=True).exists():
+        if not _online_purchasable_plan_exists(value):
             raise serializers.ValidationError('Invalid or inactive plan.')
         return value
 
@@ -113,7 +118,7 @@ class PlanVerifySerializer(serializers.Serializer):
     )
 
     def validate_plan_id(self, value):
-        if not Plan.objects.filter(pk=value, is_active=True).exists():
+        if not _online_purchasable_plan_exists(value):
             raise serializers.ValidationError('Invalid or inactive plan.')
         return value
 

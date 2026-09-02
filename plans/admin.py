@@ -8,9 +8,9 @@ class PlanAdmin(admin.ModelAdmin):
         'name', 'price', 'duration_days',
         'profile_view_limit', 'interest_limit', 'chat_limit',
         'horoscope_match_limit', 'contact_view_limit',
-        'is_active', 'created_at',
+        'is_published', 'is_active', 'created_at',
     )
-    list_filter = ('is_active',)
+    list_filter = ('is_published', 'is_active',)
 
 
 @admin.register(ServiceCharge)

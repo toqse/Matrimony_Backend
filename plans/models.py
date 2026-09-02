@@ -44,6 +44,11 @@ class Plan(TimeStampedModel):
         default=False,
         help_text="Show this plan prominently on user-facing plans page.",
     )
+    is_published = models.BooleanField(
+        default=True,
+        help_text="Show this plan on the website and allow online purchase. "
+                  "Unpublished active plans are sold only via admin/staff/branch cash payment.",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:

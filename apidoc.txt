@@ -1670,7 +1670,7 @@ POST /api/v1/branch/enquiries/{id}/notes/
 1e. ADMIN SUBSCRIPTION PLANS APIs (/api/v1/admin/plans/)
 ================================================================================
 Roles:
-  - Admin: full CRUD (create, update, activate/deactivate)
+  - Admin: full CRUD (create, update, activate/deactivate, publish/unpublish)
   - Branch Manager: view-only
   - Staff: view-only
 Header: Authorization: Bearer <access_token>
@@ -1686,6 +1686,7 @@ Model: Reuses plans.Plan (no duplicate model)
   - profile_view_limit
   - description
   - is_highlighted (feature-plan visibility on user-facing plans page)
+  - is_published (website + online purchase; unpublished active plans are cash-only)
   - is_active
 
 Derived response fields:
@@ -1716,7 +1717,7 @@ Validation Rules
 ----------------------------------------------------------------------------
 GET /api/v1/admin/plans/
   Auth: Required (Admin JWT)
-  Description: Returns all plans including inactive, ordered by price (ascending).
+  Description: Returns all plans including inactive and unpublished, ordered by price (ascending).
   Response 200:
     {
       "success": true,
@@ -1733,6 +1734,7 @@ GET /api/v1/admin/plans/
           "profile_view_limit": 100,
           "has_horoscope": true,
           "is_highlighted": false,
+          "is_published": true,
           "is_active": true,
           "subscriber_count": 342,
           "description": "",
@@ -1757,6 +1759,7 @@ POST /api/v1/admin/plans/
       "profile_view_limit": 200,
       "description": "Most popular annual plan",
       "is_highlighted": true,
+      "is_published": false,
       "is_active": true
     }
   Response 201:
@@ -1774,6 +1777,7 @@ POST /api/v1/admin/plans/
         "profile_view_limit": 200,
         "has_horoscope": true,
         "is_highlighted": true,
+        "is_published": false,
         "is_active": true,
         "subscriber_count": 0,
         "description": "Most popular annual plan",
@@ -1800,6 +1804,7 @@ GET /api/v1/admin/plans/{id}/
         "profile_view_limit": 100,
         "has_horoscope": true,
         "is_highlighted": false,
+        "is_published": true,
         "is_active": true,
         "subscriber_count": 342,
         "description": "",
@@ -1839,6 +1844,24 @@ PATCH /api/v1/admin/plans/{id}/toggle-status/
       "error": {
         "code": 400,
         "message": "Cannot deactivate a plan with active subscribers (342 subscribers)"
+      }
+    }
+
+----------------------------------------------------------------------------
+PATCH /api/v1/admin/plans/{id}/toggle-publish/
+  Auth: Required (Admin JWT; Admin only)
+  Description:
+    - Toggles plan is_published.
+    - Published + active: shown on website and member checkout; online purchase allowed.
+    - Unpublished + active: hidden from website; still sold via admin/staff/branch cash payment.
+    - Unpublishing is allowed even when the plan has active subscribers.
+  Success response 200:
+    {
+      "success": true,
+      "data": {
+        "id": 2,
+        "is_published": true,
+        "status": "published"
       }
     }
 
@@ -4477,7 +4500,8 @@ Set Partner Preferences: POST /api/v1/profile/partner-preference/ or PATCH /api/
 
 --- Plan Upgrade ---
 GET /api/v1/plans/
-  Returns active plans with service_charge and total_price. Used for Upgrade button.
+  Returns active published plans with service_charge and total_price. Used for Upgrade button.
+  Unpublished plans are omitted (sold only via admin/staff/branch cash payment).
   Response 200: { "success": true, "data": { "plans": [...], "gender": "M" } }
 
 ================================================================================
@@ -5546,9 +5570,10 @@ CREATE PLAN
       "horoscope_match_limit": 30,
       "contact_view_limit": 30,
       "description": "Most popular plan",
+      "is_published": false,
       "is_active": true
     }
-  Response 201: { "id", "name", "price", "duration_days", "profile_view_limit", "interest_limit", "chat_limit", "horoscope_match_limit", "contact_view_limit", "description", "is_active", "created_at" }
+  Response 201: { "id", "name", "price", "duration_days", "profile_view_limit", "interest_limit", "chat_limit", "horoscope_match_limit", "contact_view_limit", "description", "is_published", "is_active", "created_at" }
   Error 403: Not admin.
 
 UPDATE PLAN
@@ -5556,6 +5581,11 @@ UPDATE PLAN
   Body (JSON): any subset of plan fields.
   Response 200: updated plan object.
   Error 403: Not admin. Error 404: Plan not found.
+
+TOGGLE PUBLISH
+  PATCH /api/v1/admin/plans/{id}/toggle-publish/
+  Toggles is_published. Unpublished active plans stay available for cash payment only.
+  Response 200: { "success": true, "data": { "id", "is_published", "status" } }
 
 DELETE PLAN
   DELETE /api/v1/admin/plans/{id}/
@@ -5571,7 +5601,7 @@ LIST PLANS (ADMIN)
 
 LIST AVAILABLE PLANS
   GET /api/v1/plans/
-  Auth: Required (JWT). Returns active plans with service_charge and total_price from user profile (gender). Male: service 15000; Female: 10000; Other: 5000.
+  Auth: Required (JWT). Returns active published plans with service_charge and total_price from user profile (gender). Male: service 15000; Female: 10000; Other: 5000. Unpublished plans are omitted.
   Response 200:
     {
       "success": true,

@@ -21,6 +21,7 @@ class AdminPlanSerializer(serializers.ModelSerializer):
             "profile_view_limit",
             "has_horoscope",
             "is_highlighted",
+            "is_published",
             "is_active",
             "subscriber_count",
             "description",
