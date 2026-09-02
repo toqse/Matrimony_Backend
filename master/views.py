@@ -32,6 +32,22 @@ class MasterListPagination(PageNumberPagination):
     page_size_query_param = 'limit'
     max_page_size = 200
 
+    def get_page_size(self, request):
+        raw = request.query_params.get(self.page_size_query_param)
+        if raw is None:
+            raw = request.query_params.get('page_size')
+        if raw is not None:
+            try:
+                size = int(raw)
+            except (TypeError, ValueError):
+                return self.page_size
+            if size < 1:
+                return self.page_size
+            if self.max_page_size:
+                return min(size, self.max_page_size)
+            return size
+        return self.page_size
+
 
 class CachedMasterListMixin:
     """Cache-aside for public master list GET responses (identical payload)."""

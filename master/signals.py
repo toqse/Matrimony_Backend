@@ -1,5 +1,5 @@
 """Invalidate Redis master-list caches when master rows change."""
-from django.db.models.signals import post_delete, post_save
+from django.db.models.signals import m2m_changed, post_delete, post_save
 from django.dispatch import receiver
 
 from master import cache_utils as mc
@@ -88,6 +88,13 @@ def _education_changed(sender, **kwargs):
 
 @receiver([post_save, post_delete], sender=EducationSubject)
 def _education_subject_changed(sender, **kwargs):
+    _invalidate(mc.RESOURCE_EDUCATION_SUBJECTS)
+
+
+@receiver(m2m_changed, sender=EducationSubject.educations.through)
+def _education_subject_educations_changed(sender, **kwargs):
+    if kwargs.get('action') not in ('post_add', 'post_remove', 'post_clear'):
+        return
     _invalidate(mc.RESOURCE_EDUCATION_SUBJECTS)
 
 
