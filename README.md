@@ -50,7 +50,6 @@ python manage.py runserver
    - `DATABASE_USER`, `DATABASE_PASSWORD` for host-side commands. Docker Compose overrides these to use its internal MySQL service.
 
 2. **Start all services:**
-
    ```bash
    docker-compose up --build
    ```

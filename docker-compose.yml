@@ -13,16 +13,7 @@ services:
     volumes:
       - matrimony_backend_mariadb_data:/var/lib/mysql
     healthcheck:
-      test:
-        [
-          "CMD",
-          "mariadb-admin",
-          "ping",
-          "-h",
-          "localhost",
-          "-uroot",
-          "-pRootPassword@123",
-        ]
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-pRootPassword@123"]
       interval: 10s
       timeout: 5s
       retries: 10
