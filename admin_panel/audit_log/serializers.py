@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import AuditLog
@@ -24,4 +25,4 @@ class AuditLogSerializer(serializers.ModelSerializer):
         ]
 
     def get_timestamp(self, obj):
-        return obj.created_at.strftime("%d-%m-%Y %H:%M")
+        return timezone.localtime(obj.created_at).strftime("%d-%m-%Y %H:%M")
