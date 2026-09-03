@@ -67,8 +67,8 @@ def generate_receipt_no() -> str:
 
 def staff_payment_customer_otp_identifier(*, customer_id: str, staff_admin_id: str) -> str:
     """
-    OTP namespace for staff cash payment customer authorization.
-    Must match send + verify + final payment create (cash).
+    OTP namespace for staff desk payment customer authorization (cash and UPI).
+    Must match send + verify + final payment create.
     """
     return f"staff_payment_auth:{customer_id}:{staff_admin_id}"
 

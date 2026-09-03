@@ -4,7 +4,11 @@ from core.models import SoftDeleteModel
 
 
 class NotificationLog(SoftDeleteModel):
-    CHANNEL_CHOICES = [('email', 'Email'), ('sms', 'SMS')]
+    CHANNEL_CHOICES = [
+        ('email', 'Email'),
+        ('sms', 'SMS'),
+        ('whatsapp', 'WhatsApp'),
+    ]
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

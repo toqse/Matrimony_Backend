@@ -289,6 +289,13 @@ def record_staff_plan_purchase(
             transaction_id=tid,
         )
 
+    try:
+        from notifications.whatsapp_notify import enqueue_subscription_confirmation
+
+        enqueue_subscription_confirmation(customer, plan, amount_paid)
+    except Exception:
+        pass
+
     return txn
 
 

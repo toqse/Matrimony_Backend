@@ -350,13 +350,35 @@ def _plan_duration_label(plan: Plan) -> str:
     return f"{plan.name} — {months} {mo} — ₹{plan.price}"
 
 
-def _send_sms_otp(mobile: str, otp: str) -> None:
+def _should_expose_otp() -> bool:
     try:
-        from notifications.tasks import send_otp_sms
+        from admin_panel.msg_config.models import should_expose_otp
 
-        send_otp_sms.delay(mobile, otp)
+        return should_expose_otp()
     except Exception:
-        print(f"[SMS] Staff payment OTP for {mobile}: {otp}")
+        return bool(
+            getattr(settings, "DEBUG", False)
+            or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False)
+        )
+
+
+def _send_sms_otp(mobile: str, otp: str) -> None:
+    """Send staff-payment customer OTP via MSG91 WhatsApp."""
+    expose = _should_expose_otp()
+    if expose:
+        print(f"[OTP] Staff payment OTP for {mobile}: {otp}")
+    try:
+        from notifications.tasks import send_otp_whatsapp_task
+
+        send_otp_whatsapp_task.delay(mobile, otp)
+    except Exception:
+        try:
+            from notifications.msg91_whatsapp import send_otp_whatsapp
+
+            send_otp_whatsapp(mobile, otp)
+        except Exception:
+            if not expose:
+                print(f"[OTP] Staff payment OTP for {mobile}: {otp}")
 
 
 class StaffPaymentPlansListAPIView(APIView):
@@ -496,7 +518,7 @@ class StaffPaymentCustomerOtpSendAPIView(APIView):
             "message": "OTP sent to customer's registered mobile.",
             "data": {"customer_matri_id": customer.matri_id or matri},
         }
-        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
+        if _should_expose_otp():
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -680,7 +702,7 @@ class StaffPaymentListCreateView(APIView):
             return _err_response_code("CUSTOMER_NOT_FOUND", "Customer not found.", 404)
         _ensure_staff_assignment_for_walk_in_payment(staff_profile, customer)
 
-        if mode == PaymentEntry.MODE_CASH:
+        if mode in (PaymentEntry.MODE_CASH, PaymentEntry.MODE_GPAY_UPI):
             verified_key = _payment_customer_verified_cache_key(customer, staff_admin)
             if cache.get(verified_key):
                 cache.delete(verified_key)

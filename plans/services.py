@@ -664,6 +664,12 @@ def activate_plan_purchase(
             'horoscope': int(carry_horo),
         },
     }
+    try:
+        from notifications.whatsapp_notify import enqueue_subscription_confirmation
+
+        enqueue_subscription_confirmation(user, plan, amount_paid)
+    except Exception:
+        pass
     return user_plan, txn, extra
 
 

@@ -136,22 +136,39 @@ def _check_rate_limit(mobile_e164: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _should_expose_otp() -> bool:
+    try:
+        from admin_panel.msg_config.models import should_expose_otp
+
+        return should_expose_otp()
+    except Exception:
+        return bool(
+            getattr(settings, "DEBUG", False)
+            or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False)
+        )
+
+
 def _generate_otp() -> str:
     return "".join(secrets.choice("0123456789") for _ in range(6))
 
 
 def _send_otp_sms(mobile_e164: str, otp: str) -> bool:
-    # Prefer Celery task; fallback to sync print (same style as accounts app)
-    expose = bool(getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False))
+    """Send admin OTP via MSG91 WhatsApp (or console when development_mode)."""
+    expose = _should_expose_otp()
     if expose:
-        print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
+        print(f"[OTP] Admin OTP for {mobile_e164}: {otp}")
     try:
-        from notifications.tasks import send_otp_sms
+        from notifications.tasks import send_otp_whatsapp_task
 
-        send_otp_sms.delay(mobile_e164, otp)
+        send_otp_whatsapp_task.delay(mobile_e164, otp)
     except Exception:
-        if not expose:
-            print(f"[SMS] Admin OTP for {mobile_e164}: {otp}")
+        try:
+            from notifications.msg91_whatsapp import send_otp_whatsapp
+
+            send_otp_whatsapp(mobile_e164, otp)
+        except Exception:
+            if not expose:
+                print(f"[OTP] Admin OTP for {mobile_e164}: {otp}")
     return True
 
 
@@ -216,7 +233,7 @@ class SendOTPView(APIView):
         _send_otp_sms(mobile, otp)
 
         payload = {"success": True, "message": "OTP sent successfully", "data": {"mobile": mobile}}
-        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
+        if _should_expose_otp():
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -453,7 +470,7 @@ class AdminChangePhoneSendOTPView(APIView):
         _send_otp_sms(new_mobile, otp)
 
         payload = {"success": True, "message": "OTP sent successfully.", "data": {"new_mobile": new_mobile}}
-        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
+        if _should_expose_otp():
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 

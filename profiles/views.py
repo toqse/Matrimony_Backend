@@ -1122,9 +1122,14 @@ class ProfileCompleteView(APIView):
 
     def post(self, request):
         user = request.user
+        was_complete = bool(user.is_registration_profile_completed)
         user.is_registration_profile_completed = True
         user.save(update_fields=['is_registration_profile_completed', 'updated_at'])
         _audit_member_profile(request, "Profile marked complete.")
+        if not was_complete:
+            from notifications.whatsapp_notify import enqueue_registration_success
+
+            enqueue_registration_success(user)
         return Response({
             'success': True,
             'message': 'Profile marked as complete.',

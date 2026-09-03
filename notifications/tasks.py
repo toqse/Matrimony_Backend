@@ -1,17 +1,65 @@
 """
-Celery tasks: OTP (SMS via Twilio/MSG91), email, notifications, profile matching.
+Celery tasks: OTP (WhatsApp MSG91 / legacy SMS), email, notifications, profile matching.
 """
 from celery import shared_task
 from django.conf import settings
 
 
 @shared_task(bind=True, max_retries=3)
+def send_otp_whatsapp_task(self, phone_number: str, otp: str):
+    """Send OTP via MSG91 WhatsApp template (respects MsgConfig.development_mode)."""
+    try:
+        from notifications.msg91_whatsapp import send_otp_whatsapp
+
+        return send_otp_whatsapp(phone_number, otp)
+    except Exception as e:
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def send_registration_success_whatsapp_task(self, phone_number: str, customer_name: str):
+    try:
+        from notifications.msg91_whatsapp import send_registration_success
+
+        return send_registration_success(phone_number, customer_name)
+    except Exception as e:
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def send_subscription_confirmation_whatsapp_task(
+    self,
+    phone_number: str,
+    customer_name: str,
+    package_name: str,
+    amount: str,
+):
+    try:
+        from notifications.msg91_whatsapp import send_subscription_confirmation
+
+        return send_subscription_confirmation(
+            phone_number, customer_name, package_name, amount
+        )
+    except Exception as e:
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
 def send_otp_sms(self, phone_number: str, otp: str):
-    """Send OTP via SMS using Twilio or MSG91 (from settings)."""
+    """Legacy SMS OTP (Twilio/MSG91 flow). Prefer send_otp_whatsapp_task for login OTP."""
     backend = getattr(settings, 'SMS_BACKEND', 'console')
     success = True
     error_msg = ''
-    if getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False):
+    try:
+        from admin_panel.msg_config.models import should_expose_otp
+
+        expose = should_expose_otp()
+    except Exception:
+        expose = bool(
+            getattr(settings, 'DEBUG', False)
+            or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False)
+        )
+    if expose:
         print(f'[SMS] OTP for {phone_number}: {otp}')
     try:
         if backend == 'twilio':
@@ -32,7 +80,6 @@ def send_otp_sms(self, phone_number: str, otp: str):
         elif backend == 'msg91':
             import requests
             auth_key = getattr(settings, 'MSG91_AUTH_KEY', '')
-            sender = getattr(settings, 'MSG91_SENDER_ID', 'MATRIM')
             if auth_key:
                 url = 'https://api.msg91.com/api/v5/flow/'
                 payload = {
@@ -48,8 +95,7 @@ def send_otp_sms(self, phone_number: str, otp: str):
             else:
                 success = False
                 error_msg = 'MSG91 not configured'
-        elif not (getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False)):
-            # console / fallback (already printed above when expose flag is on)
+        elif not expose:
             print(f'[SMS] OTP for {phone_number}: {otp}')
     except Exception as e:
         success = False

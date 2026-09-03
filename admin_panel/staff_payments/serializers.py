@@ -116,8 +116,12 @@ class StaffPaymentCreateSerializer(serializers.Serializer):
                     code="CASHIER_RECEIPT_NO_REQUIRED",
                     message="cashier_receipt_no is required for cash payments.",
                 )
-            if not otp:
-                self._fail(code="OTP_REQUIRED", message="otp is required for cash confirmation.")
+
+        if not otp:
+            self._fail(
+                code="OTP_REQUIRED",
+                message="otp is required for payment confirmation.",
+            )
 
         attrs["mode"] = mode
         attrs["customer_matri_id"] = matri_id

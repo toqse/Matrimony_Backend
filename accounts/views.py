@@ -37,17 +37,35 @@ from .models import User
 from admin_panel.audit_log.utils import create_audit_log
 
 
-def _send_otp_mobile(mobile: str, otp: str):
-    # Prefer Celery task; fallback to sync
-    expose = bool(getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False))
-    if expose:
-        print(f'[SMS] OTP for {mobile}: {otp}')
+def _should_expose_otp() -> bool:
     try:
-        from notifications.tasks import send_otp_sms
-        send_otp_sms.delay(mobile, otp)
+        from admin_panel.msg_config.models import should_expose_otp
+
+        return should_expose_otp()
     except Exception:
-        if not expose:
-            print(f'[SMS] OTP for {mobile}: {otp}')
+        return bool(
+            getattr(settings, 'DEBUG', False)
+            or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False)
+        )
+
+
+def _send_otp_mobile(mobile: str, otp: str):
+    """Send OTP via MSG91 WhatsApp (or console when MsgConfig.development_mode)."""
+    expose = _should_expose_otp()
+    if expose:
+        print(f'[OTP] for {mobile}: {otp}')
+    try:
+        from notifications.tasks import send_otp_whatsapp_task
+
+        send_otp_whatsapp_task.delay(mobile, otp)
+    except Exception:
+        try:
+            from notifications.msg91_whatsapp import send_otp_whatsapp
+
+            send_otp_whatsapp(mobile, otp)
+        except Exception:
+            if not expose:
+                print(f'[OTP] for {mobile}: {otp}')
     return True
 
 
@@ -152,8 +170,7 @@ class RegisterView(APIView):
                 'registration_pending': True,
             },
         }
-        # Expose OTP only in development/testing to simplify QA.
-        if getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False):
+        if _should_expose_otp():
             payload['data']['otp'] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -208,7 +225,7 @@ class ResendOTPView(APIView):
                 "otp_sent": True,
             },
         }
-        if getattr(settings, "DEBUG", False) or getattr(settings, "EXPOSE_OTP_IN_RESPONSE", False):
+        if _should_expose_otp():
             payload["data"]["otp"] = otp
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -287,8 +304,7 @@ class RegisterMobileView(APIView):
             'message': 'OTP sent to mobile',
             'data': {'mobile': mobile},
         }
-        # Expose OTP in development/testing only.
-        if getattr(settings, 'DEBUG', False) or getattr(settings, 'EXPOSE_OTP_IN_RESPONSE', False):
+        if _should_expose_otp():
             payload['data']['otp'] = otp
         return Response(payload, status=status.HTTP_200_OK)
 

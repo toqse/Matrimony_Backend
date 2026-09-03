@@ -390,4 +390,9 @@ def create_user_and_profile_sections(
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])
 
+    if user.is_registration_profile_completed:
+        from notifications.whatsapp_notify import enqueue_registration_success
+
+        enqueue_registration_success(user)
+
     return user

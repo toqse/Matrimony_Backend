@@ -21,10 +21,20 @@ if env_file.exists():
 
 SECRET_KEY = env('SECRET_KEY', default='dev-secret-key-change-in-production')
 DEBUG = env('DEBUG', default=False)
-# Independent of DEBUG (Docker/production often force DEBUG=0). When True, OTP is
-# printed to console and included in API responses for testing.
+# Legacy: OTP expose is now controlled by Admin MSG Settings → development_mode.
+# Kept for backward compatibility; login/OTP paths use MsgConfig.development_mode.
 EXPOSE_OTP_IN_RESPONSE = env.bool('EXPOSE_OTP_IN_RESPONSE', default=False)
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
+
+# MSG91 WhatsApp (authkey also configurable via Admin MSG Settings; DB overrides env)
+MSG91_AUTH_KEY = env('MSG91_AUTH_KEY', default='')
+MSG91_INTEGRATED_NUMBER = env('MSG91_INTEGRATED_NUMBER', default='918590123876')
+MSG91_SENDER_ID = env('MSG91_SENDER_ID', default='MATRIM')
+MSG91_OTP_TEMPLATE_ID = env('MSG91_OTP_TEMPLATE_ID', default='')
+SMS_BACKEND = env('SMS_BACKEND', default='console')
+TWILIO_ACCOUNT_SID = env('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = env('TWILIO_AUTH_TOKEN', default='')
+TWILIO_PHONE_NUMBER = env('TWILIO_PHONE_NUMBER', default='')
 
 INSTALLED_APPS = [
     'daphne',
@@ -83,6 +93,7 @@ INSTALLED_APPS = [
     'admin_panel.testimonials',
     'admin_panel.newsletter',
     'admin_panel.app_config',
+    'admin_panel.msg_config',
     'admin_panel.reports',
     'admin_panel.audit_log',
 ]

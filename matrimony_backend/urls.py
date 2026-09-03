@@ -69,6 +69,7 @@ urlpatterns = [
     path('api/v1/admin/testimonials/', include('admin_panel.testimonials.urls')),
     path('api/v1/admin/newsletter/', include('admin_panel.newsletter.urls')),
     path('api/v1/admin/app-config/', include('admin_panel.app_config.urls')),
+    path('api/v1/admin/msg-config/', include('admin_panel.msg_config.urls')),
     path('api/v1/admin/reports/', include('admin_panel.reports.urls')),
     path('api/v1/admin/audit-log/', include('admin_panel.audit_log.urls')),
     path('api/v1/admin/master/', include('admin_panel.master.urls')),
