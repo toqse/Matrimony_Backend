@@ -113,7 +113,9 @@ class StaffSerializer(serializers.ModelSerializer):
             self.fields["role"].required = False
 
     def get_status(self, obj):
-        return "active" if obj.is_active else "inactive"
+        if getattr(obj, "is_deleted", False):
+            return "deleted"
+        return "active" if obj.is_active else "deactivated"
 
     def get_target_progress(self, obj):
         return {"achieved": int(obj.achieved_target or 0), "target": int(obj.monthly_target or 0)}

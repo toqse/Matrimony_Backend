@@ -294,9 +294,10 @@ class StaffViewSet(viewsets.ModelViewSet):
         )
 
     def get_queryset(self):
+        # Include deactivated (is_active=False) staff. Soft-deleted stay hidden
+        # unless status=inactive so admins can still find them after a mistaken delete.
         qs = (
-            StaffProfile.objects.filter(is_deleted=False)
-            .select_related("branch", "admin_user")
+            StaffProfile.objects.select_related("branch", "admin_user")
             .order_by("-created_at")
         )
         user = self.request.user
@@ -321,8 +322,13 @@ class StaffViewSet(viewsets.ModelViewSet):
             qs = qs.filter(branch_id=branch_id)
 
         status_param = (self.request.query_params.get("status") or "").lower().strip()
-        if status_param in {"active", "inactive"}:
-            qs = qs.filter(is_active=(status_param == "active"))
+        if status_param in {"active"}:
+            qs = qs.filter(is_deleted=False, is_active=True)
+        elif status_param in {"inactive", "deactivated"}:
+            qs = qs.filter(Q(is_active=False) | Q(is_deleted=True))
+        else:
+            # "all" — show active + deactivated; keep hard soft-deletes out of the default list
+            qs = qs.filter(is_deleted=False)
 
         return qs
 
@@ -418,7 +424,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         staff.save(update_fields=["is_active", "updated_at"])
         staff.admin_user.is_active = staff.is_active
         staff.admin_user.save(update_fields=["is_active", "updated_at"])
-        return Response({"success": True, "status": "active" if staff.is_active else "inactive"})
+        return Response({"success": True, "status": "active" if staff.is_active else "deactivated"})
 
     @action(detail=True, methods=["get"], url_path="report")
     def report(self, request, pk=None):
@@ -455,7 +461,7 @@ class BranchStaffListAPIView(APIView):
                 {"success": False, "error": {"code": 403, "message": "Access denied"}},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        qs = StaffProfile.objects.filter(is_deleted=False).select_related("branch")
+        qs = StaffProfile.objects.select_related("branch", "admin_user")
         if request.user.role == AdminUser.ROLE_BRANCH_MANAGER:
             manager_code = (
                 MasterBranch.objects.filter(pk=getattr(request.user, "branch_id", None))
@@ -469,7 +475,11 @@ class BranchStaffListAPIView(APIView):
         if search:
             qs = qs.filter(Q(emp_code__icontains=search) | Q(name__icontains=search) | Q(designation__icontains=search))
         status_param = (request.query_params.get("status") or "").lower().strip()
-        if status_param in {"active", "inactive"}:
-            qs = qs.filter(is_active=(status_param == "active"))
+        if status_param == "active":
+            qs = qs.filter(is_deleted=False, is_active=True)
+        elif status_param in {"inactive", "deactivated"}:
+            qs = qs.filter(Q(is_active=False) | Q(is_deleted=True))
+        else:
+            qs = qs.filter(is_deleted=False)
         ser = StaffSerializer(qs.order_by("-created_at"), many=True)
         return Response({"success": True, "data": {"count": len(ser.data), "results": ser.data}})
