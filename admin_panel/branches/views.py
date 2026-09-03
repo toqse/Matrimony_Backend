@@ -22,6 +22,7 @@ from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
 from admin_panel.audit_log.mixins import AuditLogMixin
 from admin_panel.audit_log.models import AuditLog
+from admin_panel.staff_mgmt.soft_delete import release_staff_unique_fields
 from plans.models import Transaction
 from .models import Branch
 from .serializers import BranchSerializer, PublicBranchSerializer
@@ -203,21 +204,18 @@ class BranchViewSet(AuditLogMixin, viewsets.ModelViewSet):
             branch.is_active = False
             branch.save(update_fields=["is_deleted", "is_active"])
 
-            # Collect the login accounts linked through staff profiles before we
-            # soft-delete those profiles.
-            staff_account_ids = list(
-                branch.staff_members.values_list("admin_user_id", flat=True)
+            # Soft-delete every staff profile and free unique mobiles/emails so
+            # those numbers can be reused after the branch is removed.
+            staff_to_release = list(
+                branch.staff_members.filter(is_deleted=False).select_related("admin_user")
             )
+            staff_account_ids = [s.admin_user_id for s in staff_to_release]
+            for staff in staff_to_release:
+                release_staff_unique_fields(staff)
+            staff_deactivated = len(staff_to_release)
 
-            # Soft-delete every staff profile belonging to this branch.
-            staff_deactivated = branch.staff_members.filter(is_deleted=False).update(
-                is_active=False, is_deleted=True
-            )
-
-            # Disable login for every staff / branch-manager account in this branch
-            # so they can no longer authenticate or call any API once the branch is
-            # removed. Match both by branch code (AdminUser.branch -> master.Branch)
-            # and by the accounts linked through the staff profiles.
+            # Disable any remaining staff / branch-manager logins matched by
+            # branch code that were not linked through a staff profile above.
             accounts_disabled = AdminUser.objects.filter(
                 Q(
                     role__in=[AdminUser.ROLE_BRANCH_MANAGER, AdminUser.ROLE_STAFF],

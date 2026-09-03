@@ -21,12 +21,18 @@ from admin_panel.branches.views import PublicBranchListAPIView
 from admin_panel.enquiries.views import PublicEnquiryCreateAPIView
 from astrology.views import HoroscopeDecoderDebugView
 from plans.views import MyPlanView, ContactUnlockView, WebsitePlanListView
+from plans.views_razorpay_webhook import RazorpayWebhookView
 
 urlpatterns = [
     path('health/live/', HealthLiveView.as_view(), name='health-live'),
     path('health/', HealthCheckView.as_view(), name='health'),
     path('admin/', admin.site.urls),
 
+    path(
+        'api/v1/payments/razorpay/webhook/',
+        RazorpayWebhookView.as_view(),
+        name='razorpay-webhook',
+    ),
     path('api/v1/auth/', include('accounts.urls')),
     path('api/v1/admin/auth/', include('admin_panel.auth.urls')),
     path('api/v1/admin/dashboard/', include('admin_panel.dashboard.urls')),

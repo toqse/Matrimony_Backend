@@ -18,16 +18,18 @@ from .razorpay_client import (
     inr_to_paise,
     verify_payment_signature,
 )
+from .razorpay_fulfillment import (
+    FulfillmentError,
+    fulfill_plan_purchase,
+    fulfill_service_charge,
+)
 from .serializers import PlanOrderSerializer, PlanVerifySerializer, ServiceChargeVerifySerializer
 from .services import (
     RAZORPAY_PURPOSE_PLAN_PURCHASE,
     RAZORPAY_PURPOSE_SERVICE_CHARGE,
-    SamePlanAlreadyActiveError,
-    activate_plan_purchase,
     active_same_plan_error_body,
     compute_plan_purchase_amounts,
     compute_service_charge_remaining,
-    pay_remaining_service_charge,
     plan_purchase_response_data,
     user_same_plan_active_preflight,
 )
@@ -259,22 +261,39 @@ class PlanVerifyView(APIView):
             )
 
         try:
-            _, txn, extra = activate_plan_purchase(
-                user=request.user,
-                plan=plan,
-                payment_option=payment_option,
-                payment_method=Transaction.PAYMENT_RAZORPAY,
-                razorpay_payment_id=payment_id,
+            result = fulfill_plan_purchase(
+                payment_id=payment_id,
+                order=order,
+                expected_paise=expected_paise,
             )
-        except SamePlanAlreadyActiveError as exc:
-            return _same_plan_conflict(str(exc))
+        except FulfillmentError as exc:
+            if exc.code == 'ACTIVE_SAME_PLAN':
+                return _same_plan_conflict(exc.message)
+            return Response(
+                {'success': False, 'error': {'code': 400, 'message': exc.message}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if result.user and result.user.id != request.user.id:
+            return Response(
+                {'success': False, 'error': {'code': 403, 'message': 'Payment belongs to another account.'}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        extra = dict(result.extra or {})
+        if result.transaction is None:
+            return Response(
+                {'success': False, 'error': {'code': 400, 'message': result.message or 'Activation failed.'}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        status_code = status.HTTP_200_OK if not result.created else status.HTTP_201_CREATED
         return Response(
             {
                 'success': True,
-                'message': extra.pop('message'),
-                'data': plan_purchase_response_data(txn, plan, extra),
+                'message': result.message or extra.pop('message', 'Plan activated successfully.'),
+                'data': plan_purchase_response_data(result.transaction, plan, extra),
             },
-            status=status.HTTP_201_CREATED,
+            status=status_code,
         )
 
 
@@ -412,30 +431,45 @@ class ServiceChargeVerifyView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        user_plan, txn, amount_paid = pay_remaining_service_charge(
-            user=request.user,
-            payment_method=Transaction.PAYMENT_RAZORPAY,
-            razorpay_payment_id=payment_id,
-        )
-        if txn is None:
+        try:
+            result = fulfill_service_charge(
+                payment_id=payment_id,
+                order=order,
+                expected_paise=expected_paise,
+            )
+        except FulfillmentError as exc:
+            return Response(
+                {'success': False, 'error': {'code': 400, 'message': exc.message}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if result.user and result.user.id != request.user.id:
+            return Response(
+                {'success': False, 'error': {'code': 403, 'message': 'Payment belongs to another account.'}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if result.transaction is None:
             return Response(
                 {
                     'success': True,
-                    'message': 'No remaining service charge to pay.',
+                    'message': result.message or 'No remaining service charge to pay.',
                     'data': {'amount_paid': 0, 'service_charge_remaining': 0},
                 },
                 status=status.HTTP_200_OK,
             )
 
+        amount_paid = (result.extra or {}).get('amount_paid', result.transaction.amount)
+        status_code = status.HTTP_200_OK if not result.created else status.HTTP_201_CREATED
         return Response(
             {
                 'success': True,
-                'message': 'Remaining service charge paid successfully.',
+                'message': result.message or 'Remaining service charge paid successfully.',
                 'data': {
-                    'transaction_id': txn.id,
+                    'transaction_id': result.transaction.id,
                     'amount_paid': float(amount_paid),
                     'service_charge_remaining': 0,
                 },
             },
-            status=status.HTTP_201_CREATED,
+            status=status_code,
         )

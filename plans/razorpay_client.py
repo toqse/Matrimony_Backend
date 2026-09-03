@@ -76,6 +76,22 @@ def verify_payment_signature(order_id: str, payment_id: str, signature: str) -> 
     return hmac.compare_digest(expected, (signature or '').strip())
 
 
+def verify_webhook_signature(body: bytes, signature: str) -> bool:
+    """
+    Verify Razorpay webhook HMAC (X-Razorpay-Signature).
+    Uses RAZORPAY_WEBHOOK_SECRET (Dashboard webhook secret), not the API key secret.
+    """
+    secret = (getattr(settings, 'RAZORPAY_WEBHOOK_SECRET', '') or '').strip()
+    if not secret:
+        raise RazorpayNotConfiguredError('Razorpay webhook secret is not configured.')
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        body if isinstance(body, (bytes, bytearray)) else str(body).encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, (signature or '').strip())
+
+
 def fetch_payment(payment_id: str) -> dict:
     key_id, key_secret = razorpay_credentials()
     url = f'{RAZORPAY_API}/payments/{payment_id}'

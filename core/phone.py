@@ -140,7 +140,11 @@ def personal_mobile_in_use(
     if staff_qs.exists():
         return "This mobile number is already registered to another staff member."
 
-    admin_qs = AdminUser.objects.filter(mobile__in=variants)
+    # Ignore AdminUsers whose linked staff profile was soft-deleted (defense for
+    # legacy rows that still hold the real mobile after soft-delete).
+    admin_qs = AdminUser.objects.filter(mobile__in=variants).exclude(
+        staff_profile__is_deleted=True
+    )
     if exclude_admin_user_id:
         admin_qs = admin_qs.exclude(pk=exclude_admin_user_id)
     if admin_qs.exists():

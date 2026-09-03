@@ -30,6 +30,7 @@ from master.models import Branch as MasterBranch
 
 from .models import StaffProfile
 from .serializers import StaffSerializer
+from .soft_delete import release_staff_unique_fields
 
 
 def _escape_pdf_text(value: str) -> str:
@@ -407,11 +408,7 @@ class StaffViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         staff = self.get_object()
-        staff.is_active = False
-        staff.is_deleted = True
-        staff.save(update_fields=["is_active", "is_deleted", "updated_at"])
-        staff.admin_user.is_active = False
-        staff.admin_user.save(update_fields=["is_active", "updated_at"])
+        release_staff_unique_fields(staff)
         return Response({"success": True}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["patch"], url_path="toggle-status")

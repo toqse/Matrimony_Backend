@@ -344,9 +344,10 @@ ASTROLOGY_DEBUG_TRACE = env.bool('ASTROLOGY_DEBUG_TRACE', default=False)
 # Persisted grahanila / hashing: bump when calculation or stored JSON shape changes (invalidates Horoscope rows)
 ASTROLOGY_ENGINE_VERSION = env('ASTROLOGY_ENGINE_VERSION', default='2')
 
-# Razorpay (Jathakam / Thalakuri PDF purchases)
+# Razorpay (Jathakam / Thalakuri PDF purchases + plan checkout)
 RAZORPAY_KEY_ID = env('RAZORPAY_KEY_ID', default='')
 RAZORPAY_KEY_SECRET = env('RAZORPAY_KEY_SECRET', default='')
+RAZORPAY_WEBHOOK_SECRET = env('RAZORPAY_WEBHOOK_SECRET', default='')
 
 # Catalog prices (INR); Razorpay orders use paise (amount * 100)
 ASTROLOGY_JATHAKAM_PRICE_INR = Decimal(str(env('ASTROLOGY_JATHAKAM_PRICE_INR', default='175')))

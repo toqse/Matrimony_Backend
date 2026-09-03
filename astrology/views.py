@@ -38,9 +38,12 @@ from .services.razorpay_pdf_orders import (
     catalog_price_inr,
     create_order,
     fetch_payment,
+    fulfill_pdf_payment,
     transaction_type_for_product,
     verify_payment_signature,
 )
+from plans.razorpay_client import fetch_order
+from plans.razorpay_fulfillment import FulfillmentError
 from .horoscope_api import (
     horoscope_fetch_payload,
     horoscope_not_found_response,
@@ -543,7 +546,9 @@ class AstrologyPdfOrderView(APIView):
 
         try:
             out = create_order(
-                user_matri_id=getattr(request.user, 'matri_id', '') or '', product=product
+                user_matri_id=getattr(request.user, 'matri_id', '') or '',
+                product=product,
+                user_id=request.user.pk,
             )
         except RazorpayNotConfiguredError as exc:
             if product == AstrologyPdfCredit.PRODUCT_THALAKURI:
@@ -636,8 +641,9 @@ class AstrologyPdfVerifyView(APIView):
         expected_type = transaction_type_for_product(product)
         expected_paise = amount_paise(product)
 
-        def _idempotent_response_for_txn(txn_row: Transaction):
-            if txn_row.user_id != request.user.id:
+        existing_early = Transaction.objects.filter(transaction_id=payment_id).first()
+        if existing_early:
+            if existing_early.user_id != request.user.id:
                 return Response(
                     {
                         'success': False,
@@ -645,7 +651,7 @@ class AstrologyPdfVerifyView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if txn_row.payment_status != Transaction.STATUS_SUCCESS:
+            if existing_early.payment_status != Transaction.STATUS_SUCCESS:
                 return Response(
                     {
                         'success': False,
@@ -653,7 +659,7 @@ class AstrologyPdfVerifyView(APIView):
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if txn_row.transaction_type != expected_type:
+            if existing_early.transaction_type != expected_type:
                 return Response(
                     {
                         'success': False,
@@ -663,7 +669,7 @@ class AstrologyPdfVerifyView(APIView):
                 )
             with db_transaction.atomic():
                 credit, _ = AstrologyPdfCredit.objects.get_or_create(
-                    transaction=txn_row,
+                    transaction=existing_early,
                     defaults={
                         'user': request.user,
                         'product': product,
@@ -686,10 +692,6 @@ class AstrologyPdfVerifyView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-
-        existing_early = Transaction.objects.filter(transaction_id=payment_id).first()
-        if existing_early:
-            return _idempotent_response_for_txn(existing_early)
 
         try:
             pay = fetch_payment(payment_id)
@@ -729,88 +731,72 @@ class AstrologyPdfVerifyView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        price = catalog_price_inr(product)
-
-        with db_transaction.atomic():
-            existing_locked = (
-                Transaction.objects.select_for_update()
-                .filter(transaction_id=payment_id)
-                .first()
+        try:
+            order = fetch_order(order_id)
+        except RazorpayNotConfiguredError as exc:
+            return Response(
+                {'success': False, 'error': {'code': 503, 'message': str(exc)}},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-            if existing_locked:
-                txn_row = existing_locked
-            else:
-                txn_row = Transaction.objects.create(
-                    user=request.user,
-                    plan=None,
-                    amount=price,
-                    service_charge=Decimal('0'),
-                    total_amount=price,
-                    payment_method=Transaction.PAYMENT_RAZORPAY,
-                    payment_status=Transaction.STATUS_SUCCESS,
-                    transaction_type=expected_type,
-                    transaction_id=payment_id,
-                )
-                credit = AstrologyPdfCredit.objects.create(
-                    user=request.user,
-                    product=product,
-                    transaction=txn_row,
-                )
-                return Response(
-                    {
-                        'success': True,
-                        'data': _astrology_pdf_verify_success_data(
-                            request, credit, already_verified=False
-                        ),
-                    },
-                    status=status.HTTP_200_OK,
-                )
+        except RazorpayApiError as exc:
+            return Response(
+                {'success': False, 'error': {'code': 502, 'message': str(exc)}},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
-            if txn_row.user_id != request.user.id:
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 403, 'message': 'Payment belongs to another account.'},
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if txn_row.payment_status != Transaction.STATUS_SUCCESS:
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 400, 'message': 'Payment transaction is not successful.'},
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if txn_row.transaction_type != expected_type:
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 400, 'message': 'Payment does not match this product.'},
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            credit, _ = AstrologyPdfCredit.objects.get_or_create(
-                transaction=txn_row,
-                defaults={
-                    'user': request.user,
-                    'product': product,
+        notes = order.get('notes') or {}
+        matri = (getattr(request.user, 'matri_id', '') or '').strip()
+        if matri and notes.get('matri_id', '').strip() and notes.get('matri_id', '').strip() != matri:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 403, 'message': 'Order belongs to another account.'},
                 },
+                status=status.HTTP_403_FORBIDDEN,
             )
-            if credit.product != product:
-                return Response(
-                    {
-                        'success': False,
-                        'error': {'code': 400, 'message': 'Credit product mismatch.'},
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        note_uid = str(notes.get('user_id') or '').strip()
+        if note_uid and note_uid != str(request.user.pk):
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 403, 'message': 'Order belongs to another account.'},
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            result = fulfill_pdf_payment(
+                payment_id=payment_id,
+                order=order,
+                expected_paise=expected_paise,
+                expected_product=product,
+            )
+        except FulfillmentError as exc:
+            code = 403 if exc.code in ('USER_NOT_FOUND',) else 400
+            return Response(
+                {'success': False, 'error': {'code': code, 'message': exc.message}},
+                status=code,
+            )
+
+        if result.user and result.user.id != request.user.id:
+            return Response(
+                {
+                    'success': False,
+                    'error': {'code': 403, 'message': 'Payment belongs to another account.'},
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not result.credit:
+            return Response(
+                {'success': False, 'error': {'code': 400, 'message': 'Credit not created.'}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             {
                 'success': True,
                 'data': _astrology_pdf_verify_success_data(
-                    request, credit, already_verified=True
+                    request, result.credit, already_verified=not result.created
                 ),
             },
             status=status.HTTP_200_OK,
