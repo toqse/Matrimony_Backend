@@ -48,6 +48,53 @@ def _hash_otp(otp: str) -> str:
     return hashlib.sha256(otp.encode()).hexdigest()
 
 
+def _phone_from_otp_identifier(identifier: str) -> str | None:
+    """
+    Extract E.164 phone from OTP identifier namespaces.
+    Supports: phone:, mobile:, pwd_reset:mobile:, and bare +91... values.
+    """
+    if not identifier:
+        return None
+    raw = identifier.strip()
+    for prefix in ('pwd_reset:mobile:', 'phone:', 'mobile:'):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    from core.phone import extract_indian_mobile_10
+
+    mobile_10 = extract_indian_mobile_10(raw)
+    if not mobile_10:
+        return None
+    return f'+91{mobile_10}'
+
+
+def _matches_dummy_otp(identifier: str, otp: str) -> bool:
+    """True if identifier maps to an active DummyOTPPhone with matching dummy_otp."""
+    phone = _phone_from_otp_identifier(identifier)
+    if not phone:
+        return False
+    try:
+        from accounts.models import DummyOTPPhone
+
+        return DummyOTPPhone.objects.filter(
+            phone=phone,
+            is_active=True,
+            dummy_otp=(otp or '').strip(),
+        ).exists()
+    except Exception:
+        return False
+
+
+def _mark_otp_verified(identifier: str, cache_key: str) -> None:
+    cache.delete(cache_key)
+    try:
+        from accounts.models import OTPRecord
+
+        OTPRecord.objects.filter(identifier=identifier).update(verified=True)
+    except Exception:
+        pass
+
+
 def check_resend_otp_rate_limit(phone_e164: str) -> tuple[bool, str]:
     """
     Rate limit for POST /api/v1/auth/resend-otp/ only.
@@ -108,6 +155,13 @@ def generate_otp(identifier: str, length: int = None) -> str:
 def verify_otp(identifier: str, otp: str) -> tuple[bool, str]:
     attempt_limit = getattr(settings, 'OTP_ATTEMPT_LIMIT', 5)
     cache_key = _otp_key(identifier)
+    otp = (otp or '').strip()
+
+    # Whitelisted phones: accept configured dummy OTP (with or without a real OTP session).
+    if _matches_dummy_otp(identifier, otp):
+        _mark_otp_verified(identifier, cache_key)
+        return True, 'OK'
+
     payload = cache.get(cache_key)
     if payload is None:
         try:
@@ -156,10 +210,5 @@ def verify_otp(identifier: str, otp: str) -> tuple[bool, str]:
             pass
         return False, 'Invalid OTP.'
 
-    cache.delete(cache_key)
-    try:
-        from accounts.models import OTPRecord
-        OTPRecord.objects.filter(identifier=identifier).update(verified=True)
-    except Exception:
-        pass
+    _mark_otp_verified(identifier, cache_key)
     return True, 'OK'

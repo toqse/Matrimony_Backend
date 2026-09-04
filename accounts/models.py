@@ -163,3 +163,57 @@ class OTPRecord(TimeStampedModel):
 
     class Meta:
         db_table = 'accounts_otp_record'
+
+
+class DummyOTPPhone(TimeStampedModel):
+    """
+    Admin-managed whitelist: for these phones, the configured dummy OTP
+    is accepted in addition to the real backend-generated OTP.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    phone = models.CharField(
+        max_length=20,
+        unique=True,
+        db_index=True,
+        help_text='E.164 Indian mobile, e.g. +919876543210',
+    )
+    dummy_otp = models.CharField(
+        max_length=10,
+        help_text='Fixed OTP that also works for this phone (digits only).',
+    )
+    is_active = models.BooleanField(default=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        db_table = 'accounts_dummy_otp_phone'
+        verbose_name = 'Dummy OTP phone'
+        verbose_name_plural = 'Dummy OTP phones'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        status = 'active' if self.is_active else 'inactive'
+        return f'{self.phone} ({status})'
+
+    def clean(self):
+        from django.conf import settings
+        from django.core.exceptions import ValidationError
+        from core.phone import extract_indian_mobile_10
+
+        mobile_10 = extract_indian_mobile_10(self.phone)
+        if not mobile_10:
+            raise ValidationError(
+                {'phone': 'Enter a valid 10-digit Indian mobile number (starting with 6-9).'}
+            )
+        self.phone = f'+91{mobile_10}'
+
+        otp = (self.dummy_otp or '').strip()
+        length = getattr(settings, 'OTP_LENGTH', 6)
+        if not otp.isdigit() or len(otp) != length:
+            raise ValidationError(
+                {'dummy_otp': f'Dummy OTP must be exactly {length} digits.'}
+            )
+        self.dummy_otp = otp
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)

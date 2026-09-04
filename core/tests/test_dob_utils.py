@@ -92,6 +92,9 @@ class ValidateProfileAgeTests(unittest.TestCase):
     def test_dob_17_06_2008_ok_on_2026_09_04(self):
         validate_profile_age(date(2008, 6, 17), today=date(2026, 9, 4))
 
+    def test_dob_18_06_2008_ok_on_2026_09_04(self):
+        validate_profile_age(date(2008, 6, 18), today=date(2026, 9, 4))
+
     def test_age_19_ok_all_genders(self):
         dob = date(2006, 1, 1)
         today = date(2025, 1, 1)
