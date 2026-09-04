@@ -20,7 +20,10 @@ class MsgConfig(models.Model):
     )
     development_mode = models.BooleanField(
         default=True,
-        help_text="When True, skip real MSG91 sends and expose OTPs for autofill.",
+        help_text=(
+            "ON = skip real MSG91 WhatsApp sends; print OTP to console and return it in API "
+            "for UI autofill. OFF = send real OTPs and templates."
+        ),
     )
     auth_key = models.CharField(
         max_length=255,
@@ -42,7 +45,8 @@ class MsgConfig(models.Model):
 
     class Meta:
         db_table = "msg_config"
-        verbose_name = "MSG config"
+        verbose_name = "MSG setting"
+        verbose_name_plural = "MSG settings"
 
     def __str__(self):
         return f"MsgConfig(development_mode={self.development_mode})"
