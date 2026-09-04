@@ -107,12 +107,13 @@ class AdminProfileLocationSectionView(APIView):
         user, err = _target_member(matri_id)
         if err:
             return err
+        from profiles.location_city import location_defaults_from_validated
+
         ser = LocationDetailsUpdateSerializer(data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
-        defaults = {"address": ser.validated_data.get("address", "")}
-        for k in ("country_id", "state_id", "district_id", "city_id"):
-            if ser.validated_data.get(k) is not None:
-                defaults[k] = ser.validated_data[k]
+        defaults = location_defaults_from_validated(ser.validated_data)
+        if "address" not in defaults:
+            defaults["address"] = ser.validated_data.get("address", "")
         UserLocation.objects.update_or_create(user=user, defaults=defaults)
         mark_profile_step_completed(user, "location")
         _sync_registration_done(user)

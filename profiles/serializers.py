@@ -306,6 +306,7 @@ class UserLocationSerializer(serializers.Serializer):
     state_id = serializers.IntegerField(required=False, allow_null=True)
     district_id = serializers.IntegerField(required=False, allow_null=True)
     city_id = serializers.IntegerField(required=False, allow_null=True)
+    city_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     address = serializers.CharField(required=False, allow_blank=True)
 
     def validate_country_id(self, value):
@@ -340,17 +341,52 @@ class UserLocationSerializer(serializers.Serializer):
             raise serializers.ValidationError(f'City with id {value} does not exist.')
         return value
 
+    def validate_city_name(self, value):
+        from profiles.location_city import sanitize_city_name
+        return sanitize_city_name(value)
+
+    def validate(self, attrs):
+        from profiles.location_city import (
+            enforce_location_hierarchy,
+            resolve_location_city_fields,
+            sanitize_city_name,
+        )
+        from master.models import City
+
+        attrs = dict(attrs)
+        enforce_location_hierarchy(attrs, require_active=False)
+
+        ciid = attrs.get('city_id')
+        cname = attrs.get('city_name')
+        if ciid is not None:
+            city = City.objects.filter(pk=ciid).first()
+            if city:
+                did = attrs.get('district_id')
+                if did is not None and city.district_id != did:
+                    raise serializers.ValidationError(
+                        {'city_id': 'city_id does not belong to district_id or is inactive.'}
+                    )
+                attrs['city_id'] = city.pk
+                attrs['city_name'] = city.name
+        elif cname:
+            attrs['city_name'] = sanitize_city_name(cname)
+            attrs['city_id'] = None
+        elif attrs.get('district_id') is not None:
+            # Location step requires a city identity (master or manual).
+            raise serializers.ValidationError(
+                {'city_name': 'Select a city or enter a city name.'}
+            )
+        else:
+            resolve_location_city_fields(attrs)
+        return attrs
+
     def create(self, validated_data):
+        from profiles.location_city import location_defaults_from_validated
+
         user = self.context['request'].user
-        defaults = {'address': validated_data.get('address', '')}
-        if validated_data.get('country_id'):
-            defaults['country_id'] = validated_data['country_id']
-        if validated_data.get('state_id'):
-            defaults['state_id'] = validated_data['state_id']
-        if validated_data.get('district_id'):
-            defaults['district_id'] = validated_data['district_id']
-        if validated_data.get('city_id'):
-            defaults['city_id'] = validated_data['city_id']
+        defaults = location_defaults_from_validated(validated_data)
+        if 'address' not in defaults:
+            defaults['address'] = validated_data.get('address', '')
         obj, _ = UserLocation.objects.update_or_create(user=user, defaults=defaults)
         return obj
 
@@ -786,6 +822,8 @@ class LocationDetailsReadSerializer(serializers.Serializer):
     district = serializers.SerializerMethodField()
     city_id = serializers.IntegerField(allow_null=True)
     city = serializers.SerializerMethodField()
+    city_name = serializers.SerializerMethodField()
+    city_source = serializers.SerializerMethodField()
     address = serializers.CharField()
 
     def get_country(self, obj):
@@ -797,8 +835,24 @@ class LocationDetailsReadSerializer(serializers.Serializer):
     def get_district(self, obj):
         return obj.district.name if obj.district_id else None
 
-    def get_city(self, obj):
+    def _resolved_city_name(self, obj):
+        stored = (getattr(obj, 'city_name', None) or '').strip()
+        if stored:
+            return stored
         return obj.city.name if obj.city_id else None
+
+    def get_city(self, obj):
+        return self._resolved_city_name(obj)
+
+    def get_city_name(self, obj):
+        return self._resolved_city_name(obj)
+
+    def get_city_source(self, obj):
+        if obj.city_id:
+            return 'master'
+        if (getattr(obj, 'city_name', None) or '').strip():
+            return 'user'
+        return None
 
 
 class FamilyDetailsReadSerializer(serializers.Serializer):
@@ -927,6 +981,8 @@ def empty_location_details_read_data():
         'district': None,
         'city_id': None,
         'city': None,
+        'city_name': None,
+        'city_source': None,
         'address': '',
     }
 
@@ -1326,6 +1382,7 @@ class LocationDetailsUpdateSerializer(serializers.Serializer):
     state_id = serializers.IntegerField(required=False, allow_null=True)
     district_id = serializers.IntegerField(required=False, allow_null=True)
     city_id = serializers.IntegerField(required=False, allow_null=True)
+    city_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     address = serializers.CharField(required=False, allow_blank=True)
 
     def validate_country_id(self, v):
@@ -1360,29 +1417,40 @@ class LocationDetailsUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Invalid or inactive city_id.')
         return v
 
+    def validate_city_name(self, v):
+        from profiles.location_city import sanitize_city_name
+        return sanitize_city_name(v)
+
     def validate(self, attrs):
-        """When multiple location IDs are sent together, enforce master hierarchy."""
-        from master.models import City, District, State
+        """Enforce master hierarchy; allow city_id OR manual city_name (never auto-create master)."""
+        from master.models import City
+        from profiles.location_city import enforce_location_hierarchy, sanitize_city_name
 
         attrs = dict(attrs)
-        cid = attrs.get('country_id')
-        sid = attrs.get('state_id')
-        did = attrs.get('district_id')
+        enforce_location_hierarchy(attrs, require_active=True)
+
+        has_city_id = 'city_id' in attrs
+        has_city_name = 'city_name' in attrs
         ciid = attrs.get('city_id')
-        if sid is not None and cid is not None:
-            if not State.objects.filter(pk=sid, country_id=cid, is_active=True).exists():
+        cname = attrs.get('city_name')
+
+        if has_city_id and ciid is not None:
+            city = City.objects.filter(pk=ciid, is_active=True).first()
+            if city:
+                did = attrs.get('district_id')
+                if did is not None and city.district_id != did:
+                    raise serializers.ValidationError(
+                        {'city_id': 'city_id does not belong to district_id or is inactive.'}
+                    )
+                attrs['city_name'] = city.name
+        elif has_city_name:
+            name = sanitize_city_name(cname)
+            attrs['city_name'] = name
+            if not has_city_id or ciid is None:
+                attrs['city_id'] = None
+            if not name and attrs.get('district_id') is not None and not ciid:
                 raise serializers.ValidationError(
-                    {'state_id': 'state_id does not belong to country_id or is inactive.'}
-                )
-        if did is not None and sid is not None:
-            if not District.objects.filter(pk=did, state_id=sid, is_active=True).exists():
-                raise serializers.ValidationError(
-                    {'district_id': 'district_id does not belong to state_id or is inactive.'}
-                )
-        if ciid is not None and did is not None:
-            if not City.objects.filter(pk=ciid, district_id=did, is_active=True).exists():
-                raise serializers.ValidationError(
-                    {'city_id': 'city_id does not belong to district_id or is inactive.'}
+                    {'city_name': 'Select a city or enter a city name.'}
                 )
         return attrs
 

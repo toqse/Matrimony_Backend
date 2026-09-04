@@ -736,12 +736,13 @@ class ProfileLocationView(APIView):
         return Response({'success': True, 'data': data}, status=status.HTTP_200_OK)
 
     def patch(self, request):
+        from profiles.location_city import location_defaults_from_validated
+
         ser = LocationDetailsUpdateSerializer(data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
-        defaults = {'address': ser.validated_data.get('address', '')}
-        for k in ('country_id', 'state_id', 'district_id', 'city_id'):
-            if ser.validated_data.get(k) is not None:
-                defaults[k] = ser.validated_data[k]
+        defaults = location_defaults_from_validated(ser.validated_data)
+        if 'address' not in defaults:
+            defaults['address'] = ser.validated_data.get('address', '')
         loc, _ = UserLocation.objects.update_or_create(user=request.user, defaults=defaults)
         self._apply_horoscope(request)
         out_ser = LocationDetailsReadSerializer(

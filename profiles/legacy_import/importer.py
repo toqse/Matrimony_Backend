@@ -254,6 +254,7 @@ class LegacyImporter:
                 "state": payload["state"],
                 "district": payload["district"],
                 "city": payload["city"],
+                "city_name": getattr(payload.get("city"), "name", None) or payload.get("city_name") or "",
                 "address": payload["address"],
             },
         )

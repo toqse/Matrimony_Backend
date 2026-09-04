@@ -83,6 +83,8 @@ class UserLocation(TimeStampedModel):
     city = models.ForeignKey(
         'master.City', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
     )
+    # Display/storage name: set from master City.name when city FK is set, or free-text when user-entered.
+    city_name = models.CharField(max_length=150, blank=True, default='')
     address = models.TextField(blank=True)
 
     class Meta:

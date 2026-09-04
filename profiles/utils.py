@@ -207,6 +207,7 @@ def _compute_step_completion(user, *, ensure_loaded=True):
             or loc.state_id
             or loc.district_id
             or loc.city_id
+            or (getattr(loc, 'city_name', None) or '').strip()
             or (loc.address or '').strip()
         )
     )

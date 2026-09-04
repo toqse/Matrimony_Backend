@@ -26,13 +26,14 @@ def apply_basic_details(user, payload: dict):
 
 
 def apply_location(user, payload: dict):
+    from profiles.location_city import location_defaults_from_validated
+
     ser = LocationDetailsUpdateSerializer(data=payload, partial=True)
     ser.is_valid(raise_exception=True)
     vd = ser.validated_data
-    defaults = {"address": vd.get("address", "")}
-    for k in ("country_id", "state_id", "district_id", "city_id"):
-        if vd.get(k) is not None:
-            defaults[k] = vd[k]
+    defaults = location_defaults_from_validated(vd)
+    if "address" not in defaults:
+        defaults["address"] = vd.get("address", "")
     UserLocation.objects.update_or_create(user=user, defaults=defaults)
     sync_profile_completion_flags(user)
 

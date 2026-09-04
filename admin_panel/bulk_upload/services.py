@@ -604,6 +604,7 @@ def validate_rows(
             "state_id": state.pk if state else None,
             "district_id": district.pk if district else None,
             "city_id": city.pk if city else None,
+            "city_name": city.name if city else (row.get("city") or "").strip(),
         }
         valid_payloads.append(payload)
 
@@ -688,6 +689,7 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
             "state_id": payload.get("state_id"),
             "district_id": payload.get("district_id"),
             "city_id": payload.get("city_id"),
+            "city_name": payload.get("city_name") or "",
             "address": payload.get("address") or "",
         },
     )
