@@ -81,10 +81,16 @@ class ValidateProfileAgeTests(unittest.TestCase):
             validate_profile_age(date(1910, 1, 1), today=date(2025, 1, 1))
         self.assertEqual(str(ctx.exception), "Date of birth is not realistic.")
 
-    def test_age_18_rejected(self):
+    def test_age_17_rejected(self):
         with self.assertRaises(ValueError) as ctx:
-            validate_profile_age(date(2007, 1, 1), today=date(2025, 1, 1))
+            validate_profile_age(date(2008, 1, 1), today=date(2025, 1, 1))
         self.assertEqual(str(ctx.exception), PROFILE_AGE_ERROR)
+
+    def test_age_18_ok(self):
+        validate_profile_age(date(2007, 1, 1), today=date(2025, 1, 1))
+
+    def test_dob_17_06_2008_ok_on_2026_09_04(self):
+        validate_profile_age(date(2008, 6, 17), today=date(2026, 9, 4))
 
     def test_age_19_ok_all_genders(self):
         dob = date(2006, 1, 1)
@@ -101,8 +107,8 @@ class ValidateProfileAgeTests(unittest.TestCase):
             validate_profile_age(date(1945, 1, 1), today=date(2025, 1, 1))
         self.assertEqual(str(ctx.exception), PROFILE_AGE_ERROR)
 
-    def test_male_under_21_now_ok_if_over_18(self):
-        # Previously male min was 21; unified rule allows 19+.
+    def test_male_under_21_now_ok_if_at_least_18(self):
+        # Previously male min was 21; unified rule allows 18+.
         validate_matrimony_registration_dob(
             date(2005, 6, 15), "M", today=date(2025, 6, 15)
         )
