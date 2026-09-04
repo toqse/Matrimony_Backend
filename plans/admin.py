@@ -1,5 +1,32 @@
 from django.contrib import admin
-from .models import Plan, ServiceCharge, UserPlan, Transaction, ProfileView, Interest
+from .models import (
+    Plan,
+    ServiceCharge,
+    UserPlan,
+    Transaction,
+    ProfileView,
+    Interest,
+    RazorpayOrder,
+    RazorpayWebhookEvent,
+)
+
+
+class ReadOnlyModelAdmin(admin.ModelAdmin):
+    """View existing rows; no add, edit, or delete."""
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        names = [field.name for field in self.model._meta.fields]
+        extra = list(self.readonly_fields or [])
+        return tuple(dict.fromkeys(extra + names))
 
 
 @admin.register(Plan)
@@ -20,8 +47,12 @@ class ServiceChargeAdmin(admin.ModelAdmin):
 
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'plan', 'total_amount', 'payment_method', 'payment_status', 'created_at')
-    list_filter = ('payment_method', 'payment_status')
+    list_display = (
+        'id', 'user', 'plan', 'transaction_type', 'total_amount',
+        'payment_method', 'payment_status', 'transaction_id', 'created_at',
+    )
+    list_filter = ('payment_method', 'payment_status', 'transaction_type')
+    search_fields = ('transaction_id', 'user__matri_id', 'user__name', 'user__email')
     raw_id_fields = ('user',)
 
 
@@ -49,3 +80,49 @@ class InterestAdmin(admin.ModelAdmin):
     list_display = ('sender', 'receiver', 'status', 'created_at')
     list_filter = ('status',)
     raw_id_fields = ('sender', 'receiver')
+
+
+@admin.register(RazorpayOrder)
+class RazorpayOrderAdmin(ReadOnlyModelAdmin):
+    list_display = (
+        'razorpay_order_id',
+        'user',
+        'purpose',
+        'amount_paise',
+        'status',
+        'razorpay_payment_id',
+        'transaction',
+        'created_at',
+    )
+    list_filter = ('status', 'purpose')
+    search_fields = (
+        'razorpay_order_id',
+        'razorpay_payment_id',
+        'receipt',
+        'user__matri_id',
+        'user__name',
+    )
+    raw_id_fields = ('user', 'plan', 'transaction')
+    date_hierarchy = 'created_at'
+
+
+@admin.register(RazorpayWebhookEvent)
+class RazorpayWebhookEventAdmin(ReadOnlyModelAdmin):
+    list_display = (
+        'created_at',
+        'event',
+        'signature_valid',
+        'status',
+        'http_status',
+        'razorpay_order_id',
+        'razorpay_payment_id',
+    )
+    list_filter = ('status', 'event', 'signature_valid')
+    search_fields = (
+        'razorpay_order_id',
+        'razorpay_payment_id',
+        'event',
+        'error_message',
+    )
+    raw_id_fields = ('order', 'transaction')
+    date_hierarchy = 'created_at'

@@ -56,13 +56,20 @@ def create_razorpay_order(*, amount_paise: int, receipt: str, notes: dict) -> di
         logger.warning('Razorpay order error %s: %s', r.status_code, r.text[:500])
         raise RazorpayApiError(r.text or 'Razorpay order failed', status_code=r.status_code)
     data = r.json()
-    return {
+    out = {
         'order_id': data.get('id'),
         'amount': data.get('amount'),
         'currency': data.get('currency', 'INR'),
         'receipt': data.get('receipt', receipt),
         'key_id': key_id,
     }
+    try:
+        from plans.razorpay_records import persist_created_order
+
+        persist_created_order(out, notes=notes)
+    except Exception:
+        logger.exception('Failed to persist Razorpay order locally')
+    return out
 
 
 def verify_payment_signature(order_id: str, payment_id: str, signature: str) -> bool:

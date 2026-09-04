@@ -48,6 +48,25 @@ class FulfillmentResult:
     message: str = ''
 
 
+def _sync_order_record(
+    *,
+    order: dict,
+    payment_id: str,
+    result: FulfillmentResult | None = None,
+    skipped_code: str | None = None,
+    status: str | None = None,
+) -> None:
+    from plans.razorpay_records import record_order_outcome
+
+    record_order_outcome(
+        order=order,
+        payment_id=payment_id,
+        result=result,
+        skipped_code=skipped_code,
+        status=status,
+    )
+
+
 def resolve_user_from_notes(notes: dict | None) -> User:
     notes = notes or {}
     user_id = str(notes.get('user_id') or '').strip()
@@ -75,6 +94,23 @@ def get_success_txn_by_payment_id(payment_id: str) -> Transaction | None:
 
 
 def fulfill_plan_purchase(
+    *,
+    payment_id: str,
+    order: dict,
+    expected_paise: int | None = None,
+) -> FulfillmentResult:
+    try:
+        result = _fulfill_plan_purchase_impl(
+            payment_id=payment_id, order=order, expected_paise=expected_paise
+        )
+    except FulfillmentError as exc:
+        _sync_order_record(order=order, payment_id=payment_id, skipped_code=exc.code)
+        raise
+    _sync_order_record(order=order, payment_id=payment_id, result=result)
+    return result
+
+
+def _fulfill_plan_purchase_impl(
     *,
     payment_id: str,
     order: dict,
@@ -150,6 +186,23 @@ def fulfill_plan_purchase(
 
 
 def fulfill_service_charge(
+    *,
+    payment_id: str,
+    order: dict,
+    expected_paise: int | None = None,
+) -> FulfillmentResult:
+    try:
+        result = _fulfill_service_charge_impl(
+            payment_id=payment_id, order=order, expected_paise=expected_paise
+        )
+    except FulfillmentError as exc:
+        _sync_order_record(order=order, payment_id=payment_id, skipped_code=exc.code)
+        raise
+    _sync_order_record(order=order, payment_id=payment_id, result=result)
+    return result
+
+
+def _fulfill_service_charge_impl(
     *,
     payment_id: str,
     order: dict,
@@ -248,4 +301,5 @@ def fulfill_from_captured_payment(*, payment: dict, order: dict) -> FulfillmentR
         )
 
     logger.info('Ignoring Razorpay payment %s with unknown purpose=%r', payment_id, purpose)
+    _sync_order_record(order=order, payment_id=payment_id, skipped_code='UNKNOWN_PURPOSE')
     return None

@@ -12,7 +12,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from astrology.models import AstrologyPdfCredit
-from plans.models import Plan, Transaction, UserPlan
+from plans.models import Plan, RazorpayOrder, RazorpayWebhookEvent, Transaction, UserPlan
 from plans.razorpay_client import RazorpayNotConfiguredError, inr_to_paise
 from plans.services import RAZORPAY_PURPOSE_PLAN_PURCHASE, compute_plan_purchase_amounts
 
@@ -108,6 +108,11 @@ class RazorpayWebhookTests(TestCase):
         res = self._post_webhook(payload, signature='deadbeef')
         self.assertEqual(res.status_code, 400, res.content)
         self.assertFalse(res.json().get('success'))
+        row = RazorpayWebhookEvent.objects.get()
+        self.assertEqual(row.status, RazorpayWebhookEvent.STATUS_INVALID_SIGNATURE)
+        self.assertFalse(row.signature_valid)
+        self.assertEqual(row.http_status, 400)
+        self.assertEqual(row.event, 'payment.captured')
 
     def test_unknown_purpose_ignored_200(self):
         payment_id = 'pay_unknown'
@@ -191,6 +196,17 @@ class RazorpayWebhookTests(TestCase):
         up = UserPlan.objects.get(user=self.user)
         self.assertEqual(up.plan_id, self.plan.pk)
         self.assertTrue(up.is_active)
+
+        events = list(RazorpayWebhookEvent.objects.order_by('id'))
+        self.assertEqual(len(events), 2)
+        self.assertTrue(events[0].signature_valid)
+        self.assertEqual(events[0].status, RazorpayWebhookEvent.STATUS_FULFILLED)
+        self.assertEqual(events[1].status, RazorpayWebhookEvent.STATUS_DUPLICATE)
+        local = RazorpayOrder.objects.get(razorpay_order_id=order_id)
+        self.assertEqual(local.status, RazorpayOrder.STATUS_FULFILLED)
+        self.assertEqual(local.razorpay_payment_id, payment_id)
+        self.assertEqual(local.purpose, RAZORPAY_PURPOSE_PLAN_PURCHASE)
+        self.assertEqual(local.user_id, self.user.pk)
 
     def test_thalakuri_pdf_credit_once(self):
         payment_id = 'pay_thal_1'
@@ -325,3 +341,7 @@ class RazorpayWebhookSecretMissingTests(TestCase):
                 HTTP_X_RAZORPAY_SIGNATURE='anything',
             )
         self.assertEqual(res.status_code, 503, res.content)
+        row = RazorpayWebhookEvent.objects.get()
+        self.assertEqual(row.status, RazorpayWebhookEvent.STATUS_NOT_CONFIGURED)
+        self.assertFalse(row.signature_valid)
+        self.assertEqual(row.http_status, 503)

@@ -211,6 +211,131 @@ class Transaction(TimeStampedModel):
         return f'{self.user.matri_id} - {plan_name} - {self.total_amount}'
 
 
+class RazorpayOrder(TimeStampedModel):
+    """Local copy of a Razorpay order created by this app."""
+    PURPOSE_PLAN_PURCHASE = 'plan_purchase'
+    PURPOSE_SERVICE_CHARGE = 'service_charge'
+    PURPOSE_ASTROLOGY_PDF = 'astrology_pdf'
+    PURPOSE_CHOICES = [
+        (PURPOSE_PLAN_PURCHASE, 'Plan purchase'),
+        (PURPOSE_SERVICE_CHARGE, 'Service charge'),
+        (PURPOSE_ASTROLOGY_PDF, 'Astrology PDF'),
+    ]
+    STATUS_CREATED = 'created'
+    STATUS_PAID = 'paid'
+    STATUS_FULFILLED = 'fulfilled'
+    STATUS_SKIPPED = 'skipped'
+    STATUS_CHOICES = [
+        (STATUS_CREATED, 'Created'),
+        (STATUS_PAID, 'Paid'),
+        (STATUS_FULFILLED, 'Fulfilled'),
+        (STATUS_SKIPPED, 'Skipped'),
+    ]
+    razorpay_order_id = models.CharField(max_length=64, unique=True, db_index=True)
+    receipt = models.CharField(max_length=64, blank=True)
+    amount_paise = models.PositiveIntegerField(default=0)
+    currency = models.CharField(max_length=8, default='INR')
+    purpose = models.CharField(max_length=40, blank=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='razorpay_orders',
+        null=True,
+        blank=True,
+    )
+    plan = models.ForeignKey(
+        Plan,
+        on_delete=models.SET_NULL,
+        related_name='razorpay_orders',
+        null=True,
+        blank=True,
+    )
+    notes = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_CREATED,
+        db_index=True,
+    )
+    razorpay_payment_id = models.CharField(max_length=64, blank=True, db_index=True)
+    transaction = models.ForeignKey(
+        Transaction,
+        on_delete=models.SET_NULL,
+        related_name='razorpay_orders',
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = 'plans_razorpay_order'
+        ordering = ['-created_at']
+        verbose_name = 'Razorpay order'
+        verbose_name_plural = 'Razorpay orders'
+
+    def __str__(self):
+        return f'{self.razorpay_order_id} ({self.status})'
+
+
+class RazorpayWebhookEvent(TimeStampedModel):
+    """Audit log of every Razorpay webhook POST."""
+    STATUS_INVALID_SIGNATURE = 'invalid_signature'
+    STATUS_NOT_CONFIGURED = 'not_configured'
+    STATUS_MALFORMED = 'malformed'
+    STATUS_IGNORED = 'ignored'
+    STATUS_FULFILLED = 'fulfilled'
+    STATUS_DUPLICATE = 'duplicate'
+    STATUS_SKIPPED = 'skipped'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_INVALID_SIGNATURE, 'Invalid signature'),
+        (STATUS_NOT_CONFIGURED, 'Not configured'),
+        (STATUS_MALFORMED, 'Malformed'),
+        (STATUS_IGNORED, 'Ignored'),
+        (STATUS_FULFILLED, 'Fulfilled'),
+        (STATUS_DUPLICATE, 'Duplicate'),
+        (STATUS_SKIPPED, 'Skipped'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+    event = models.CharField(max_length=64, blank=True, db_index=True)
+    signature_valid = models.BooleanField(default=False)
+    status = models.CharField(
+        max_length=32,
+        choices=STATUS_CHOICES,
+        default=STATUS_FAILED,
+        db_index=True,
+    )
+    http_status = models.PositiveSmallIntegerField(default=0)
+    razorpay_order_id = models.CharField(max_length=64, blank=True, db_index=True)
+    razorpay_payment_id = models.CharField(max_length=64, blank=True, db_index=True)
+    order = models.ForeignKey(
+        RazorpayOrder,
+        on_delete=models.SET_NULL,
+        related_name='webhook_events',
+        null=True,
+        blank=True,
+    )
+    transaction = models.ForeignKey(
+        Transaction,
+        on_delete=models.SET_NULL,
+        related_name='razorpay_webhook_events',
+        null=True,
+        blank=True,
+    )
+    payload = models.JSONField(null=True, blank=True)
+    response_summary = models.JSONField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'plans_razorpay_webhook_event'
+        ordering = ['-created_at']
+        verbose_name = 'Razorpay webhook event'
+        verbose_name_plural = 'Razorpay webhook events'
+
+    def __str__(self):
+        label = self.event or 'webhook'
+        return f'{label} ({self.status})'
+
+
 class ProfileView(models.Model):
     """Track when a user views another member's profile (UserProfile)."""
     viewer = models.ForeignKey(

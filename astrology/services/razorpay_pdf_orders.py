@@ -89,6 +89,33 @@ def fulfill_pdf_payment(
     Grant AstrologyPdfCredit for a captured Razorpay payment.
     Idempotent on payment_id.
     """
+    from plans.razorpay_records import record_order_outcome
+
+    try:
+        result = _fulfill_pdf_payment_impl(
+            payment_id=payment_id,
+            order=order,
+            expected_paise=expected_paise,
+            expected_product=expected_product,
+        )
+    except FulfillmentError as exc:
+        record_order_outcome(order=order, payment_id=payment_id, skipped_code=exc.code)
+        raise
+    record_order_outcome(order=order, payment_id=payment_id, result=result)
+    return result
+
+
+def _fulfill_pdf_payment_impl(
+    *,
+    payment_id: str,
+    order: dict,
+    expected_paise: int | None = None,
+    expected_product: str | None = None,
+) -> FulfillmentResult:
+    """
+    Grant AstrologyPdfCredit for a captured Razorpay payment.
+    Idempotent on payment_id.
+    """
     notes = order.get('notes') or {}
     if notes.get('purpose') != RAZORPAY_PURPOSE_ASTROLOGY_PDF:
         raise FulfillmentError('Order is not for astrology PDF.', code='WRONG_PURPOSE')
