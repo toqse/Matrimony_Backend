@@ -80,3 +80,14 @@ class AdminPlanSerializer(serializers.ModelSerializer):
         if value is None or int(value) < 0:
             raise serializers.ValidationError("Profile view limit is required")
         return int(value)
+
+    def _sync_profile_view_limit(self, validated_data):
+        if "contact_view_limit" in validated_data:
+            validated_data["profile_view_limit"] = validated_data["contact_view_limit"]
+        return validated_data
+
+    def create(self, validated_data):
+        return super().create(self._sync_profile_view_limit(validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._sync_profile_view_limit(validated_data))

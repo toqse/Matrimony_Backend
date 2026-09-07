@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -10,10 +11,8 @@ from admin_panel.staff_subscriptions.services import (
     record_staff_plan_purchase,
     staff_subscription_same_plan_active_preflight,
 )
-from plans.models import Plan, Transaction, UserPlan
+from plans.models import Plan, ServiceCharge, Transaction, UserPlan
 from plans.services import (
-    ACTIVE_SAME_PLAN,
-    SamePlanAlreadyActiveError,
     activate_plan_purchase,
     get_plan_info_for_response,
 )
@@ -27,9 +26,20 @@ LOCMEM_CACHES = {
 }
 
 
-@override_settings(CACHES=LOCMEM_CACHES)
+@override_settings(
+    CACHES=LOCMEM_CACHES,
+    CELERY_TASK_ALWAYS_EAGER=True,
+    CELERY_BROKER_URL="memory://",
+    CELERY_RESULT_BACKEND=None,
+)
 class SamePlanPurchaseTests(TestCase):
     def setUp(self):
+        self._wa_patcher = patch(
+            "notifications.whatsapp_notify.enqueue_subscription_confirmation",
+            return_value=None,
+        )
+        self._wa_patcher.start()
+        self.addCleanup(self._wa_patcher.stop)
         self.user = User.objects.create_user(
             mobile="+919876543901",
             password="x",
@@ -39,6 +49,9 @@ class SamePlanPurchaseTests(TestCase):
         )
         self.user.is_active = True
         self.user.save(update_fields=["is_active"])
+        ServiceCharge.objects.update_or_create(
+            gender="M", defaults={"amount": Decimal("15000")}
+        )
         self.gold = Plan.objects.create(
             name="Gold",
             price=Decimal("499"),
@@ -49,6 +62,7 @@ class SamePlanPurchaseTests(TestCase):
             contact_view_limit=5,
             horoscope_match_limit=3,
             is_active=True,
+            is_published=True,
         )
         self.diamond = Plan.objects.create(
             name="Diamond",
@@ -60,35 +74,48 @@ class SamePlanPurchaseTests(TestCase):
             contact_view_limit=15,
             horoscope_match_limit=10,
             is_active=True,
+            is_published=True,
         )
         today = timezone.now().date()
         self.user_plan = UserPlan.objects.create(
             user=self.user,
             plan=self.gold,
             price_paid=Decimal("499"),
+            service_charge=Decimal("15000"),
+            service_charge_paid=Decimal("499"),
             is_active=True,
             valid_from=today,
             valid_until=today + timedelta(days=30),
             profile_views_used=3,
+            contact_views_used=5,
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-    def _assert_same_plan_conflict(self, res):
-        self.assertEqual(res.status_code, 409, res.data)
-        self.assertFalse(res.data.get("success"))
-        self.assertEqual(res.data["error"]["code"], ACTIVE_SAME_PLAN)
-        self.assertIn("already have an active Gold plan", res.data["error"]["message"])
+    def test_order_allows_active_same_plan(self):
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.json.return_value = {
+            "id": "order_same_plan_1",
+            "amount": 49900,
+            "currency": "INR",
+            "receipt": "plsameplan",
+        }
+        with override_settings(
+            RAZORPAY_KEY_ID="rzp_test_key",
+            RAZORPAY_KEY_SECRET="rzp_test_secret",
+        ), patch("plans.razorpay_client.requests.post", return_value=mock_resp):
+            res = self.client.post(
+                "/api/v1/plans/order/",
+                {"plan_id": self.gold.id, "payment_option": "plan_only"},
+                format="json",
+            )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data.get("success"))
+        self.assertEqual(res.data["data"]["plan_id"], self.gold.id)
 
-    def test_order_rejects_active_same_plan(self):
-        res = self.client.post(
-            "/api/v1/plans/order/",
-            {"plan_id": self.gold.id, "payment_option": "plan_only"},
-            format="json",
-        )
-        self._assert_same_plan_conflict(res)
-
-    def test_purchase_rejects_active_same_plan(self):
+    def test_purchase_allows_active_same_plan(self):
+        original_until = self.user_plan.valid_until
         res = self.client.post(
             "/api/v1/plans/purchase/",
             {
@@ -98,19 +125,41 @@ class SamePlanPurchaseTests(TestCase):
             },
             format="json",
         )
-        self._assert_same_plan_conflict(res)
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertTrue(res.data.get("success"))
+        self.assertIn("additional credits", (res.data.get("message") or "").lower())
         self.user_plan.refresh_from_db()
         self.assertEqual(self.user_plan.plan_id, self.gold.id)
-        self.assertEqual(Transaction.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(Transaction.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(
+            self.user_plan.valid_until,
+            original_until + timedelta(days=self.gold.duration_days),
+        )
 
-    def test_activate_raises_for_active_same_plan(self):
-        with self.assertRaises(SamePlanAlreadyActiveError):
-            activate_plan_purchase(
-                user=self.user,
-                plan=self.gold,
-                payment_option="plan_only",
-                payment_method=Transaction.PAYMENT_MANUAL,
-            )
+    def test_activate_same_plan_tops_up_exhausted_contact_views(self):
+        today = timezone.now().date()
+        original_until = self.user_plan.valid_until
+        _, txn, extra = activate_plan_purchase(
+            user=self.user,
+            plan=self.gold,
+            payment_option="plan_only",
+            payment_method=Transaction.PAYMENT_MANUAL,
+        )
+        self.user_plan.refresh_from_db()
+        self.assertEqual(self.user_plan.plan_id, self.gold.id)
+        self.assertEqual(self.user_plan.contact_views_used, 0)
+        self.assertEqual(extra["carry_forward"]["contacts"], 0)
+        self.assertEqual(extra["carry_forward"]["profile_views"], 7)
+        self.assertEqual(
+            self.user_plan.valid_until,
+            original_until + timedelta(days=self.gold.duration_days),
+        )
+        self.assertIn("additional credits", extra["message"].lower())
+        info = get_plan_info_for_response(self.user)
+        self.assertEqual(info["contact_view_remaining"], self.gold.contact_view_limit)
+        self.assertEqual(info["profile_views_remaining"], 17)
+        self.assertEqual(txn.plan_id, self.gold.id)
+        self.assertEqual(self.user_plan.valid_from, today)
 
     def test_upgrade_to_different_plan_succeeds(self):
         _, txn, extra = activate_plan_purchase(
@@ -125,6 +174,23 @@ class SamePlanPurchaseTests(TestCase):
         self.assertEqual(extra["carry_forward"]["profile_views"], 7)
         self.assertEqual(txn.plan_id, self.diamond.id)
         self.assertIn("upgraded", extra["message"].lower())
+
+    def test_repurchase_preserves_service_charge_paid(self):
+        self.user_plan.service_charge_paid = Decimal("15000")
+        self.user_plan.save(update_fields=["service_charge_paid", "updated_at"])
+
+        activate_plan_purchase(
+            user=self.user,
+            plan=self.gold,
+            payment_option="plan_only",
+            payment_method=Transaction.PAYMENT_MANUAL,
+        )
+        self.user_plan.refresh_from_db()
+        self.assertEqual(self.user_plan.service_charge_paid, Decimal("15000"))
+        self.assertEqual(self.user_plan.service_charge, Decimal("15000"))
+        info = get_plan_info_for_response(self.user)
+        self.assertEqual(info["service_charge_paid"], 15000.0)
+        self.assertEqual(info["service_charge_remaining"], 0.0)
 
     def test_repurchase_same_plan_after_expiry_succeeds(self):
         today = timezone.now().date()
@@ -176,6 +242,12 @@ class SamePlanPurchaseTests(TestCase):
 
 class StaffSamePlanPurchaseTests(TestCase):
     def setUp(self):
+        self._wa_patcher = patch(
+            "notifications.whatsapp_notify.enqueue_subscription_confirmation",
+            return_value=None,
+        )
+        self._wa_patcher.start()
+        self.addCleanup(self._wa_patcher.stop)
         self.customer = User.objects.create_user(
             mobile="+919876543902",
             password="x",
@@ -183,36 +255,52 @@ class StaffSamePlanPurchaseTests(TestCase):
             gender="F",
             role="user",
         )
+        ServiceCharge.objects.update_or_create(
+            gender="F", defaults={"amount": Decimal("10000")}
+        )
         self.gold = Plan.objects.create(
             name="Gold",
             price=Decimal("499"),
             duration_days=30,
+            contact_view_limit=5,
             is_active=True,
         )
         today = timezone.now().date()
-        UserPlan.objects.create(
+        self.user_plan = UserPlan.objects.create(
             user=self.customer,
             plan=self.gold,
             price_paid=Decimal("499"),
+            service_charge=Decimal("10000"),
+            service_charge_paid=Decimal("10000"),
             is_active=True,
             valid_from=today,
             valid_until=today + timedelta(days=30),
+            contact_views_used=5,
         )
 
-    def test_staff_preflight_blocks_active_same_plan(self):
+    def test_staff_preflight_allows_active_same_plan(self):
         msg = staff_subscription_same_plan_active_preflight(self.customer, self.gold)
-        self.assertIsNotNone(msg)
-        self.assertIn("already has an active Gold plan", msg)
-        self.assertIn("Use renew instead", msg)
+        self.assertIsNone(msg)
 
-    def test_staff_record_purchase_raises_for_active_same_plan(self):
-        with self.assertRaises(ValueError) as ctx:
-            record_staff_plan_purchase(
-                customer=self.customer,
-                plan=self.gold,
-                payment_mode="cash",
-                payment_reference="CASH-1",
-                amount=Decimal("499"),
-            )
-        self.assertIn("already has an active Gold plan", str(ctx.exception))
-        self.assertEqual(Transaction.objects.filter(user=self.customer).count(), 0)
+    def test_staff_record_purchase_allows_active_same_plan(self):
+        original_until = self.user_plan.valid_until
+        txn = record_staff_plan_purchase(
+            customer=self.customer,
+            plan=self.gold,
+            payment_mode="cash",
+            payment_reference="CASH-1",
+            amount=Decimal("499"),
+        )
+        self.assertIsNotNone(txn)
+        self.assertEqual(Transaction.objects.filter(user=self.customer).count(), 1)
+        self.user_plan.refresh_from_db()
+        self.assertEqual(self.user_plan.plan_id, self.gold.id)
+        self.assertEqual(self.user_plan.contact_views_used, 0)
+        self.assertEqual(self.user_plan.contact_view_bonus, 0)
+        self.assertEqual(self.user_plan.service_charge_paid, Decimal("10000"))
+        self.assertEqual(
+            self.user_plan.valid_until,
+            original_until + timedelta(days=self.gold.duration_days),
+        )
+        info = get_plan_info_for_response(self.customer)
+        self.assertEqual(info["contact_view_remaining"], self.gold.contact_view_limit)

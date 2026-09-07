@@ -24,7 +24,6 @@ from .services import (
     first_serializer_error,
     record_staff_plan_purchase,
     renew_staff_plan,
-    staff_subscription_same_plan_active_preflight,
     staff_subscription_transactions,
 )
 
@@ -116,19 +115,6 @@ class StaffSubscriptionListCreateView(_StaffSubscriptionsMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        blocked_msg = staff_subscription_same_plan_active_preflight(customer, plan)
-        if blocked_msg:
-            return Response(
-                {
-                    "success": False,
-                    "error": {
-                        "code": "ACTIVE_SAME_PLAN",
-                        "message": blocked_msg,
-                    },
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
         own_err = ensure_staff_owns_customer(staff, customer)
         if own_err is not None:
             return own_err
@@ -142,19 +128,10 @@ class StaffSubscriptionListCreateView(_StaffSubscriptionsMixin, APIView):
                 amount=ser.validated_data["amount"],
             )
         except ValueError as e:
-            msg = str(e)
-            if "already has an active" in msg and "Use renew instead" in msg:
-                return Response(
-                    {
-                        "success": False,
-                        "error": {"code": "ACTIVE_SAME_PLAN", "message": msg},
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
             return Response(
                 {
                     "success": False,
-                    "error": {"code": 400, "message": msg},
+                    "error": {"code": 400, "message": str(e)},
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )

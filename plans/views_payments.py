@@ -31,7 +31,6 @@ from .services import (
     compute_plan_purchase_amounts,
     compute_service_charge_remaining,
     plan_purchase_response_data,
-    user_same_plan_active_preflight,
 )
 
 
@@ -126,9 +125,6 @@ class PlanOrderView(APIView):
 
         plan = Plan.objects.get(pk=ser.validated_data['plan_id'])
         payment_option = ser.validated_data['payment_option']
-        blocked_msg = user_same_plan_active_preflight(request.user, plan)
-        if blocked_msg:
-            return _same_plan_conflict(blocked_msg)
         amount_inr, _, _, _ = compute_plan_purchase_amounts(request.user, plan, payment_option)
         if amount_inr <= 0:
             return Response(

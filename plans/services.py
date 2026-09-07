@@ -504,22 +504,14 @@ def resolve_current_active_user_plan(any_up, today):
 
 
 def same_plan_new_purchase_blocked_message(old_up, plan, *, for_staff: bool = False):
-    """If the member already holds this plan as an active subscription, return a blocking message."""
-    if not old_up or old_up.plan_id != plan.id:
-        return None
-    if for_staff:
-        return f'Customer already has an active {plan.name} plan. Use renew instead.'
-    return (
-        f'You already have an active {plan.name} plan. '
-        'Choose a different plan to upgrade, or wait until it expires.'
-    )
+    """Same-plan repurchase is allowed (quota top-up + duration extend)."""
+    return None
 
 
 def user_same_plan_active_preflight(user, plan):
     """
-    For member checkout: return an error message if a new sale of this plan must be
-    rejected (None if the purchase may proceed). activate_plan_purchase remains
-    authoritative (row lock).
+    For member checkout: always None — same-plan repurchase is allowed.
+    activate_plan_purchase remains authoritative (row lock).
     """
     from .models import UserPlan
 
@@ -569,10 +561,6 @@ def activate_plan_purchase(
         )
         old_up = resolve_current_active_user_plan(any_up, today)
 
-        blocked = same_plan_new_purchase_blocked_message(old_up, plan)
-        if blocked:
-            raise SamePlanAlreadyActiveError(blocked)
-
         plan_price = plan.price or Decimal('0')
         valid_from = today
 
@@ -609,7 +597,12 @@ def activate_plan_purchase(
                 old_up.horoscope_used,
             )
             valid_until = (old_up.valid_until or today) + timezone.timedelta(days=plan.duration_days)
-            payment_message = 'Plan upgraded successfully with carry forward.'
+            if old_up.plan_id == plan.id:
+                payment_message = 'Plan renewed successfully with additional credits.'
+                service_charge_total = old_up.service_charge or service_charge_total
+                service_charge_paid = _effective_service_charge_paid(old_up)
+            else:
+                payment_message = 'Plan upgraded successfully with carry forward.'
         else:
             carry_profile = carry_interest = carry_chat = carry_contact = carry_horo = 0
             valid_until = valid_from + timezone.timedelta(days=plan.duration_days)

@@ -13,7 +13,7 @@ from admin_panel.subscriptions.models import CustomerStaffAssignment
 from admin_panel.subscriptions.serializers import _status_label
 from admin_panel.staff_mgmt.models import StaffProfile
 from plans.models import Plan, ServiceCharge, Transaction, UserPlan
-from plans.services import resolve_current_active_user_plan
+from plans.services import _effective_service_charge_paid, resolve_current_active_user_plan
 from plans.services import same_plan_new_purchase_blocked_message as _same_plan_blocked_core
 
 
@@ -21,15 +21,14 @@ VALID_STATUS = frozenset({"active", "expired", "cancelled"})
 
 
 def same_plan_new_purchase_blocked_message(old_up: UserPlan | None, plan: Plan) -> str | None:
-    """If customer already holds this plan as an active subscription, return a blocking message."""
+    """Same-plan repurchase is allowed (quota top-up + duration extend)."""
     return _same_plan_blocked_core(old_up, plan, for_staff=True)
 
 
 def staff_subscription_same_plan_active_preflight(customer: User, plan: Plan) -> str | None:
     """
-    For POST /api/v1/staff/subscriptions/: return an error message if a new sale of this plan
-    must be rejected (None if the purchase may proceed). Uses the same rules as
-    record_staff_plan_purchase (without row locks — record remains authoritative).
+    For POST /api/v1/staff/subscriptions/: always None — selling the current plan
+    tops up quotas and extends validity. record_staff_plan_purchase remains authoritative.
     """
     today = timezone.now().date()
     up = UserPlan.objects.filter(user=customer).select_related("plan").first()
@@ -204,10 +203,6 @@ def record_staff_plan_purchase(
         )
         old_up = resolve_current_active_user_plan(any_up, today)
 
-        blocked = same_plan_new_purchase_blocked_message(old_up, plan)
-        if blocked:
-            raise ValueError(blocked)
-
         if old_up:
             def _remaining(plan_limit, bonus, used):
                 if plan_limit == 0:
@@ -245,6 +240,9 @@ def record_staff_plan_purchase(
             valid_until = (old_up.valid_until or today) + timedelta(
                 days=plan.duration_days
             )
+            if old_up.plan_id == plan.id:
+                service_charge_total = old_up.service_charge or service_charge_total
+                service_charge_paid = _effective_service_charge_paid(old_up)
         else:
             carry_profile = 0
             carry_interest = 0
