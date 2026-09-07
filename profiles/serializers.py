@@ -823,7 +823,6 @@ class LocationDetailsReadSerializer(serializers.Serializer):
     city_id = serializers.IntegerField(allow_null=True)
     city = serializers.SerializerMethodField()
     city_name = serializers.SerializerMethodField()
-    city_source = serializers.SerializerMethodField()
     address = serializers.CharField()
 
     def get_country(self, obj):
@@ -846,13 +845,6 @@ class LocationDetailsReadSerializer(serializers.Serializer):
 
     def get_city_name(self, obj):
         return self._resolved_city_name(obj)
-
-    def get_city_source(self, obj):
-        if obj.city_id:
-            return 'master'
-        if (getattr(obj, 'city_name', None) or '').strip():
-            return 'user'
-        return None
 
 
 class FamilyDetailsReadSerializer(serializers.Serializer):
@@ -982,7 +974,6 @@ def empty_location_details_read_data():
         'city_id': None,
         'city': None,
         'city_name': None,
-        'city_source': None,
         'address': '',
     }
 

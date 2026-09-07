@@ -109,8 +109,8 @@ class LocationCityFallbackTests(TestCase):
         self.assertIsNone(loc.city_id)
         self.assertEqual(loc.city_name, 'Manual Town')
         data = resp.json()['data']
-        self.assertEqual(data.get('city_source'), 'user')
         self.assertEqual(data.get('city_name'), 'Manual Town')
+        self.assertIsNone(data.get('city_id'))
 
     def test_read_prefers_city_name(self):
         UserLocation.objects.create(
@@ -127,7 +127,7 @@ class LocationCityFallbackTests(TestCase):
         data = resp.json()['data']
         self.assertIsNone(data.get('city_id'))
         self.assertEqual(data.get('city'), 'Custom Place')
-        self.assertEqual(data.get('city_source'), 'user')
+        self.assertEqual(data.get('city_name'), 'Custom Place')
 
     def test_existing_master_city_still_reads(self):
         UserLocation.objects.create(
@@ -143,5 +143,5 @@ class LocationCityFallbackTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         data = resp.json()['data']
         self.assertEqual(data.get('city_id'), self.city.id)
-        self.assertEqual(data.get('city_source'), 'master')
         self.assertEqual(data.get('city'), 'Nilambur')
+        self.assertEqual(data.get('city_name'), 'Nilambur')
