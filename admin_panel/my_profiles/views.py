@@ -97,6 +97,7 @@ def _my_profiles_base_queryset():
             "user_photos",
             "horoscope_profile",
             "staff_assignment__staff__branch",
+            "created_by_staff",
         )
         .distinct()
     )
@@ -271,6 +272,7 @@ def _build_list_row(request, user: User, wishlist_user_ids=None) -> dict:
         "religion": religion_name,
         "caste": caste_name,
         "subscription_plan": _subscription_label(user),
+        "created_by": user.created_by_label(),
         "is_verified": bool(getattr(getattr(user, "user_profile", None), "admin_verified", False)),
         "completeness": completeness,
         "profile_status": "complete" if completeness == 100 else "incomplete",
@@ -715,6 +717,8 @@ class MyProfilesCreateView(APIView):
                 data=data,
                 files=files,
                 staff=manager_staff,
+                created_source=User.CREATED_SOURCE_BRANCH_MANAGER,
+                created_by_staff=manager_staff,
             )
         except DRFValidationError as exc:
             return Response(

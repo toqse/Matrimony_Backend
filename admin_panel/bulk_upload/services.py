@@ -655,6 +655,7 @@ def import_profile_row(payload: dict[str, Any], branch_id: int | None) -> None:
         dob=dob,
         gender=payload.get("gender") or "",
         branch_id=branch_id,
+        created_source=User.CREATED_SOURCE_BULK,
     )
     user.is_active = True
     user.mobile_verified = True

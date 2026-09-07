@@ -284,6 +284,25 @@ def apply_profile_sections(user: User, data: dict) -> None:
             raise DRFValidationError({key: _first_drf_error(e)}) from e
 
 
+def _resolve_created_by(*, staff=None, created_source: str | None = None, created_by_staff=None):
+    """Keep assignment (`staff`) separate from provenance (`created_source` / `created_by_staff`)."""
+    valid = {choice[0] for choice in User.CREATED_SOURCE_CHOICES}
+    if not created_source:
+        created_source = (
+            User.CREATED_SOURCE_STAFF
+            if (created_by_staff is not None or staff is not None)
+            else User.CREATED_SOURCE_WEBSITE
+        )
+    if created_source not in valid:
+        created_source = User.CREATED_SOURCE_WEBSITE
+    if created_by_staff is None and created_source in (
+        User.CREATED_SOURCE_STAFF,
+        User.CREATED_SOURCE_BRANCH_MANAGER,
+    ):
+        created_by_staff = staff
+    return created_source, created_by_staff
+
+
 def create_user_and_profile_sections(
     *,
     name: str,
@@ -295,12 +314,17 @@ def create_user_and_profile_sections(
     data: dict,
     files: dict,
     staff=None,
+    created_source: str | None = None,
+    created_by_staff=None,
 ) -> User:
     """Transactional create: User + optional sections + photos. OTP skipped (mobile_verified=True).
 
     `staff` and `branch_pk` are optional so admins (who have no staff record/branch of
     their own) can create unassigned profiles. When `staff` is provided a
     CustomerStaffAssignment is created linking the new member to that staff.
+
+    `created_source` / `created_by_staff` record who originally created the profile
+    and must not be inferred from later assignment.
     """
     from astrology.services.horoscope_profile_service import (
         apply_profile_creation_horoscope,
@@ -311,6 +335,11 @@ def create_user_and_profile_sections(
     # Validate horoscope fields up-front so a failure rolls back before any writes.
     horoscope_input = validate_horoscope_input(data, date_of_birth=dob_iso)
     pwd = User.objects.make_random_password()
+    created_source, created_by_staff = _resolve_created_by(
+        staff=staff,
+        created_source=created_source,
+        created_by_staff=created_by_staff,
+    )
     with transaction.atomic():
         user = User.objects.create_user(
             email=(email or None) or None,
@@ -320,6 +349,8 @@ def create_user_and_profile_sections(
             dob=dob,
             gender=gender,
             branch_id=branch_pk,
+            created_source=created_source,
+            created_by_staff=created_by_staff,
         )
         user.role = "user"
         user.is_active = True

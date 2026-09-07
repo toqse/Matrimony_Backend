@@ -211,6 +211,7 @@ class VerifyOTPSerializer(serializers.Serializer):
                 profile_for=pending.get('profile_for') or None,
                 mobile_verified=True,
                 is_active=True,
+                created_source=User.CREATED_SOURCE_WEBSITE,
             )
         else:
             user = get_user_by_mobile_variants(data['phone_number'])

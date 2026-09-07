@@ -339,6 +339,7 @@ class VerifyMobileView(APIView):
                 password=User.objects.make_random_password(),
                 is_active=True,
                 mobile_verified=True,
+                created_source=User.CREATED_SOURCE_WEBSITE,
             )
         else:
             blocked = _blocked_response(user)

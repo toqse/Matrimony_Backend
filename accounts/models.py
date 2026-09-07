@@ -62,6 +62,18 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         ('branch_manager', 'Branch Manager'),
         ('admin', 'Admin'),
     ]
+    CREATED_SOURCE_WEBSITE = 'website'
+    CREATED_SOURCE_STAFF = 'staff'
+    CREATED_SOURCE_ADMIN = 'admin'
+    CREATED_SOURCE_BRANCH_MANAGER = 'branch_manager'
+    CREATED_SOURCE_BULK = 'bulk'
+    CREATED_SOURCE_CHOICES = [
+        (CREATED_SOURCE_WEBSITE, 'Website'),
+        (CREATED_SOURCE_STAFF, 'Staff'),
+        (CREATED_SOURCE_ADMIN, 'Admin'),
+        (CREATED_SOURCE_BRANCH_MANAGER, 'Branch Manager'),
+        (CREATED_SOURCE_BULK, 'Bulk upload'),
+    ]
     GENDER_CHOICES = [
         ('M', 'Male'),
         ('F', 'Female'),
@@ -121,6 +133,21 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         default=False,
         help_text='Blocked by admin; cannot use the app.',
     )
+    created_source = models.CharField(
+        max_length=20,
+        choices=CREATED_SOURCE_CHOICES,
+        default=CREATED_SOURCE_WEBSITE,
+        db_index=True,
+        help_text='How this member profile was originally created.',
+    )
+    created_by_staff = models.ForeignKey(
+        'staff_mgmt.StaffProfile',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_member_profiles',
+        help_text='Staff or branch-manager desk account that created this profile, if any.',
+    )
 
     objects = UserManager()
     USERNAME_FIELD = 'email'
@@ -137,6 +164,25 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     def __str__(self):
         return self.matri_id or self.email or self.mobile or str(self.id)
+
+    def created_by_label(self) -> str:
+        """Display label for staff/branch profile listings (Created by column)."""
+        source = self.created_source or self.CREATED_SOURCE_WEBSITE
+        if source == self.CREATED_SOURCE_WEBSITE:
+            return 'Website'
+        if source == self.CREATED_SOURCE_BULK:
+            return 'Bulk upload'
+        if source == self.CREATED_SOURCE_ADMIN:
+            return 'Admin'
+        staff = getattr(self, 'created_by_staff', None)
+        name = (getattr(staff, 'name', None) or '').strip() if staff is not None else ''
+        if name:
+            return name
+        if source == self.CREATED_SOURCE_BRANCH_MANAGER:
+            return 'Branch Manager'
+        if source == self.CREATED_SOURCE_STAFF:
+            return 'Staff'
+        return 'Website'
 
     @property
     def is_subscribed(self):

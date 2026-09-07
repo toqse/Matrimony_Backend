@@ -178,6 +178,7 @@ def _build_staff_list_row(request, user: User, wishlist_user_ids=None) -> dict:
         "religion": religion_name,
         "caste": caste_name,
         "subscription_plan": _subscription_label(user),
+        "created_by": user.created_by_label(),
         "is_verified": bool(getattr(getattr(user, "user_profile", None), "admin_verified", False)),
         "completeness": completeness,
         "profile_status": "complete" if completeness == 100 else "incomplete",
@@ -617,6 +618,8 @@ class StaffMyProfilesCreateView(APIView):
                 data=data,
                 files=files,
                 staff=staff,
+                created_source=User.CREATED_SOURCE_STAFF,
+                created_by_staff=staff,
             )
         except DRFValidationError as exc:
             return Response(

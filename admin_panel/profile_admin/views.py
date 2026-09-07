@@ -539,6 +539,13 @@ class AdminProfileCreateAPIView(APIView):
         elif role == AdminUser.ROLE_BRANCH_MANAGER:
             branch_pk = getattr(request.user, "branch_id", None)
 
+        if role == AdminUser.ROLE_BRANCH_MANAGER:
+            created_source = User.CREATED_SOURCE_BRANCH_MANAGER
+            created_by_staff = _staff_profile_for_admin_user(request.user)
+        else:
+            created_source = User.CREATED_SOURCE_ADMIN
+            created_by_staff = None
+
         try:
             user = create_user_and_profile_sections(
                 name=norm["name"],
@@ -550,6 +557,8 @@ class AdminProfileCreateAPIView(APIView):
                 data=data,
                 files=files,
                 staff=staff,
+                created_source=created_source,
+                created_by_staff=created_by_staff,
             )
         except DRFValidationError as exc:
             return Response(
