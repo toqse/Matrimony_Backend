@@ -14,6 +14,7 @@ from .views import (
     AdminProfileBlockAPIView,
     AdminProfileCreateAPIView,
     AdminProfileDetailAPIView,
+    AdminProfileGenerateAboutAPIView,
     AdminProfileListAPIView,
     AdminProfileMergeAPIView,
     AdminProfileVerifyAPIView,
@@ -33,5 +34,10 @@ urlpatterns = [
     path("<str:matri_id>/verify/", AdminProfileVerifyAPIView.as_view(), name="admin-profiles-verify"),
     path("<str:matri_id>/assign-staff/", AdminProfileAssignStaffAPIView.as_view(), name="admin-profiles-assign-staff"),
     path("<str:matri_id>/block/", AdminProfileBlockAPIView.as_view(), name="admin-profiles-block"),
+    path(
+        "<str:matri_id>/generate-about/",
+        AdminProfileGenerateAboutAPIView.as_view(),
+        name="admin-profiles-generate-about",
+    ),
     path("<str:matri_id>/", AdminProfileDetailAPIView.as_view(), name="admin-profiles-detail"),
 ]

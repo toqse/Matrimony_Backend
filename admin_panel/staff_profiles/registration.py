@@ -20,7 +20,11 @@ from core.phone import normalize_phone_input, personal_mobile_in_use
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from profiles.models import UserPhotos, UserProfile
-from profiles.utils import get_profile_completion_data, sync_profile_completion_flags
+from profiles.utils import (
+    ensure_about_me_if_empty,
+    get_profile_completion_data,
+    sync_profile_completion_flags,
+)
 
 SECTION_ORDER = (
     "basic_details",
@@ -407,6 +411,7 @@ def create_user_and_profile_sections(
             if k not in META_KEYS_SKIP_SECTIONS and k != "basic_details"
         }
         apply_profile_sections(user, section_data)
+        ensure_about_me_if_empty(user)
 
         if staff is not None:
             CustomerStaffAssignment.objects.update_or_create(user=user, defaults={"staff": staff})

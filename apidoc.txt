@@ -5076,6 +5076,16 @@ PATCH /api/v1/settings/account/
   Response 200: { "success": true, "message": "Account details updated." }
   Error 400: Invalid or duplicate email/phone.
 
+DELETE /api/v1/settings/account/
+  Auth: Required (JWT)
+  Description: Soft-delete the authenticated member — sets is_active=false, anonymizes mobile,
+               clears email, revokes tokens, and hides profile visibility.
+  Response 200: {
+    "success": true,
+    "message": "Account deleted successfully.",
+    "data": { "matri_id": "AM100001", "soft_deleted": true }
+  }
+
 POST /api/v1/settings/change-password/
   Auth: Required (JWT)
   Body (JSON): { "current_password": "string", "new_password": "string" }
@@ -6283,6 +6293,103 @@ WebSocket — Real-time chat (Django Channels)
     - When the other participant connects to this chat WebSocket, you receive:
       { "type": "presence", "matri_id": "<their matri_id>", "online": true }
       Frontend should show "Online" when online is true for the chat partner's matri_id.
+
+================================================================================
+4a0. BLOCK APIs (/api/v1/blocks/) — member-to-member (not admin is_blocked)
+================================================================================
+All endpoints require: Authorization: Bearer <access_token>
+
+Blocks stop interaction both ways (matches hide, interest/chat/wishlist refused).
+Distinct from admin account lock (User.is_blocked).
+
+--- BLOCK A USER ---
+POST /api/v1/blocks/
+  Auth: Required (JWT)
+  Body (JSON): { "matri_id": "AM100012" }
+  Logic:
+    - Cannot block self → 403
+    - Creates UserBlock(blocker=me, blocked=target); idempotent if already blocked
+    - Removes wishlist rows either direction between the pair
+  Success 200:
+    {
+      "success": true,
+      "message": "User blocked.",
+      "data": { "matri_id": "AM100012", "is_blocked": true }
+    }
+
+--- UNBLOCK A USER ---
+DELETE /api/v1/blocks/
+  Auth: Required (JWT)
+  Body (JSON) or query: { "matri_id": "AM100012" } / ?matri_id=AM100012
+  Success 200:
+    {
+      "success": true,
+      "message": "User unblocked.",
+      "data": { "matri_id": "AM100012", "is_blocked": false }
+    }
+
+--- LIST BLOCKED USERS ---
+GET /api/v1/blocks/
+  Auth: Required (JWT)
+  Query: page (default 1), page_size / limit (default 10, max 50)
+  Response 200: same profile card shape as wishlist list
+    {
+      "success": true,
+      "data": {
+        "total": 1,
+        "page": 1,
+        "page_size": 10,
+        "limit": 10,
+        "profiles": [ { "matri_id", "name", "age", "location", ... } ]
+      }
+    }
+
+================================================================================
+4a1. PROFILE REPORT APIs (/api/v1/profile-reports/) — member report with message
+================================================================================
+POST /api/v1/profile-reports/
+  Auth: Required (member JWT)
+  Body (JSON): { "matri_id": "AM100012", "message": "Harassment / fake profile …" }
+  Logic:
+    - Message required (1–2000 chars)
+    - Cannot report self → 403
+    - Duplicate pending report for same pair → 400
+  Success 200:
+    {
+      "success": true,
+      "message": "Report submitted.",
+      "data": { "id": 1, "matri_id": "AM100012", "status": "pending" }
+    }
+
+Admin (admin JWT only):
+GET /api/v1/admin/profile-reports/
+  Query: page, page_size/limit, status=pending|reviewed|dismissed, search
+  Response 200:
+    {
+      "success": true,
+      "data": {
+        "total": 1,
+        "page": 1,
+        "page_size": 20,
+        "results": [
+          {
+            "id": 1,
+            "reporter_matri_id": "AM100001",
+            "reporter_name": "…",
+            "reported_matri_id": "AM100012",
+            "reported_name": "…",
+            "message": "…",
+            "status": "pending",
+            "created_at": "…",
+            "updated_at": "…"
+          }
+        ]
+      }
+    }
+
+PATCH /api/v1/admin/profile-reports/{id}/
+  Body: { "status": "reviewed" | "dismissed" | "pending" }
+  Success 200: { "success": true, "data": { …row… } }
 
 ================================================================================
 4a. WISHLIST APIs (/api/v1/wishlist/)

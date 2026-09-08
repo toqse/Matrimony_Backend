@@ -261,6 +261,7 @@ class ProfilePreviewByMatriIdView(APIView):
             user_has_active_plan,
         )
         from wishlist.models import Wishlist
+        from blocks.utils import are_blocked, is_blocked_by_me, blocked_interaction_response
 
         viewer = request.user
         try:
@@ -278,6 +279,8 @@ class ProfilePreviewByMatriIdView(APIView):
                 {'success': False, 'error': {'code': 400, 'message': 'Cannot view own profile here.'}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if are_blocked(viewer, profile_user):
+            return blocked_interaction_response()
         if not is_profile_visible_to_others(profile_user):
             return Response(
                 {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},
@@ -289,6 +292,7 @@ class ProfilePreviewByMatriIdView(APIView):
         already_unlocked = has_unlocked_profile(viewer, target_up)
         interest_status, is_interest_sent = get_interest_ui_state_for_viewer(viewer, profile_user)
         is_wishlisted = Wishlist.objects.filter(user=viewer, profile=profile_user).exists()
+        blocked_by_me = is_blocked_by_me(viewer, profile_user)
 
         is_viewed_by_me = bool(has_plan and already_unlocked)
         # Single build: include contact only when already unlocked (reuse for nested profile).
@@ -364,6 +368,7 @@ class ProfilePreviewByMatriIdView(APIView):
             'family_background': family_background,
             'contact_locked': not can_view_contact_flag,
             'is_wishlisted': is_wishlisted,
+            'is_blocked_by_me': blocked_by_me,
             'is_able_to_view': is_able_to_view,
             'is_already_viewed': is_viewed_by_me,
             'can_view_details': is_able_to_view,
@@ -421,6 +426,9 @@ class PublicProfileByMatriIdView(APIView):
                 {'success': False, 'error': {'code': 400, 'message': 'Cannot view own profile here.'}},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        from blocks.utils import are_blocked, blocked_interaction_response
+        if are_blocked(viewer, profile_user):
+            return blocked_interaction_response()
         if not is_profile_visible_to_others(profile_user):
             return Response(
                 {'success': False, 'error': {'code': 404, 'message': 'Profile not found.'}},

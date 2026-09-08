@@ -9,6 +9,7 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from accounts.models import User
 from matches.utils import compute_match_percentage
+from blocks.utils import are_blocked, blocked_interaction_response
 from .models import Wishlist
 from .serializers import WishlistProfileSerializer, _build_wishlist_profile_dict
 
@@ -66,6 +67,9 @@ class WishlistToggleView(APIView):
                 'success': False,
                 'error': {'code': 403, 'message': 'Cannot wishlist your own profile.'},
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if are_blocked(request.user, profile_user):
+            return blocked_interaction_response()
 
         wishlist_qs = Wishlist.objects.filter(user=request.user, profile=profile_user)
         if wishlist_qs.exists():

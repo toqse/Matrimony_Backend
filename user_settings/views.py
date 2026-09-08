@@ -1,6 +1,10 @@
 """
-Profile Settings APIs: GET profile, PATCH visibility, interest permission, notifications, account, change-password.
+Profile Settings APIs: GET profile, PATCH visibility, interest permission, notifications,
+account (PATCH/DELETE), change-password.
 """
+import uuid
+
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -151,7 +155,7 @@ class NotificationSettingsView(APIView):
 
 
 class AccountUpdateView(APIView):
-    """PATCH /api/v1/settings/account/"""
+    """PATCH / DELETE /api/v1/settings/account/"""
     permission_classes = [IsAuthenticated]
 
     def patch(self, request):
@@ -189,6 +193,33 @@ class AccountUpdateView(APIView):
         return Response({
             'success': True,
             'message': 'Account details updated.',
+        }, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        """Soft-delete the authenticated member account (mirrors admin profile soft-delete)."""
+        user = request.user
+
+        suffix = uuid.uuid4().hex[:10]
+        anon_mobile = f'del{suffix}'[:20]
+        user.mobile = anon_mobile
+        user.email = None
+        user.is_active = False
+        user.tokens_invalid_before = timezone.now()
+        user.save(update_fields=[
+            'mobile', 'email', 'is_active', 'tokens_invalid_before', 'updated_at',
+        ])
+
+        settings_obj = _get_or_create_settings(user)
+        settings_obj.profile_visibility = UserSettings.PROFILE_VISIBILITY_HIDDEN
+        settings_obj.save(update_fields=['profile_visibility', 'updated_at'])
+
+        return Response({
+            'success': True,
+            'data': {
+                'matri_id': user.matri_id,
+                'soft_deleted': True,
+            },
+            'message': 'Account deleted successfully.',
         }, status=status.HTTP_200_OK)
 
 

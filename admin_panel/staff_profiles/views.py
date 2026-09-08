@@ -43,7 +43,12 @@ from admin_panel.staff_profiles.registration import (
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
-from profiles.utils import get_profile_completion_data
+from profiles.utils import (
+    ensure_about_me_if_empty,
+    generate_about_me,
+    generate_about_me_suggestions,
+    get_profile_completion_data,
+)
 from profiles.models import UserPhotos, UserProfile
 from profiles.views import _build_profile_data_for_user
 from wishlist.models import Wishlist
@@ -380,6 +385,7 @@ class StaffMyProfilesDetailView(APIView):
                     else:
                         handler(user, payload)
                 apply_profile_edit_horoscope(user, profile, data)
+                ensure_about_me_if_empty(user)
         except DRFValidationError as e:
             return Response(
                 {
@@ -713,3 +719,29 @@ class StaffMyProfilesPublicDetailView(APIView):
             "profile_completion_percentage": completeness,
         }
         return Response({"success": True, "data": data})
+
+
+class StaffMyProfilesGenerateAboutView(APIView):
+    """GET generate About Me suggestions for a staff-accessible member profile."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, matri_id):
+        staff, err = _resolve_staff_panel(request)
+        if err:
+            return err
+        user, uerr = _resolve_user_for_staff_or_error(request, staff, matri_id)
+        if uerr:
+            return uerr
+        about_me = generate_about_me(user)
+        suggestions = generate_about_me_suggestions(user)
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "about_me": about_me,
+                    "suggestions": suggestions,
+                },
+            }
+        )

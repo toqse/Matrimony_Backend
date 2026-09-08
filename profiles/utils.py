@@ -650,3 +650,28 @@ def generate_about_me_suggestions(user):
         suggestions.append(" ".join(parts3))
 
     return suggestions[:3]
+
+
+ABOUT_ME_INCOMPLETE_FALLBACK = "Complete your profile to generate About Me."
+ABOUT_ME_MAX_LENGTH = 500
+
+
+def ensure_about_me_if_empty(user) -> str | None:
+    """
+    If the user's About Me is blank, generate and save one from profile data.
+    Returns the saved text, or None when left unchanged / nothing useful to generate.
+    """
+    profile, _ = UserProfile.objects.get_or_create(user=user, defaults={})
+    if (profile.about_me or "").strip():
+        return None
+
+    text = (generate_about_me(user) or "").strip()
+    if not text or text == ABOUT_ME_INCOMPLETE_FALLBACK:
+        return None
+
+    text = text[:ABOUT_ME_MAX_LENGTH]
+    profile.about_me = text
+    profile.save(update_fields=["about_me", "updated_at"])
+    sync_profile_completion_flags(user)
+    return text
+

@@ -23,6 +23,7 @@ from plans.services import (
     user_has_active_plan,
 )
 from wishlist.models import Wishlist
+from blocks.utils import exclude_blocked_users
 
 from .services import (
     apply_partner_age_preference,
@@ -88,7 +89,8 @@ def _match_queryset(request):
     elif gender == 'F':
         qs = qs.filter(gender='M')
     # 'O' -> both, no filter
-    return filter_visible_profiles_queryset(qs)
+    qs = filter_visible_profiles_queryset(qs)
+    return exclude_blocked_users(qs, user)
 
 
 def _match_list_response(request, *, home_slider=False):

@@ -19,6 +19,7 @@ from core.media import absolute_media_url
 from matches.serializers import format_last_seen
 from plans.models import Conversation, Interest, Message
 from plans.services import get_user_plan_status, has_accepted_interest_between, plan_expired_response
+from blocks.utils import are_blocked, blocked_interaction_response, BLOCKED_INTERACTION_MESSAGE
 
 
 def _parse_page_params(request, default_page_size=20, max_page_size=100):
@@ -121,6 +122,8 @@ def _participant_error_response(request, conversation_id):
             status=status.HTTP_403_FORBIDDEN,
         )
     other = _other_user(conv, user)
+    if are_blocked(user, other):
+        return None, None, blocked_interaction_response()
     if not has_accepted_interest_between(user, other):
         return None, None, Response(
             {

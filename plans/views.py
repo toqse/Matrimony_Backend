@@ -15,6 +15,7 @@ from core.phone import to_e164_display
 from profiles.models import UserProfile
 from core.permissions import IsAdmin
 from user_settings.models import UserSettings
+from blocks.utils import are_blocked, blocked_interaction_response
 from django.db import transaction
 from .models import Interest, Plan, ProfileView as ProfileViewModel, ServiceCharge, UserPlan, Transaction, Conversation
 from .serializers import (
@@ -366,6 +367,9 @@ class SendInterestView(APIView):
                 'error': {'code': 400, 'message': 'Cannot send interest to yourself.'}
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        if are_blocked(request.user, receiver):
+            return blocked_interaction_response()
+
         # If connection already exists (interest accepted in either direction),
         # do not allow sending again—return a clear message for UI.
         if has_accepted_interest_between(request.user, receiver):
@@ -598,7 +602,7 @@ class RespondInterestView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            interest = Interest.objects.select_related('receiver').get(pk=interest_id)
+            interest = Interest.objects.select_related('receiver', 'sender').get(pk=interest_id)
         except Interest.DoesNotExist:
             return Response({
                 'success': False,
@@ -616,6 +620,9 @@ class RespondInterestView(APIView):
                     'message': 'Permission denied.',
                 },
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if are_blocked(request.user, interest.sender):
+            return blocked_interaction_response()
 
         if action == 'accept' and get_user_plan_status(request.user) != 'active':
             return Response(plan_expired_response(request.user), status=status.HTTP_403_FORBIDDEN)
@@ -704,6 +711,12 @@ class ChatPermissionView(APIView):
             }, status=status.HTTP_404_NOT_FOUND)
 
         # Require accepted interest before chat is allowed.
+        if are_blocked(request.user, profile_user):
+            return Response({
+                'success': True,
+                'data': {'can_chat': False}
+            }, status=status.HTTP_200_OK)
+
         if not has_accepted_interest_between(request.user, profile_user):
             return Response({
                 'success': True,
@@ -754,6 +767,9 @@ class ContactUnlockView(APIView):
                 'success': False,
                 'error': {'code': 400, 'message': 'Cannot view your own contact details.'}
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        if are_blocked(request.user, target):
+            return blocked_interaction_response()
 
         can_view, _ = can_view_contact(request.user)
         if not can_view:
@@ -838,6 +854,9 @@ class ChatStartView(APIView):
                 'success': False,
                 'error': {'code': 400, 'message': 'Cannot chat with yourself.'}
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        if are_blocked(request.user, other):
+            return blocked_interaction_response()
 
         # Require accepted interest before starting a chat.
         if not has_accepted_interest_between(request.user, other):

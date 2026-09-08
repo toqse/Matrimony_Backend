@@ -21,7 +21,13 @@ from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
 from profiles.models import UserProfile
-from profiles.utils import get_profile_completion_data, get_profile_completion_percentage
+from profiles.utils import (
+    ensure_about_me_if_empty,
+    generate_about_me,
+    generate_about_me_suggestions,
+    get_profile_completion_data,
+    get_profile_completion_percentage,
+)
 from astrology.charts import star_name as nakshatra_name_from_number
 from admin_panel.profile_filters import apply_profile_list_filters, apply_profile_status_filter
 from admin_panel.profile_porutham_filters import apply_porutham_match_filters
@@ -275,6 +281,7 @@ class AdminProfileDetailAPIView(APIView):
                     profile.save(update_fields=["admin_verified", "updated_at"])
                 apply_profile_sections(user, data)
                 apply_profile_edit_horoscope(user, profile, data)
+                ensure_about_me_if_empty(user)
         except DRFValidationError as exc:
             return Response(
                 {"success": False, "error": {"code": 400, "message": _first_drf_error(exc)}},
@@ -637,6 +644,37 @@ class AdminProfileMergeAPIView(APIView):
                 "data": {
                     "primary_matri_id": primary.matri_id,
                     "duplicate_retired_matri_id": duplicate.matri_id,
+                },
+            }
+        )
+
+
+class AdminProfileGenerateAboutAPIView(APIView):
+    """GET generate About Me suggestions for a member profile (admin/staff/BM with access)."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, matri_id):
+        user = _get_user_by_matri(matri_id)
+        if not user:
+            return Response(
+                {"success": False, "error": {"code": 404, "message": "Profile not found"}},
+                status=404,
+            )
+        if not _can_edit(request, user):
+            return Response(
+                {"success": False, "error": {"code": 403, "message": "Access denied"}},
+                status=403,
+            )
+        about_me = generate_about_me(user)
+        suggestions = generate_about_me_suggestions(user)
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "about_me": about_me,
+                    "suggestions": suggestions,
                 },
             }
         )

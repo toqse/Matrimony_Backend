@@ -4,6 +4,7 @@ from .views import (
     MyProfilesCreateView,
     MyProfilesDetailView,
     MyProfilesDocumentsView,
+    MyProfilesGenerateAboutView,
     MyProfilesListView,
     MyProfilesRefreshView,
     MyProfilesSendEmailView,
@@ -20,6 +21,11 @@ urlpatterns = [
     path("<str:matri_id>/wishlist/", MyProfilesWishlistView.as_view(), name="my-profiles-wishlist"),
     path("<str:matri_id>/documents/", MyProfilesDocumentsView.as_view(), name="my-profiles-documents"),
     path("<str:matri_id>/send-email/", MyProfilesSendEmailView.as_view(), name="my-profiles-send-email"),
+    path(
+        "<str:matri_id>/generate-about/",
+        MyProfilesGenerateAboutView.as_view(),
+        name="my-profiles-generate-about",
+    ),
     path("<str:matri_id>/", MyProfilesDetailView.as_view(), name="my-profiles-detail"),
     path("", MyProfilesListView.as_view(), name="my-profiles-list"),
 ]

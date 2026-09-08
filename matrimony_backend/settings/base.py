@@ -60,6 +60,8 @@ INSTALLED_APPS = [
     'plans',
     'matches',
     'wishlist',
+    'blocks',
+    'profile_reports',
     'chat',
     'user_settings',
     'notifications',

@@ -47,7 +47,13 @@ from profiles.models import (
     UserProfile,
     UserReligion,
 )
-from profiles.utils import get_profile_completion_data, get_profile_completion_percentage
+from profiles.utils import (
+    ensure_about_me_if_empty,
+    generate_about_me,
+    generate_about_me_suggestions,
+    get_profile_completion_data,
+    get_profile_completion_percentage,
+)
 from profiles.views import _build_profile_data_for_user
 from wishlist.models import Wishlist
 
@@ -462,6 +468,7 @@ class MyProfilesDetailView(APIView):
                     profile.save(update_fields=["admin_verified", "updated_at"])
                 apply_profile_sections(user, data)
                 apply_profile_edit_horoscope(user, profile, data)
+                ensure_about_me_if_empty(user)
         except DRFValidationError as exc:
             return Response(
                 {
@@ -754,4 +761,27 @@ class MyProfilesCreateView(APIView):
                 },
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class MyProfilesGenerateAboutView(APIView):
+    """GET generate About Me suggestions for a branch-scoped member profile."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsBranchManager]
+
+    def get(self, request, matri_id):
+        user, err = _resolve_user_or_error(request, matri_id)
+        if err:
+            return err
+        about_me = generate_about_me(user)
+        suggestions = generate_about_me_suggestions(user)
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "about_me": about_me,
+                    "suggestions": suggestions,
+                },
+            }
         )
