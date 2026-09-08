@@ -6353,7 +6353,7 @@ POST /api/v1/profile-reports/
   Logic:
     - Message required (1–2000 chars)
     - Cannot report self → 403
-    - Duplicate pending report for same pair → 400
+    - Multiple reports against the same profile are allowed
   Success 200:
     {
       "success": true,

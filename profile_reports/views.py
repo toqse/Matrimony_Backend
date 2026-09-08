@@ -76,19 +76,6 @@ class MemberProfileReportCreateView(APIView):
                 'error': {'code': 403, 'message': 'Cannot report your own profile.'},
             }, status=status.HTTP_403_FORBIDDEN)
 
-        if ProfileReport.objects.filter(
-            reporter=request.user,
-            reported=target,
-            status=ProfileReport.STATUS_PENDING,
-        ).exists():
-            return Response({
-                'success': False,
-                'error': {
-                    'code': 400,
-                    'message': 'You already have a pending report for this profile.',
-                },
-            }, status=status.HTTP_400_BAD_REQUEST)
-
         report = ProfileReport.objects.create(
             reporter=request.user,
             reported=target,
