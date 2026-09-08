@@ -61,7 +61,20 @@ python manage.py runserver
 
 4. **MariaDB / MySQL**: Docker Compose starts a MySQL container named `db`. Django and Celery connect to it through Docker's internal network at `db:3306`, so Windows/MySQL credentials on the host do not affect `docker compose up`. For host-side `manage.py` commands, use `127.0.0.1:3308` in `.env` with your local MySQL credentials.
 
-5. **Stop:** `Ctrl+C` then `docker-compose down`.
+5. **Location seeds (India / Kerala cities):**
+   ```bash
+   # India country + states + districts + HQ city per district
+   docker compose exec django python manage.py load_india_locations
+
+   # Kerala municipal cities (master/fixtures/kerala_cities.json)
+   docker compose exec django python manage.py import_kerala_cities
+
+   # Optional: deactivate other Kerala cities not in that list (junk cleanup)
+   docker compose exec django python manage.py import_kerala_cities --deactivate-others
+   ```
+   Production host path example: `cd /opt/aiswaryamatrimonials/Matrimony_Backend` then the same `docker compose exec ...` commands.
+
+6. **Stop:** `Ctrl+C` then `docker-compose down`.
 
 **Services:** `db` (MySQL), `django` (Daphne, entrypoint runs migrations then starts), `redis`, `celery_worker`, `celery_beat`. All use `restart: unless-stopped` and share the same Docker network so they resolve hostnames (`db`, `redis`) correctly.
 
