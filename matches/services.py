@@ -10,6 +10,7 @@ from core.media import absolute_media_url
 from profiles.models import UserReligion
 from profiles.utils import filter_visible_profiles_queryset
 from user_settings.models import UserSettings
+from blocks.utils import exclude_blocked_users
 
 from .utils import age_from_dob, build_user_match_score_sql_expression, dob_range_for_age
 
@@ -110,18 +111,20 @@ def preferred_match_queryset(user):
     qs = filter_visible_profiles_queryset(qs)
     qs = apply_saved_partner_preferences(qs, user)
     qs = apply_profile_visibility_for_viewer(qs, user)
+    qs = exclude_blocked_users(qs, user)
     return qs.distinct()
 
 
 def match_queryset_for_user(target_user: User):
-    """Active members, opposite gender, exclude self, visibility rules."""
+    """Active members, opposite gender, exclude self, visibility rules, exclude blocked peers."""
     qs = User.objects.filter(is_active=True, role="user").exclude(pk=target_user.pk)
     gender = getattr(target_user, "gender", None)
     if gender == "M":
         qs = qs.filter(gender="F")
     elif gender == "F":
         qs = qs.filter(gender="M")
-    return filter_visible_profiles_queryset(qs)
+    qs = filter_visible_profiles_queryset(qs)
+    return exclude_blocked_users(qs, target_user)
 
 
 def build_matches_for_user(target_user: User, *, request=None, limit: int = 20) -> list[dict]:

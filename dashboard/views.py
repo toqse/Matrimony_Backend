@@ -24,6 +24,7 @@ from matches.services import (
 )
 from matches.utils import age_from_dob, compute_match_percentage
 from core.media import absolute_media_url
+from blocks.utils import blocked_user_ids_for, exclude_blocked_users
 
 
 def _parse_page_params(request, default_page_size=8, max_page_size=50):
@@ -43,14 +44,15 @@ def _parse_page_params(request, default_page_size=8, max_page_size=50):
 
 
 def _match_queryset(user):
-    """Base queryset: opposite gender, exclude self, active users."""
+    """Base queryset: opposite gender, exclude self, active users, exclude blocked peers."""
     qs = User.objects.filter(is_active=True).exclude(pk=user.pk)
     gender = getattr(user, 'gender', None)
     if gender == 'M':
         qs = qs.filter(gender='F')
     elif gender == 'F':
         qs = qs.filter(gender='M')
-    return filter_visible_profiles_queryset(qs)
+    qs = filter_visible_profiles_queryset(qs)
+    return exclude_blocked_users(qs, user)
 
 
 def _apply_partner_preference(qs, user):
@@ -183,8 +185,14 @@ class DashboardSummaryView(APIView):
             location_str = loc.state.name
 
         profile_views = ProfileView.objects.filter(profile__user=user).count()
-        interests_received = Interest.objects.filter(receiver=user).count()
-        interests_sent = Interest.objects.filter(sender=user).count()
+        blocked_ids = blocked_user_ids_for(user)
+        interests_received_qs = Interest.objects.filter(receiver=user)
+        interests_sent_qs = Interest.objects.filter(sender=user)
+        if blocked_ids:
+            interests_received_qs = interests_received_qs.exclude(sender_id__in=blocked_ids)
+            interests_sent_qs = interests_sent_qs.exclude(receiver_id__in=blocked_ids)
+        interests_received = interests_received_qs.count()
+        interests_sent = interests_sent_qs.count()
 
         qs = preferred_match_queryset(user)
         new_matches = count_unique_match_profiles(qs)

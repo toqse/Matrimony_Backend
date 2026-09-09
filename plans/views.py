@@ -15,7 +15,7 @@ from core.phone import to_e164_display
 from profiles.models import UserProfile
 from core.permissions import IsAdmin
 from user_settings.models import UserSettings
-from blocks.utils import are_blocked, blocked_interaction_response
+from blocks.utils import are_blocked, blocked_interaction_response, blocked_user_ids_for
 from django.db import transaction
 from .models import Interest, Plan, ProfileView as ProfileViewModel, ServiceCharge, UserPlan, Transaction, Conversation
 from .serializers import (
@@ -478,6 +478,10 @@ class MyInterestsView(APIView):
 
         sent_qs = Interest.objects.filter(sender=user).select_related(*_INTEREST_RECEIVER_SELECT).order_by('-created_at')
         received_qs = Interest.objects.filter(receiver=user).select_related(*_INTEREST_SENDER_SELECT).order_by('-created_at')
+        blocked_ids = blocked_user_ids_for(user)
+        if blocked_ids:
+            sent_qs = sent_qs.exclude(receiver_id__in=blocked_ids)
+            received_qs = received_qs.exclude(sender_id__in=blocked_ids)
         sent_total = sent_qs.count()
         received_total = received_qs.count()
 
@@ -528,6 +532,9 @@ class SentInterestsView(APIView):
         )
 
         qs = Interest.objects.filter(sender=user).select_related(*_INTEREST_RECEIVER_SELECT).order_by('-created_at')
+        blocked_ids = blocked_user_ids_for(user)
+        if blocked_ids:
+            qs = qs.exclude(receiver_id__in=blocked_ids)
         total = qs.count()
         start = (page - 1) * page_size
         end = start + page_size
@@ -562,6 +569,9 @@ class ReceivedInterestsView(APIView):
         )
 
         qs = Interest.objects.filter(receiver=user).select_related(*_INTEREST_SENDER_SELECT).order_by('-created_at')
+        blocked_ids = blocked_user_ids_for(user)
+        if blocked_ids:
+            qs = qs.exclude(sender_id__in=blocked_ids)
         total = qs.count()
         start = (page - 1) * page_size
         end = start + page_size
