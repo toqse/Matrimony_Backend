@@ -79,3 +79,42 @@ class MasterToggleStatusTests(TestCase):
             self.assertEqual(res.status_code, 200, res.data)
             obj.refresh_from_db()
             self.assertTrue(obj.is_active, url)
+
+
+@override_settings(
+    ALLOWED_HOSTS=["testserver", "localhost", "127.0.0.1"],
+    CACHES=LOCMEM_CACHES,
+)
+class MasterSearchCaseInsensitiveTests(TestCase):
+    def setUp(self):
+        self.admin = AdminUser.objects.create(
+            mobile="+919900000502",
+            role=AdminUser.ROLE_ADMIN,
+            name="Search Admin",
+            is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+        self.religion = Religion.objects.create(name="Hindu", is_active=True)
+        self.caste = Caste.objects.create(
+            religion=self.religion, name="NAIR", is_active=True
+        )
+        self.public = APIClient()
+
+    def test_admin_caste_search_is_case_insensitive(self):
+        res = self.client.get(CASTES, {"religion_id": self.religion.id, "search": "nair"})
+        self.assertEqual(res.status_code, 200, res.data)
+        names = [row["name"] for row in res.data["data"]["results"]]
+        self.assertIn("NAIR", names)
+
+    def test_public_caste_search_is_case_insensitive(self):
+        res = self.public.get(
+            "/api/v1/master/castes/",
+            {"religion_id": self.religion.id, "search": "nair"},
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        results = res.data.get("results") or res.data.get("data") or []
+        if isinstance(results, dict):
+            results = results.get("results") or []
+        names = [row["name"] for row in results]
+        self.assertIn("NAIR", names)

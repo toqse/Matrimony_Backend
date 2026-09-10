@@ -1,5 +1,4 @@
 from django.db import transaction
-from django.db.models import Q
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -7,6 +6,7 @@ from rest_framework.views import APIView
 
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
+from core.ci_lookups import apply_ci_search
 from master.cache_utils import RESOURCE_CITIES, RESOURCE_DISTRICTS, invalidate_master_resources
 from master.models import City, Country, District, State
 from profiles.models import UserLocation
@@ -80,7 +80,7 @@ class DistrictListCreateAPIView(APIView):
         qs = District.objects.filter(state_id=state.id)
         search = (request.query_params.get("search") or "").strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search))
+            qs = apply_ci_search(qs, search, "name")
         qs = qs.select_related("state").order_by("name")
 
         paginator = self.pagination_class()

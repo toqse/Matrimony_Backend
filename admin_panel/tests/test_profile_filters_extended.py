@@ -13,8 +13,8 @@ from admin_panel.profile_porutham_filters import (
     apply_porutham_match_filters,
 )
 from astrology.models import HoroscopeProfile
-from master.models import Height, IncomeRange
-from profiles.models import UserEducation, UserPersonal, UserProfile
+from master.models import Caste, Height, IncomeRange, Religion
+from profiles.models import UserEducation, UserPersonal, UserProfile, UserReligion
 
 
 def _rasi_chart(moon_sign: int, length: int = 11) -> str:
@@ -322,6 +322,55 @@ class ProfileTextSearchCaseTests(TestCase):
         qs = apply_profile_list_filters(self.base_qs, _req({"search": "10038v"}))
         ids = set(qs.values_list("pk", flat=True))
         self.assertEqual(ids, {self.user.pk})
+
+    def test_name_search_matches_mixed_case_meena(self):
+        self.user.name = "MEENA"
+        self.user.save(update_fields=["name"])
+        for query in ("meena", "Meena", "MEENA"):
+            qs = apply_profile_list_filters(self.base_qs, _req({"name": query}))
+            ids = set(qs.values_list("pk", flat=True))
+            self.assertEqual(ids, {self.user.pk}, msg=f"name={query!r}")
+
+
+class ProfileCasteFilterCaseTests(TestCase):
+    def setUp(self):
+        self.religion = Religion.objects.create(name="Hindu", is_active=True)
+        self.caste = Caste.objects.create(
+            religion=self.religion, name="Nair", is_active=True
+        )
+        self.fk_user = _create_member(mobile=_mobile(), name="Fk Caste", gender="F")
+        UserReligion.objects.create(
+            user=self.fk_user,
+            religion=self.religion,
+            caste_fk=self.caste,
+            caste="Nair",
+        )
+        self.legacy_user = _create_member(mobile=_mobile(), name="Legacy Caste", gender="F")
+        UserReligion.objects.create(
+            user=self.legacy_user,
+            religion=self.religion,
+            caste="NAIR",
+        )
+        self.other = _create_member(mobile=_mobile(), name="Other Caste", gender="M")
+        other_caste = Caste.objects.create(
+            religion=self.religion, name="Ezhava", is_active=True
+        )
+        UserReligion.objects.create(
+            user=self.other,
+            religion=self.religion,
+            caste_fk=other_caste,
+            caste="Ezhava",
+        )
+        self.base_qs = User.objects.filter(
+            pk__in=[self.fk_user.pk, self.legacy_user.pk, self.other.pk]
+        )
+
+    def test_caste_id_matches_legacy_nair_text(self):
+        qs = apply_profile_list_filters(
+            self.base_qs, _req({"caste_id": str(self.caste.id)})
+        )
+        ids = set(qs.values_list("pk", flat=True))
+        self.assertEqual(ids, {self.fk_user.pk, self.legacy_user.pk})
 
 
 class PoruthamProfileFilterTests(TestCase):

@@ -6,10 +6,8 @@ from rest_framework import generics, viewsets
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
-
+from core.ci_lookups import apply_ci_search
 from core.permissions import ReadOnlyOrAdmin
 from . import cache_utils as mc
 from .filters import CasteFilter
@@ -78,7 +76,7 @@ class CountryList(CachedMasterListMixin, generics.ListAPIView):
         qs = Country.objects.filter(is_active=True).order_by('name')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search))
+            qs = apply_ci_search(qs, search, 'name', 'code')
         return qs
 
 
@@ -96,7 +94,7 @@ class StateList(CachedMasterListMixin, generics.ListAPIView):
             qs = qs.filter(country_id=country_id)
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -114,7 +112,7 @@ class DistrictList(CachedMasterListMixin, generics.ListAPIView):
             qs = qs.filter(state_id=state_id)
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -149,7 +147,7 @@ class CityList(CachedMasterListMixin, generics.ListAPIView):
             qs = qs.filter(district_id__in=district_ids)
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -164,7 +162,7 @@ class ReligionList(CachedMasterListMixin, generics.ListAPIView):
         qs = Religion.objects.filter(is_active=True).order_by('name')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -179,7 +177,7 @@ class MotherTongueList(CachedMasterListMixin, generics.ListAPIView):
         qs = MotherTongue.objects.filter(is_active=True).order_by('name')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -238,7 +236,7 @@ class EducationList(CachedMasterListMixin, generics.ListAPIView):
         qs = Education.objects.filter(is_active=True).order_by('name')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -256,7 +254,7 @@ class EducationSubjectList(CachedMasterListMixin, generics.ListAPIView):
             qs = qs.filter(educations__id=education_id, educations__is_active=True)
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs.distinct()
 
 
@@ -271,7 +269,7 @@ class OccupationList(CachedMasterListMixin, generics.ListAPIView):
         qs = Occupation.objects.filter(is_active=True).order_by('name')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -286,7 +284,7 @@ class EmploymentStatusList(CachedMasterListMixin, generics.ListAPIView):
         qs = EmploymentStatus.objects.filter(is_active=True).order_by('name')
         search = self.request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(name__icontains=search)
+            qs = apply_ci_search(qs, search, 'name')
         return qs
 
 
@@ -298,15 +296,14 @@ class ReligionViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
     pagination_class = MasterListPagination
-    filter_backends = [SearchFilter]
-    search_fields = ['name']
 
     def get_queryset(self):
         qs = Religion.objects.all().order_by('name')
         user = self.request.user
-        if user.is_authenticated and getattr(user, 'role', None) == 'admin':
-            return qs
-        return qs.filter(is_active=True)
+        if not (user.is_authenticated and getattr(user, 'role', None) == 'admin'):
+            qs = qs.filter(is_active=True)
+        search = self.request.query_params.get('search', '').strip()
+        return apply_ci_search(qs, search, 'name')
 
 
 class CasteViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
@@ -315,16 +312,16 @@ class CasteViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
     pagination_class = MasterListPagination
-    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filter_backends = [DjangoFilterBackend]
     filterset_class = CasteFilter
-    search_fields = ['name']
 
     def get_queryset(self):
         qs = Caste.objects.all().select_related('religion').order_by('name')
         user = self.request.user
-        if user.is_authenticated and getattr(user, 'role', None) == 'admin':
-            return qs
-        return qs.filter(is_active=True, religion__is_active=True)
+        if not (user.is_authenticated and getattr(user, 'role', None) == 'admin'):
+            qs = qs.filter(is_active=True, religion__is_active=True)
+        search = self.request.query_params.get('search', '').strip()
+        return apply_ci_search(qs, search, 'name')
 
 
 class MotherTongueViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
@@ -333,12 +330,11 @@ class MotherTongueViewSet(CachedMasterListMixin, viewsets.ModelViewSet):
     permission_classes = [ReadOnlyOrAdmin]
     authentication_classes = []
     pagination_class = MasterListPagination
-    filter_backends = [SearchFilter]
-    search_fields = ['name']
 
     def get_queryset(self):
         qs = MotherTongue.objects.all().order_by('name')
         user = self.request.user
-        if user.is_authenticated and getattr(user, 'role', None) == 'admin':
-            return qs
-        return qs.filter(is_active=True)
+        if not (user.is_authenticated and getattr(user, 'role', None) == 'admin'):
+            qs = qs.filter(is_active=True)
+        search = self.request.query_params.get('search', '').strip()
+        return apply_ci_search(qs, search, 'name')

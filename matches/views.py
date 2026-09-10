@@ -34,6 +34,8 @@ from .services import (
 from .rotation import annotate_daily_rotation_rank
 from .utils import age_from_dob, dob_range_for_age, build_user_match_score_sql_expression
 from .serializers import MatchListProfileSerializer, format_last_seen
+from admin_panel.profile_filters import caste_ids_q, religion_ids_q
+from core.ci_lookups import ci_contains
 from core.media import absolute_media_url
 
 
@@ -131,10 +133,10 @@ def _match_list_response(request, *, home_slider=False):
     search = request.query_params.get('search', '').strip()
     if search:
         qs = qs.filter(
-            Q(name__icontains=search) |
-            Q(matri_id__icontains=search) |
-            Q(user_education__highest_education__name__icontains=search) |
-            Q(user_education__occupation__name__icontains=search)
+            ci_contains('name', search)
+            | ci_contains('matri_id', search)
+            | ci_contains('user_education__highest_education__name', search)
+            | ci_contains('user_education__occupation__name', search)
         ).distinct()
 
     # Age filter (explicit query params only; saved preference applied above when absent)
@@ -158,9 +160,9 @@ def _match_list_response(request, *, home_slider=False):
 
     # Optional filters (FK ids; skip 0/any so "Any" in UI does not filter to id=0)
     if religion_id is not None:
-        qs = qs.filter(user_religion__religion_id=religion_id)
+        qs = qs.filter(religion_ids_q([religion_id]))
     if caste_ids:
-        qs = qs.filter(user_religion__caste_fk_id__in=caste_ids)
+        qs = qs.filter(caste_ids_q(caste_ids))
     if education_ids:
         qs = qs.filter(user_education__highest_education_id__in=education_ids)
     if occupation_ids:

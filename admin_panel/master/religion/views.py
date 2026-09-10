@@ -1,5 +1,4 @@
 from django.db import transaction
-from django.db.models import Q
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -7,6 +6,7 @@ from rest_framework.views import APIView
 
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.auth.models import AdminUser
+from core.ci_lookups import apply_ci_search
 from master.models import Caste, Religion
 from profiles.models import UserReligion
 
@@ -37,7 +37,7 @@ class ReligionListCreateAPIView(APIView):
         qs = Religion.objects.all()
         search = (request.query_params.get("search") or "").strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search))
+            qs = apply_ci_search(qs, search, "name")
         qs = ReligionListSerializer.setup_eager_loading(qs).order_by("name")
 
         paginator = self.pagination_class()

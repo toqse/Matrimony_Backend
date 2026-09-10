@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from django.db.models import CharField, Q, TextField
-from django.db.models.functions import Length, Lower, Substr, Upper
+from django.db.models import Q
+from django.db.models.functions import Length, Substr, Upper
 from django.utils import timezone
 
+from core.ci_lookups import ci_contains, ci_exact
+from master.models import Caste, Religion
 from profiles.utils import apply_height_cm_range
 
 from admin_panel.planet_house_filter import (
@@ -15,8 +17,9 @@ from admin_panel.planet_house_filter import (
 )
 from astrology.porutham import RASI_NAMES, STAR_NAMES, bride_chovva, chart_to_array, groom_chovva
 
-CharField.register_lookup(Lower)
-TextField.register_lookup(Lower)
+# Backward-compatible aliases for other admin_panel modules.
+_ci_contains = ci_contains
+_ci_exact = ci_exact
 
 PROFILE_STATUS_FILTERS = frozenset(
     {
@@ -44,20 +47,30 @@ def _qp(request, *keys: str) -> str:
     return ""
 
 
-def _ci_contains(field: str, value: str) -> Q:
-    """Case-insensitive substring match via LOWER(), portable across DB engines."""
-    needle = (value or "").casefold()
-    if not needle:
+def caste_ids_q(caste_ids: list[int]) -> Q:
+    """Match caste FK ids, or the same master names on legacy free-text caste."""
+    ids = [int(cid) for cid in caste_ids if cid]
+    if not ids:
         return Q()
-    return Q(**{f"{field}__lower__contains": needle})
+    q = Q(user_religion__caste_fk_id__in=ids)
+    names = Caste.objects.filter(pk__in=ids).values_list("name", flat=True)
+    for name in names:
+        if name:
+            q |= ci_exact("user_religion__caste", name)
+    return q
 
 
-def _ci_exact(field: str, value: str) -> Q:
-    """Case-insensitive exact match via LOWER(), portable across DB engines."""
-    needle = (value or "").casefold()
-    if not needle:
+def religion_ids_q(religion_ids: list[int]) -> Q:
+    """Match religion FK ids, or the same master names if stored only as related name."""
+    ids = [int(rid) for rid in religion_ids if rid]
+    if not ids:
         return Q()
-    return Q(**{f"{field}__lower": needle})
+    q = Q(user_religion__religion_id__in=ids)
+    names = Religion.objects.filter(pk__in=ids).values_list("name", flat=True)
+    for name in names:
+        if name:
+            q |= ci_exact("user_religion__religion__name", name)
+    return q
 
 
 def _apply_phone_filter(qs, phone: str):
@@ -335,11 +348,11 @@ def apply_profile_list_filters(qs, request):
 
     religion_id = _qp(request, "religion_id")
     if religion_id.isdigit():
-        qs = qs.filter(user_religion__religion_id=int(religion_id))
+        qs = qs.filter(religion_ids_q([int(religion_id)]))
 
     caste_id = _qp(request, "caste_id")
     if caste_id.isdigit():
-        qs = qs.filter(user_religion__caste_fk_id=int(caste_id))
+        qs = qs.filter(caste_ids_q([int(caste_id)]))
 
     state_id = _qp(request, "state_id")
     if state_id.isdigit():
