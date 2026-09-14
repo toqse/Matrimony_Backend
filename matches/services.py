@@ -8,7 +8,6 @@ from django.db.models import Q
 from accounts.models import User
 from core.media import absolute_media_url
 from profiles.models import UserReligion
-from profiles.utils import filter_visible_profiles_queryset
 from user_settings.models import UserSettings
 from blocks.utils import exclude_blocked_users
 
@@ -97,10 +96,9 @@ def apply_profile_visibility_for_viewer(qs, user):
 
 def preferred_match_queryset(user):
     """
-    Unfiltered My Matches pool: opposite gender, completion visibility,
-    saved partner religion/caste + age, and profile visibility.
-    Dashboard new_matches KPI must use this so it matches GET /matches/ total
-    when no extra sidebar filters are applied.
+    Unfiltered My Matches pool: opposite gender, saved partner religion/caste + age,
+    and profile visibility. Dashboard new_matches KPI must use this so it matches
+    GET /matches/ total when no extra sidebar filters are applied.
     """
     qs = User.objects.filter(is_active=True).exclude(pk=user.pk)
     gender = getattr(user, "gender", None)
@@ -108,7 +106,6 @@ def preferred_match_queryset(user):
         qs = qs.filter(gender="F")
     elif gender == "F":
         qs = qs.filter(gender="M")
-    qs = filter_visible_profiles_queryset(qs)
     qs = apply_saved_partner_preferences(qs, user)
     qs = apply_profile_visibility_for_viewer(qs, user)
     qs = exclude_blocked_users(qs, user)
@@ -123,7 +120,6 @@ def match_queryset_for_user(target_user: User):
         qs = qs.filter(gender="F")
     elif gender == "F":
         qs = qs.filter(gender="M")
-    qs = filter_visible_profiles_queryset(qs)
     return exclude_blocked_users(qs, target_user)
 
 

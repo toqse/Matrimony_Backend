@@ -1,11 +1,18 @@
 """Dashboard new_matches KPI must match unfiltered My Matches total."""
 from datetime import date, timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
 from profiles.models import UserProfile, UserReligion
+
+LOCMEM_CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "match-count-alignment-tests",
+    }
+}
 
 
 def _years_ago(years):
@@ -34,6 +41,7 @@ def _visible_user(*, mobile, gender, dob=None, is_active=True):
     return user
 
 
+@override_settings(CACHES=LOCMEM_CACHES)
 class NewMatchesKpiAlignmentTests(TestCase):
     def setUp(self):
         self.client = APIClient()

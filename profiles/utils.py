@@ -2,7 +2,6 @@
 Profile completion helpers: step tracking, percentage, next step, status.
 About Me generator: professional matrimony-style paragraph from profile data.
 """
-import math
 import re
 from django.db import connection
 from django.db.models import F, Func, IntegerField, Value
@@ -427,28 +426,15 @@ def is_profile_registration_complete(user):
 
 def is_profile_visible_to_others(user):
     """
-    Profile should be discoverable only after reaching minimum completion threshold.
+    Discoverability no longer requires 85% completion.
+    Callers still enforce active, not-self, and blocked.
     """
-    completion = get_profile_completion_data(user)
-    return completion['profile_completion_percentage'] >= PROFILE_VISIBILITY_MIN_PERCENTAGE
+    return True
 
 
 def filter_visible_profiles_queryset(queryset):
-    """
-    Query-safe visibility filter using normalized profile completion flags.
-    Keeps match/dashboard visibility criteria aligned in one place.
-    """
-    completion_score = (
-        Coalesce(Cast('user_profile__location_completed', IntegerField()), Value(0))
-        + Coalesce(Cast('user_profile__religion_completed', IntegerField()), Value(0))
-        + Coalesce(Cast('user_profile__personal_completed', IntegerField()), Value(0))
-        + Coalesce(Cast('user_profile__family_completed', IntegerField()), Value(0))
-        + Coalesce(Cast('user_profile__education_completed', IntegerField()), Value(0))
-        + Coalesce(Cast('user_profile__about_completed', IntegerField()), Value(0))
-        + Coalesce(Cast('user_profile__photos_completed', IntegerField()), Value(0))
-    )
-    min_steps = math.ceil((PROFILE_VISIBILITY_MIN_PERCENTAGE / 100) * len(PROFILE_STEP_ORDER))
-    return queryset.annotate(profile_completion_steps=completion_score).filter(profile_completion_steps__gte=min_steps)
+    """Passthrough. Completion is no longer used to hide members from matches."""
+    return queryset
 
 
 def get_full_profile_data(user, request=None):

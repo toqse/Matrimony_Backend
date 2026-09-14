@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
-from profiles.utils import get_profile_completion_data, filter_visible_profiles_queryset
+from profiles.utils import get_profile_completion_data
 from plans.models import ProfileView, Interest
 from plans.services import _get_user_plan, get_plan_info_for_response
 from matches.rotation import annotate_daily_rotation_rank
@@ -51,7 +51,6 @@ def _match_queryset(user):
         qs = qs.filter(gender='F')
     elif gender == 'F':
         qs = qs.filter(gender='M')
-    qs = filter_visible_profiles_queryset(qs)
     return exclude_blocked_users(qs, user)
 
 

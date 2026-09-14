@@ -11,7 +11,6 @@ from accounts.models import User
 from profiles.models import UserLocation, UserReligion, UserPersonal, UserEducation, UserPhotos
 from profiles.utils import (
     apply_height_cm_range,
-    filter_visible_profiles_queryset,
     height_cm_from_personal,
 )
 from plans.models import Interest, ProfileView as ProfileViewModel
@@ -91,7 +90,6 @@ def _match_queryset(request):
     elif gender == 'F':
         qs = qs.filter(gender='M')
     # 'O' -> both, no filter
-    qs = filter_visible_profiles_queryset(qs)
     return exclude_blocked_users(qs, user)
 
 
