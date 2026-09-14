@@ -20,6 +20,7 @@ from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
+from profiles.default_photos import apply_gender_default_photos
 from profiles.models import UserProfile
 from profiles.utils import (
     ensure_about_me_if_empty,
@@ -243,6 +244,7 @@ class AdminProfileDetailAPIView(APIView):
             return Response({"success": False, "error": {"code": 404, "message": "Profile not found"}}, status=404)
         if not _can_access_profile(request, user):
             return Response({"success": False, "error": {"code": 403, "message": "Access denied"}}, status=403)
+        apply_gender_default_photos(user)
         data = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
         completion = get_profile_completion_data(user)
         profile = getattr(user, "user_profile", None) or UserProfile.objects.filter(user=user).first()
@@ -289,6 +291,7 @@ class AdminProfileDetailAPIView(APIView):
             )
 
         save_profile_uploads(user, files)
+        apply_gender_default_photos(user)
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])

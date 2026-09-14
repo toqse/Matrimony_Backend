@@ -19,6 +19,7 @@ from core.dob_utils import validate_profile_age
 from core.phone import normalize_phone_input, personal_mobile_in_use
 from admin_panel.profile_admin.patch_helpers import SECTION_HANDLERS
 from admin_panel.subscriptions.models import CustomerStaffAssignment
+from profiles.default_photos import apply_gender_default_photos
 from profiles.models import UserPhotos, UserProfile
 from profiles.utils import (
     ensure_about_me_if_empty,
@@ -421,7 +422,9 @@ def create_user_and_profile_sections(
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])
 
     # Photos outside the DB transaction (Pillow/storage can be slow on VPS).
-    if save_profile_uploads(user, files):
+    uploaded = save_profile_uploads(user, files)
+    defaulted = apply_gender_default_photos(user)
+    if uploaded or defaulted:
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])

@@ -39,6 +39,7 @@ from admin_panel.staff_profiles.registration import (
 from admin_panel.subscriptions.models import CustomerStaffAssignment
 from astrology.services.horoscope_profile_service import apply_profile_edit_horoscope
 from master.models import Branch as MasterBranch
+from profiles.default_photos import apply_gender_default_photos
 from profiles.models import (
     UserEducation,
     UserLocation,
@@ -429,6 +430,7 @@ class MyProfilesDetailView(APIView):
         user, err = _resolve_user_or_error(request, matri_id)
         if err:
             return err
+        apply_gender_default_photos(user)
         data = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
         completeness = _completeness_percent(user)
         profile = getattr(user, "user_profile", None) or UserProfile.objects.filter(user=user).first()
@@ -478,6 +480,7 @@ class MyProfilesDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         save_profile_uploads(user, files)
+        apply_gender_default_photos(user)
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])

@@ -19,6 +19,7 @@ from admin_panel.auth.models import AdminUser
 from admin_panel.auth.authentication import AdminJWTAuthentication
 from admin_panel.permissions import IsAdminUser
 from admin_panel.staff_profiles.registration import parse_request_data_and_files, save_profile_uploads
+from profiles.default_photos import apply_gender_default_photos
 from profiles.models import UserEducation, UserLocation, UserPersonal, UserPhotos, UserProfile, UserReligion
 from profiles.serializers import (
     AboutDetailsUpdateSerializer,
@@ -303,6 +304,7 @@ class AdminProfilePhotosSectionView(APIView):
         ser.is_valid(raise_exception=True)
         ser.save()
         save_profile_uploads(user, files)
+        apply_gender_default_photos(user)
         mark_profile_step_completed(user, "photos")
         _sync_registration_done(user)
         _log_admin_profile_section(request, user, "photos")

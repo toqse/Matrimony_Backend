@@ -49,6 +49,7 @@ from profiles.utils import (
     generate_about_me_suggestions,
     get_profile_completion_data,
 )
+from profiles.default_photos import apply_gender_default_photos
 from profiles.models import UserPhotos, UserProfile
 from profiles.views import _build_profile_data_for_user
 from wishlist.models import Wishlist
@@ -323,6 +324,7 @@ class StaffMyProfilesDetailView(APIView):
         user, uerr = _resolve_user_for_staff_or_error(request, staff, matri_id)
         if uerr:
             return uerr
+        apply_gender_default_photos(user)
         data = _build_profile_data_for_user(user, request, include_contact=True, include_family=True)
         completeness = _completeness_percent(user)
         profile = getattr(user, "user_profile", None) or UserProfile.objects.filter(user=user).first()
@@ -395,6 +397,7 @@ class StaffMyProfilesDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         save_profile_uploads(user, files)
+        apply_gender_default_photos(user)
         completion = get_profile_completion_data(user)
         user.is_registration_profile_completed = completion["profile_status"] == "completed"
         user.save(update_fields=["is_registration_profile_completed", "updated_at"])
