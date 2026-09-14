@@ -10,6 +10,7 @@ class MatchListProfileSerializer(serializers.Serializer):
     """One profile in match list: matri_id, name, age, height, education, occupation, profile_photo, full_photo, is_online, last_seen, is_new, match_percentage, is_able_to_view, is_already_viewed, can_view_details, can_send_interest, can_chat, is_interest_sent, interest_status, is_horoscope_sent."""
     matri_id = serializers.CharField()
     name = serializers.CharField()
+    gender = serializers.CharField(allow_null=True, required=False)
     age = serializers.IntegerField(allow_null=True)
     height = serializers.IntegerField(allow_null=True)
     education = serializers.CharField(allow_null=True)

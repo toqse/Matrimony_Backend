@@ -6,8 +6,8 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from .models import Plan, ServiceCharge, UserPlan, Transaction, Interest
 from matches.utils import age_from_dob
-from profiles.models import UserLocation, UserEducation, UserPhotos
-from core.media import absolute_media_url
+from profiles.models import UserLocation, UserEducation
+from profiles.default_photos import display_photo_urls
 
 
 def _online_purchasable_plan_exists(plan_id):
@@ -163,6 +163,7 @@ def _get_user_brief_profile(user, request=None):
         return {
             'matri_id': '',
             'name': '',
+            'gender': None,
             'age': None,
             'location': None,
             'education': None,
@@ -198,11 +199,12 @@ def _get_user_brief_profile(user, request=None):
         photos = user.user_photos
     except ObjectDoesNotExist:
         photos = None
-    profile_photo = absolute_media_url(request, photos.profile_photo) if photos and photos.profile_photo else None
+    profile_photo, _full_photo = display_photo_urls(request, user, photos)
 
     return {
         'matri_id': user.matri_id or '',
         'name': user.name or '',
+        'gender': (getattr(user, 'gender', None) or '') or None,
         'age': age,
         'location': location,
         'education': education,
@@ -220,6 +222,7 @@ class InterestListSerializer(serializers.Serializer):
     interest_id = serializers.IntegerField(source='id')
     matri_id = serializers.CharField()
     name = serializers.CharField()
+    gender = serializers.CharField(allow_null=True, required=False)
     age = serializers.IntegerField(allow_null=True)
     location = serializers.CharField(allow_null=True)
     education = serializers.CharField(allow_null=True)
@@ -242,6 +245,7 @@ class InterestListSerializer(serializers.Serializer):
             'interest_id': instance.id,
             'matri_id': profile['matri_id'],
             'name': profile['name'],
+            'gender': profile.get('gender'),
             'age': profile['age'],
             'location': profile['location'],
             'education': profile['education'],

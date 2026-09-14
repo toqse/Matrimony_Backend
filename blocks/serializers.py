@@ -6,6 +6,7 @@ class BlockedProfileSerializer(serializers.Serializer):
 
     matri_id = serializers.CharField()
     name = serializers.CharField()
+    gender = serializers.CharField(allow_null=True, required=False)
     age = serializers.IntegerField(allow_null=True)
     location = serializers.CharField(allow_null=True)
     education = serializers.CharField(allow_null=True)

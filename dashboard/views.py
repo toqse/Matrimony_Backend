@@ -23,8 +23,8 @@ from matches.services import (
     preferred_match_queryset,
 )
 from matches.utils import age_from_dob, compute_match_percentage
-from core.media import absolute_media_url
 from blocks.utils import blocked_user_ids_for, exclude_blocked_users
+from profiles.default_photos import display_photo_urls
 
 
 def _parse_page_params(request, default_page_size=8, max_page_size=50):
@@ -94,12 +94,7 @@ def _build_profile_card(request, user, viewer, include_extended=False, viewer_ct
     rel = getattr(user, 'user_religion', None) or UserReligion.objects.filter(user=user).select_related('religion').first()
     loc = getattr(user, 'user_location', None) or UserLocation.objects.filter(user=user).select_related('state', 'city').first()
 
-    profile_photo = None
-    if photos and photos.profile_photo:
-        profile_photo = absolute_media_url(request, photos.profile_photo)
-    full_photo = None
-    if photos and photos.full_photo:
-        full_photo = absolute_media_url(request, photos.full_photo)
+    profile_photo, full_photo = display_photo_urls(request, user, photos)
 
     location_str = None
     if loc:
@@ -136,6 +131,7 @@ def _build_profile_card(request, user, viewer, include_extended=False, viewer_ct
     card = {
         'matri_id': user.matri_id or '',
         'name': user.name or '',
+        'gender': (getattr(user, 'gender', None) or '') or None,
         'age': age_from_dob(user.dob) if user.dob else None,
         'location': location_str,
         'profile_photo': profile_photo,
@@ -308,7 +304,7 @@ class SuggestionsView(APIView):
 class TodayPicksView(APIView):
     """
     GET /api/v1/dashboard/today-picks/
-    Returns curated profiles for today (recent profiles with photos).
+    Returns curated profiles for today. Photo-less members get gender defaults.
     """
     permission_classes = [IsAuthenticated]
 
@@ -317,7 +313,6 @@ class TodayPicksView(APIView):
         qs = _match_queryset(user)
         qs = _apply_partner_preference(qs, user)
         qs = apply_profile_visibility_for_viewer(qs, user)
-        qs = qs.filter(user_photos__profile_photo__isnull=False)
         qs = qs.select_related(
             'user_education', 'user_education__occupation',
             'user_photos',
@@ -328,12 +323,11 @@ class TodayPicksView(APIView):
         for u in qs:
             edu = getattr(u, 'user_education', None)
             photos = getattr(u, 'user_photos', None)
-            profile_photo = None
-            if photos and photos.profile_photo:
-                profile_photo = absolute_media_url(request, photos.profile_photo)
+            profile_photo, _full_photo = display_photo_urls(request, u, photos)
             data.append({
                 'matri_id': u.matri_id or '',
                 'name': u.name or '',
+                'gender': (getattr(u, 'gender', None) or '') or None,
                 'age': age_from_dob(u.dob) if u.dob else None,
                 'occupation': edu.occupation.name if edu and edu.occupation_id else None,
                 'profile_photo': profile_photo,

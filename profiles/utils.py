@@ -464,6 +464,8 @@ def get_full_profile_data(user, request=None):
         'highest_education', 'education_subject', 'occupation', 'annual_income'
     ).first()
     photos = UserPhotos.objects.filter(user=user).first()
+    from profiles.default_photos import ensure_photos_for_display
+    photos = ensure_photos_for_display(user, photos)
     profile = getattr(user, 'user_profile', None) or UserProfile.objects.filter(user=user).first()
 
     def _empty_photos():

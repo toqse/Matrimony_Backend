@@ -907,7 +907,13 @@ class PhotosDetailsReadSerializer(serializers.Serializer):
         return absolute_media_url(request, getattr(obj, field_name, None))
 
     def get_profile_photo(self, obj):
-        return self._url(obj, 'profile_photo')
+        url = self._url(obj, 'profile_photo')
+        if url:
+            return url
+        fallback = (getattr(obj, 'profile_photo_url', None) or '').strip()
+        if fallback:
+            return absolute_media_url(self.context.get('request'), fallback)
+        return None
 
     def get_full_photo(self, obj):
         return self._url(obj, 'full_photo')

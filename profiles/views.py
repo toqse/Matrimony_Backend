@@ -11,7 +11,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from core.media import absolute_media_url
+from .default_photos import display_photo_urls, ensure_photos_for_display
 from .models import (
     UserProfile, UserLocation, UserReligion, UserPersonal,
     UserFamily, UserEducation, UserPhotos,
@@ -163,6 +163,7 @@ def _build_profile_data_for_user(user, request=None, include_contact=False, incl
     photos = _related_or_none(user, 'user_photos')
     if photos is None:
         photos = UserPhotos.objects.filter(user=user).first()
+    photos = ensure_photos_for_display(user, photos)
 
     profile = _related_or_none(user, 'user_profile')
     if profile is None:
@@ -642,9 +643,7 @@ class BasicDetailsView(APIView):
         data = dict(ser.data)
         photos = UserPhotos.objects.filter(user=user).first()
         loc = UserLocation.objects.filter(user=user).select_related('state', 'city').first()
-        profile_photo = None
-        if photos and photos.profile_photo:
-            profile_photo = absolute_media_url(request, photos.profile_photo)
+        profile_photo, _full_photo = display_photo_urls(request, user, photos)
         location_str = None
         if loc:
             parts = []

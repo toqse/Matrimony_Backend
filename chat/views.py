@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
-from core.media import absolute_media_url
+from profiles.default_photos import display_photo_urls
 from matches.serializers import format_last_seen
 from plans.models import Conversation, Interest, Message
 from plans.services import get_user_plan_status, has_accepted_interest_between, plan_expired_response
@@ -45,12 +45,11 @@ def _other_user(conv, current_user):
 
 def _profile_photo_url(request, user):
     try:
-        photos = user.user_photos
-        if photos and photos.profile_photo:
-            return absolute_media_url(request, photos.profile_photo)
+        photos = getattr(user, 'user_photos', None)
+        url, _full = display_photo_urls(request, user, photos)
+        return url
     except Exception:
-        pass
-    return None
+        return None
 
 
 def _is_online(user):

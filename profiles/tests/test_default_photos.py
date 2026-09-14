@@ -5,12 +5,17 @@ from pathlib import Path
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from PIL import Image
+from rest_framework.test import APIClient
 
 from accounts.models import User
 from admin_panel.staff_profiles.registration import create_user_and_profile_sections
-from profiles.default_photos import apply_gender_default_photos, users_needing_default_photos
+from profiles.default_photos import (
+    apply_gender_default_photos,
+    display_photo_urls,
+    users_needing_default_photos,
+)
 from profiles.models import UserPhotos
 
 LOCMEM_CACHES = {
@@ -146,3 +151,87 @@ class GenderDefaultPhotosExistingTests(TestCase):
         user = self._existing(mobile="+919811101106", gender="M", name="Dry Run")
         call_command("apply_gender_default_photos", dry_run=True)
         self.assertFalse(UserPhotos.objects.filter(user=user).exists())
+
+
+@override_settings(CACHES=LOCMEM_CACHES)
+class GenderDefaultPhotosListingTests(TestCase):
+    def setUp(self):
+        self.media_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media_tmp.cleanup)
+        media = override_settings(MEDIA_ROOT=self.media_tmp.name)
+        media.enable()
+        self.addCleanup(media.disable)
+        self.client = APIClient()
+        self.viewer = User.objects.create_user(
+            mobile="+919811101201",
+            password="x",
+            role="user",
+            name="Viewer",
+            gender="M",
+            is_active=True,
+        )
+        self.female = User.objects.create_user(
+            mobile="+919811101202",
+            password="x",
+            role="user",
+            name="Anju",
+            gender="F",
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.viewer)
+
+    def test_display_photo_urls_fills_female_default(self):
+        request = RequestFactory().get("/")
+        profile_url, full_url = display_photo_urls(request, self.female)
+        self.assertIsNotNone(profile_url)
+        self.assertIn("aiswarya_female_profile", profile_url)
+        self.assertIsNotNone(full_url)
+        self.assertIn("aiswarya_female_full", full_url)
+        photos = UserPhotos.objects.get(user=self.female)
+        self.assertIn("aiswarya_female_profile", Path(photos.profile_photo.name).stem)
+
+    def test_matches_list_returns_female_default_photo(self):
+        res = self.client.get("/api/v1/matches/", {"page": 1, "limit": 20})
+        self.assertEqual(res.status_code, 200)
+        row = next(
+            p for p in res.data["data"]["profiles"] if p["matri_id"] == self.female.matri_id
+        )
+        self.assertTrue(row["profile_photo"])
+        self.assertIn("aiswarya_female_profile", row["profile_photo"])
+
+    def test_dashboard_new_matches_returns_female_default_photo(self):
+        res = self.client.get("/api/v1/dashboard/new-matches/")
+        self.assertEqual(res.status_code, 200)
+        row = next(p for p in res.data["data"] if p["matri_id"] == self.female.matri_id)
+        self.assertTrue(row["profile_photo"])
+        self.assertIn("aiswarya_female_profile", row["profile_photo"])
+
+    def test_profile_photo_url_is_used_instead_of_default_file(self):
+        UserPhotos.objects.create(
+            user=self.female, profile_photo_url="https://example.com/remote.jpg"
+        )
+        request = RequestFactory().get("/")
+        profile_url, _full_url = display_photo_urls(request, self.female)
+        self.assertEqual(profile_url, "https://example.com/remote.jpg")
+
+    def test_today_picks_includes_female_without_photos(self):
+        res = self.client.get("/api/v1/dashboard/today-picks/")
+        self.assertEqual(res.status_code, 200)
+        row = next(p for p in res.data["data"] if p["matri_id"] == self.female.matri_id)
+        self.assertEqual(row.get("gender"), "F")
+        self.assertTrue(row["profile_photo"])
+        self.assertIn("aiswarya_female_profile", row["profile_photo"])
+
+    def test_matches_list_includes_gender(self):
+        res = self.client.get("/api/v1/matches/", {"page": 1, "limit": 20})
+        self.assertEqual(res.status_code, 200)
+        row = next(
+            p for p in res.data["data"]["profiles"] if p["matri_id"] == self.female.matri_id
+        )
+        self.assertEqual(row.get("gender"), "F")
+
+    def test_dashboard_new_matches_includes_gender(self):
+        res = self.client.get("/api/v1/dashboard/new-matches/")
+        self.assertEqual(res.status_code, 200)
+        row = next(p for p in res.data["data"] if p["matri_id"] == self.female.matri_id)
+        self.assertEqual(row.get("gender"), "F")

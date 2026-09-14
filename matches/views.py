@@ -35,7 +35,7 @@ from .utils import age_from_dob, dob_range_for_age, build_user_match_score_sql_e
 from .serializers import MatchListProfileSerializer, format_last_seen
 from admin_panel.profile_filters import caste_ids_q, religion_ids_q
 from core.ci_lookups import ci_contains
-from core.media import absolute_media_url
+from profiles.default_photos import display_photo_urls
 
 
 def _optional_fk_id(raw):
@@ -290,12 +290,7 @@ def _match_list_response(request, *, home_slider=False):
 
         height_val = height_cm_from_personal(pers)
 
-        photo_url = None
-        if photos and photos.profile_photo:
-            photo_url = absolute_media_url(request, photos.profile_photo)
-        full_photo_url = None
-        if photos and photos.full_photo:
-            full_photo_url = absolute_media_url(request, photos.full_photo)
+        photo_url, full_photo_url = display_photo_urls(request, u, photos)
 
         match_pct = int(getattr(u, 'match_score', 0) or 0)
         match_pct = min(100, match_pct)
@@ -311,6 +306,7 @@ def _match_list_response(request, *, home_slider=False):
         profiles_data.append({
             'matri_id': u.matri_id or '',
             'name': u.name or '',
+            'gender': (getattr(u, 'gender', None) or '') or None,
             'age': age_from_dob(u.dob) if u.dob else None,
             'location': (
                 loc.city.name

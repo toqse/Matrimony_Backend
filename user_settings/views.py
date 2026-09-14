@@ -14,7 +14,7 @@ from accounts.models import User
 from accounts.serializers import get_user_by_mobile_variants, validate_phone_number
 from plans.services import _get_user_plan
 from profiles.models import UserLocation, UserPhotos
-from core.media import absolute_media_url
+from profiles.default_photos import display_photo_urls
 from .models import UserSettings
 from .serializers import (
     ProfileVisibilitySerializer,
@@ -63,11 +63,10 @@ def _location_display(user):
 def _profile_photo_url(request, user):
     try:
         photos = UserPhotos.objects.filter(user=user).first()
-        if photos and photos.profile_photo:
-            return absolute_media_url(request, photos.profile_photo)
+        url, _full = display_photo_urls(request, user, photos)
+        return url
     except Exception:
-        pass
-    return None
+        return None
 
 
 class ProfileSettingsView(APIView):

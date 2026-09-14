@@ -4,7 +4,7 @@ from rest_framework import serializers
 from accounts.models import User
 from matches.utils import age_from_dob
 from matches.serializers import format_last_seen
-from core.media import absolute_media_url
+from profiles.default_photos import display_photo_urls
 from .models import Wishlist
 
 
@@ -30,6 +30,7 @@ class WishlistProfileSerializer(serializers.Serializer):
 
     matri_id = serializers.CharField()
     name = serializers.CharField()
+    gender = serializers.CharField(allow_null=True, required=False)
     age = serializers.IntegerField(allow_null=True)
     location = serializers.CharField(allow_null=True)
     education = serializers.CharField(allow_null=True)
@@ -65,10 +66,7 @@ def _build_wishlist_profile_dict(viewer: User, profile_user: User, request=None)
     occupation = getattr(getattr(edu, 'occupation', None), 'name', None)
 
     photos = _safe_one_to_one(profile_user, 'user_photos')
-    if photos and photos.profile_photo:
-        profile_photo = absolute_media_url(request, photos.profile_photo)
-    else:
-        profile_photo = None
+    profile_photo, _full_photo = display_photo_urls(request, profile_user, photos)
 
     # Online / last seen
     last_seen_dt = getattr(profile_user, 'last_seen', None)
@@ -82,6 +80,7 @@ def _build_wishlist_profile_dict(viewer: User, profile_user: User, request=None)
     return {
         'matri_id': profile_user.matri_id or '',
         'name': profile_user.name or '',
+        'gender': (getattr(profile_user, 'gender', None) or '') or None,
         'age': age,
         'location': location,
         'education': education,

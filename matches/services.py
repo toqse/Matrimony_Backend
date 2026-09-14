@@ -6,10 +6,10 @@ from __future__ import annotations
 from django.db.models import Q
 
 from accounts.models import User
-from core.media import absolute_media_url
 from profiles.models import UserReligion
 from user_settings.models import UserSettings
 from blocks.utils import exclude_blocked_users
+from profiles.default_photos import display_photo_urls
 
 from .utils import age_from_dob, build_user_match_score_sql_expression, dob_range_for_age
 
@@ -158,9 +158,7 @@ def build_matches_for_user(target_user: User, *, request=None, limit: int = 20) 
         photos = getattr(u, "user_photos", None)
         profile = getattr(u, "user_profile", None)
 
-        photo_url = None
-        if photos and photos.profile_photo:
-            photo_url = absolute_media_url(request, photos.profile_photo) if request else None
+        photo_url, _full_url = display_photo_urls(request, u, photos)
 
         match_pct = min(100, int(getattr(u, "match_score", 0) or 0))
 
