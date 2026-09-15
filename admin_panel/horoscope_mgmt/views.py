@@ -260,14 +260,22 @@ class HoroscopePanelSavedPoruthamView(APIView):
         if err:
             return err
         raw = (request.query_params.get("fixed_profile_id") or "").strip()
-        try:
-            fixed_profile_id = int(raw)
-        except (TypeError, ValueError):
-            return Response(
-                {"success": False, "error": {"code": 400, "message": "fixed_profile_id is required."}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        rows, msg = horoscope_panel.list_saved_porutham_matches(qs, fixed_profile_id)
+        fixed_profile_id = None
+        if raw:
+            try:
+                fixed_profile_id = int(raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {
+                        "success": False,
+                        "error": {"code": 400, "message": "fixed_profile_id must be an integer."},
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        search = (request.query_params.get("search") or "").strip() or None
+        rows, msg = horoscope_panel.list_saved_porutham_matches(
+            qs, fixed_profile_id=fixed_profile_id, search=search
+        )
         if msg:
             return Response(
                 {"success": False, "error": {"code": 400, "message": msg}},

@@ -504,6 +504,10 @@ class HoroscopePanelSavedPoruthamTests(TestCase):
         self.assertIsNone(list_err)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["partner_profile_id"], self.groom_profile.pk)
+        self.assertEqual(rows[0]["fixed_profile_id"], self.bride_profile.pk)
+        self.assertEqual(rows[0]["mode"], "fixed-bride")
+        self.assertEqual(rows[0]["fixed_name"], "Saved Bride")
+        self.assertEqual(rows[0]["partner_name"], "Saved Groom")
 
         deleted, del_err = delete_saved_porutham_matches(
             qs,
@@ -545,3 +549,93 @@ class HoroscopePanelSavedPoruthamTests(TestCase):
             saved_by=self.admin_super,
         )
         self.assertEqual(AdminSavedPoruthamMatch.objects.count(), 1)
+
+    def _second_pair(self):
+        bride = User.objects.create_user(
+            mobile="+919876543603", password="x", name="Other Bride", role="user"
+        )
+        bride.is_active = True
+        bride.branch = self.master_br
+        bride.gender = "F"
+        bride.save()
+        groom = User.objects.create_user(
+            mobile="+919876543604", password="x", name="Other Groom", role="user"
+        )
+        groom.is_active = True
+        groom.branch = self.master_br
+        groom.gender = "M"
+        groom.save()
+        bride_profile, _ = UserProfile.objects.get_or_create(user=bride, defaults={})
+        groom_profile, _ = UserProfile.objects.get_or_create(user=groom, defaults={})
+        HoroscopeProfile.objects.update_or_create(
+            user=bride,
+            defaults={"pr_rasi": _rasi_string(2), "pr_star": 2, "pr_pada": 1, "pr_name": "Other Bride"},
+        )
+        HoroscopeProfile.objects.update_or_create(
+            user=groom,
+            defaults={"pr_rasi": _rasi_string(5), "pr_star": 6, "pr_pada": 2, "pr_name": "Other Groom"},
+        )
+        return bride_profile, groom_profile
+
+    def test_list_all_saved_matches_without_fixed_profile(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        other_bride, other_groom = self._second_pair()
+
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+            saved_by=self.admin_super,
+        )
+        save_porutham_matches(
+            qs,
+            mode="fixed-groom",
+            fixed_profile_id=other_groom.pk,
+            partner_profile_ids=[other_bride.pk],
+            saved_by=self.admin_super,
+        )
+
+        all_rows, err = list_saved_porutham_matches(qs)
+        self.assertIsNone(err)
+        self.assertEqual(len(all_rows), 2)
+        modes = {row["mode"] for row in all_rows}
+        self.assertEqual(modes, {"fixed-bride", "fixed-groom"})
+        fixed_ids = {row["fixed_profile_id"] for row in all_rows}
+        self.assertEqual(fixed_ids, {self.bride_profile.pk, other_groom.pk})
+
+        filtered, ferr = list_saved_porutham_matches(qs, self.bride_profile.pk)
+        self.assertIsNone(ferr)
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["fixed_profile_id"], self.bride_profile.pk)
+
+    def test_list_saved_matches_search_by_name_or_matri(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        other_bride, other_groom = self._second_pair()
+
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+            saved_by=self.admin_super,
+        )
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=other_bride.pk,
+            partner_profile_ids=[other_groom.pk],
+            saved_by=self.admin_super,
+        )
+
+        by_name, err = list_saved_porutham_matches(qs, search="Saved Bride")
+        self.assertIsNone(err)
+        self.assertEqual(len(by_name), 1)
+        self.assertEqual(by_name[0]["fixed_profile_id"], self.bride_profile.pk)
+
+        by_matri, merr = list_saved_porutham_matches(qs, search=self.groom_user.matri_id)
+        self.assertIsNone(merr)
+        self.assertEqual(len(by_matri), 1)
+        self.assertEqual(by_matri[0]["partner_profile_id"], self.groom_profile.pk)

@@ -497,6 +497,15 @@ def _mode_to_internal(mode: str) -> str | None:
     return None
 
 
+def _mode_to_api(mode: str) -> str:
+    internal = _mode_to_internal(mode)
+    if internal == AdminSavedPoruthamMatch.MODE_FIXED_BRIDE:
+        return 'fixed-bride'
+    if internal == AdminSavedPoruthamMatch.MODE_FIXED_GROOM:
+        return 'fixed-groom'
+    return (mode or '').strip()
+
+
 def _upsert_porutham_result(bride_user, groom_user, result: dict) -> None:
     PoruthamResult.objects.update_or_create(
         bride=bride_user,
@@ -635,7 +644,7 @@ def save_porutham_matches(
                 'saved_by': saved_by,
             },
         )
-        saved_rows.append(_serialize_saved_match(obj, partner_prof))
+        saved_rows.append(_serialize_saved_match(obj, partner_prof, fixed_prof))
 
     if not saved_rows:
         return None, errors[0] if errors else 'No matches could be saved.'
@@ -645,23 +654,44 @@ def save_porutham_matches(
 
 def list_saved_porutham_matches(
     users_qs,
-    fixed_profile_id: int,
+    fixed_profile_id: int | None = None,
+    search: str | None = None,
 ) -> tuple[list[dict] | None, str | None]:
-    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
-    if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
-        return None, 'Fixed profile not found or out of scope.'
-
     qs = (
-        AdminSavedPoruthamMatch.objects.filter(fixed_user=fixed_prof.user)
-        .select_related('partner_user', 'partner_user__user_profile', 'saved_by')
+        AdminSavedPoruthamMatch.objects.filter(
+            fixed_user_id__in=users_qs.values('pk'),
+            partner_user_id__in=users_qs.values('pk'),
+        )
+        .select_related(
+            'fixed_user',
+            'fixed_user__user_profile',
+            'partner_user',
+            'partner_user__user_profile',
+            'saved_by',
+        )
         .order_by('-updated_at')
     )
+
+    if fixed_profile_id is not None:
+        fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+        if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+            return None, 'Fixed profile not found or out of scope.'
+        qs = qs.filter(fixed_user=fixed_prof.user)
+
+    term = (search or '').strip()
+    if term:
+        qs = qs.filter(
+            Q(fixed_user__name__icontains=term)
+            | Q(fixed_user__matri_id__icontains=term)
+            | Q(partner_user__name__icontains=term)
+            | Q(partner_user__matri_id__icontains=term)
+        )
+
     rows = []
     for obj in qs:
         partner_prof = getattr(obj.partner_user, 'user_profile', None)
-        if partner_prof and not user_in_scope(users_qs, obj.partner_user_id):
-            continue
-        rows.append(_serialize_saved_match(obj, partner_prof))
+        fixed_prof = getattr(obj.fixed_user, 'user_profile', None)
+        rows.append(_serialize_saved_match(obj, partner_prof, fixed_prof))
     return rows, None
 
 
@@ -693,19 +723,25 @@ def delete_saved_porutham_matches(
 
 def _serialize_saved_match(
     obj: AdminSavedPoruthamMatch,
-    partner_prof: UserProfile | None,
+    partner_prof: UserProfile | None = None,
+    fixed_prof: UserProfile | None = None,
 ) -> dict[str, Any]:
     partner_user = obj.partner_user
     partner_profile = partner_prof or getattr(partner_user, 'user_profile', None)
+    fixed_user = obj.fixed_user
+    fixed_profile = fixed_prof or getattr(fixed_user, 'user_profile', None)
     saved_by = obj.saved_by
     return {
         'id': obj.pk,
-        'mode': obj.mode,
+        'mode': _mode_to_api(obj.mode),
         'fixed_user_id': str(obj.fixed_user_id),
+        'fixed_profile_id': fixed_profile.pk if fixed_profile else None,
+        'fixed_matri_id': (fixed_user.matri_id or '') if fixed_user else '',
+        'fixed_name': ((fixed_user.name or '').strip() if fixed_user else ''),
         'partner_user_id': str(obj.partner_user_id),
         'partner_profile_id': partner_profile.pk if partner_profile else None,
-        'partner_matri_id': partner_user.matri_id or '',
-        'partner_name': (partner_user.name or '').strip(),
+        'partner_matri_id': (partner_user.matri_id or '') if partner_user else '',
+        'partner_name': ((partner_user.name or '').strip() if partner_user else ''),
         'score': obj.score,
         'max_score': obj.max_score,
         'overall_result': obj.overall_result,
