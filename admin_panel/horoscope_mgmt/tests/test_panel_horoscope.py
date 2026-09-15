@@ -10,6 +10,7 @@ from admin_panel.horoscope_mgmt.services import (
     build_summary_counts,
     delete_saved_porutham_matches,
     list_horoscope_records,
+    list_saved_porutham_groups,
     list_saved_porutham_matches,
     panel_porutham,
     save_porutham_matches,
@@ -639,3 +640,89 @@ class HoroscopePanelSavedPoruthamTests(TestCase):
         self.assertIsNone(merr)
         self.assertEqual(len(by_matri), 1)
         self.assertEqual(by_matri[0]["partner_profile_id"], self.groom_profile.pk)
+
+    def _extra_groom(self, name: str, mobile: str, star: int, rasi: int):
+        groom = User.objects.create_user(mobile=mobile, password="x", name=name, role="user")
+        groom.is_active = True
+        groom.branch = self.master_br
+        groom.gender = "M"
+        groom.save()
+        profile, _ = UserProfile.objects.get_or_create(user=groom, defaults={})
+        HoroscopeProfile.objects.update_or_create(
+            user=groom,
+            defaults={"pr_rasi": _rasi_string(rasi), "pr_star": star, "pr_pada": 1, "pr_name": name},
+        )
+        return profile
+
+    def test_groups_one_fixed_profile_with_two_partners(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        second_groom = self._extra_groom("Second Groom", "+919876543605", star=7, rasi=6)
+
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk, second_groom.pk],
+            saved_by=self.admin_super,
+        )
+        other_bride, other_groom = self._second_pair()
+        save_porutham_matches(
+            qs,
+            mode="fixed-groom",
+            fixed_profile_id=other_groom.pk,
+            partner_profile_ids=[other_bride.pk],
+            saved_by=self.admin_super,
+        )
+
+        data, err = list_saved_porutham_groups(qs, page=1, page_size=20)
+        self.assertIsNone(err)
+        self.assertEqual(data["count"], 2)
+        self.assertEqual(len(data["results"]), 2)
+        by_fixed = {row["fixed_profile_id"]: row for row in data["results"]}
+        self.assertEqual(by_fixed[self.bride_profile.pk]["match_count"], 2)
+        self.assertEqual(by_fixed[self.bride_profile.pk]["mode"], "fixed-bride")
+        self.assertEqual(by_fixed[self.bride_profile.pk]["fixed_name"], "Saved Bride")
+        self.assertEqual(by_fixed[other_groom.pk]["match_count"], 1)
+
+        paged, perr = list_saved_porutham_groups(qs, page=1, page_size=1)
+        self.assertIsNone(perr)
+        self.assertEqual(paged["count"], 2)
+        self.assertEqual(len(paged["results"]), 1)
+        self.assertEqual(paged["page"], 1)
+        self.assertEqual(paged["page_size"], 1)
+
+        by_partner, serr = list_saved_porutham_groups(qs, search="Second Groom")
+        self.assertIsNone(serr)
+        self.assertEqual(by_partner["count"], 1)
+        self.assertEqual(by_partner["results"][0]["fixed_profile_id"], self.bride_profile.pk)
+
+    def test_list_saved_matches_pagination(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        second_groom = self._extra_groom("Paged Groom", "+919876543606", star=8, rasi=7)
+        save_porutham_matches(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk, second_groom.pk],
+            saved_by=self.admin_super,
+        )
+
+        page1, err = list_saved_porutham_matches(
+            qs, self.bride_profile.pk, page=1, page_size=1
+        )
+        self.assertIsNone(err)
+        self.assertEqual(page1["count"], 2)
+        self.assertEqual(len(page1["results"]), 1)
+        self.assertEqual(page1["page"], 1)
+
+        page2, err2 = list_saved_porutham_matches(
+            qs, self.bride_profile.pk, page=2, page_size=1
+        )
+        self.assertIsNone(err2)
+        self.assertEqual(len(page2["results"]), 1)
+        self.assertNotEqual(
+            page1["results"][0]["partner_profile_id"],
+            page2["results"][0]["partner_profile_id"],
+        )

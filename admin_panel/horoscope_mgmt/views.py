@@ -242,6 +242,22 @@ class HoroscopePanelPoruthamView(APIView):
         return Response({"success": True, "data": result}, status=status.HTTP_200_OK)
 
 
+def _parse_page_params(request, *, optional: bool = False, default_size: int = 20):
+    raw_page = (request.query_params.get("page") or "").strip()
+    raw_size = (request.query_params.get("page_size") or "").strip()
+    if optional and not raw_page and not raw_size:
+        return None, None
+    try:
+        page = max(1, int(raw_page or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = max(1, min(100, int(raw_size or default_size)))
+    except (TypeError, ValueError):
+        page_size = default_size
+    return page, page_size
+
+
 class HoroscopePanelSavedPoruthamView(APIView):
     """GET list / POST save / DELETE unsave shared porutham matches for a fixed profile."""
 
@@ -273,14 +289,21 @@ class HoroscopePanelSavedPoruthamView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         search = (request.query_params.get("search") or "").strip() or None
+        page, page_size = _parse_page_params(request, optional=True)
         rows, msg = horoscope_panel.list_saved_porutham_matches(
-            qs, fixed_profile_id=fixed_profile_id, search=search
+            qs,
+            fixed_profile_id=fixed_profile_id,
+            search=search,
+            page=page,
+            page_size=page_size,
         )
         if msg:
             return Response(
                 {"success": False, "error": {"code": 400, "message": msg}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if isinstance(rows, dict):
+            return Response({"success": True, "data": rows}, status=status.HTTP_200_OK)
         return Response({"success": True, "data": {"results": rows or []}}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -323,6 +346,36 @@ class HoroscopePanelSavedPoruthamView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response({"success": True, "data": {"deleted": deleted}}, status=status.HTTP_200_OK)
+
+
+class HoroscopePanelSavedPoruthamGroupsView(APIView):
+    """GET paginated unique fixed profiles that have saved porutham matches."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    mount = "admin"
+
+    def get_permissions(self):
+        if self.mount == "admin":
+            return [IsAuthenticated(), IsAdminUser()]
+        if self.mount == "staff":
+            return [IsAuthenticated(), IsPanelStaff()]
+        return [IsAuthenticated(), IsBranchManagerOnly()]
+
+    def get(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        search = (request.query_params.get("search") or "").strip() or None
+        page, page_size = _parse_page_params(request)
+        data, msg = horoscope_panel.list_saved_porutham_groups(
+            qs, search=search, page=page or 1, page_size=page_size or 20
+        )
+        if msg:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 
 
 class HoroscopePanelMatchReportView(APIView):
@@ -452,6 +505,16 @@ BranchHoroscopePanelPoruthamView = _clone_view_attrs(HoroscopePanelPoruthamView,
 AdminHoroscopePanelSavedPoruthamView = _clone_view_attrs(HoroscopePanelSavedPoruthamView, "admin")
 StaffHoroscopePanelSavedPoruthamView = _clone_view_attrs(HoroscopePanelSavedPoruthamView, "staff")
 BranchHoroscopePanelSavedPoruthamView = _clone_view_attrs(HoroscopePanelSavedPoruthamView, "branch")
+
+AdminHoroscopePanelSavedPoruthamGroupsView = _clone_view_attrs(
+    HoroscopePanelSavedPoruthamGroupsView, "admin"
+)
+StaffHoroscopePanelSavedPoruthamGroupsView = _clone_view_attrs(
+    HoroscopePanelSavedPoruthamGroupsView, "staff"
+)
+BranchHoroscopePanelSavedPoruthamGroupsView = _clone_view_attrs(
+    HoroscopePanelSavedPoruthamGroupsView, "branch"
+)
 
 AdminHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "admin")
 StaffHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "staff")

@@ -8,6 +8,7 @@ from .views import (
     StaffHoroscopePanelRecordByMatriView,
     StaffHoroscopePanelRecordDetailView,
     StaffHoroscopePanelRecordsView,
+    StaffHoroscopePanelSavedPoruthamGroupsView,
     StaffHoroscopePanelSavedPoruthamView,
     StaffHoroscopePanelSummaryView,
 )
@@ -23,6 +24,7 @@ urlpatterns = [
     ),
     path("records/<uuid:user_id>/", StaffHoroscopePanelRecordDetailView.as_view(), name="staff_horoscope_record_detail"),
     path("porutham/", StaffHoroscopePanelPoruthamView.as_view(), name="staff_horoscope_porutham"),
+    path("porutham/saved/groups/", StaffHoroscopePanelSavedPoruthamGroupsView.as_view(), name="staff_horoscope_porutham_saved_groups"),
     path("porutham/saved/", StaffHoroscopePanelSavedPoruthamView.as_view(), name="staff_horoscope_porutham_saved"),
     path("match-report/", StaffHoroscopePanelMatchReportView.as_view(), name="staff_horoscope_match_report"),
     path("jathakam-pdfs/", StaffHoroscopePanelJathakamPdfsView.as_view(), name="staff_horoscope_jathakam_pdfs"),

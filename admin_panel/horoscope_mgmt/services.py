@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import Coalesce, Length
 
 from accounts.models import User
@@ -652,11 +652,7 @@ def save_porutham_matches(
     return saved_rows, None if not errors else '; '.join(errors)
 
 
-def list_saved_porutham_matches(
-    users_qs,
-    fixed_profile_id: int | None = None,
-    search: str | None = None,
-) -> tuple[list[dict] | None, str | None]:
+def _saved_porutham_qs(users_qs, *, fixed_profile_id: int | None = None, search: str | None = None):
     qs = (
         AdminSavedPoruthamMatch.objects.filter(
             fixed_user_id__in=users_qs.values('pk'),
@@ -686,13 +682,108 @@ def list_saved_porutham_matches(
             | Q(partner_user__name__icontains=term)
             | Q(partner_user__matri_id__icontains=term)
         )
+    return qs, None
 
+
+def _serialize_saved_match_rows(qs) -> list[dict]:
     rows = []
     for obj in qs:
         partner_prof = getattr(obj.partner_user, 'user_profile', None)
         fixed_prof = getattr(obj.fixed_user, 'user_profile', None)
         rows.append(_serialize_saved_match(obj, partner_prof, fixed_prof))
-    return rows, None
+    return rows
+
+
+def list_saved_porutham_matches(
+    users_qs,
+    fixed_profile_id: int | None = None,
+    search: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> tuple[list[dict] | dict | None, str | None]:
+    qs, err = _saved_porutham_qs(
+        users_qs, fixed_profile_id=fixed_profile_id, search=search
+    )
+    if err:
+        return None, err
+
+    if page is None:
+        return _serialize_saved_match_rows(qs), None
+
+    total, page_qs = paginate(qs, page, page_size or 20)
+    page_n = max(1, int(page))
+    size = max(1, min(100, int(page_size or 20)))
+    return {
+        'count': total,
+        'page': page_n,
+        'page_size': size,
+        'results': _serialize_saved_match_rows(page_qs),
+    }, None
+
+
+def list_saved_porutham_groups(
+    users_qs,
+    *,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[dict | None, str | None]:
+    qs, err = _saved_porutham_qs(users_qs, search=search)
+    if err:
+        return None, err
+
+    grouped = (
+        qs.order_by()
+        .values('fixed_user_id')
+        .annotate(
+            match_count=Count('id'),
+            last_saved_at=Max('updated_at'),
+        )
+        .order_by('-last_saved_at')
+    )
+    total, page_rows = paginate(grouped, page, page_size)
+    user_ids = [row['fixed_user_id'] for row in page_rows]
+    users = {
+        u.pk: u
+        for u in User.objects.filter(pk__in=user_ids).select_related('user_profile')
+    }
+    latest_by_user: dict = {}
+    if user_ids:
+        latest_qs = (
+            AdminSavedPoruthamMatch.objects.filter(fixed_user_id__in=user_ids)
+            .select_related('saved_by')
+            .order_by('-updated_at')
+        )
+        for obj in latest_qs:
+            if obj.fixed_user_id not in latest_by_user:
+                latest_by_user[obj.fixed_user_id] = obj
+
+    results = []
+    for row in page_rows:
+        uid = row['fixed_user_id']
+        user = users.get(uid)
+        latest = latest_by_user.get(uid)
+        profile = getattr(user, 'user_profile', None) if user else None
+        last_saved = row.get('last_saved_at')
+        results.append({
+            'fixed_user_id': str(uid),
+            'fixed_profile_id': profile.pk if profile else None,
+            'fixed_name': ((user.name or '').strip() if user else ''),
+            'fixed_matri_id': (user.matri_id or '') if user else '',
+            'mode': _mode_to_api(latest.mode) if latest else '',
+            'match_count': row['match_count'],
+            'last_saved_at': last_saved.isoformat() if last_saved else None,
+            'saved_by_name': (latest.saved_by.name if latest and latest.saved_by else '') or '',
+        })
+
+    page_n = max(1, int(page))
+    size = max(1, min(100, int(page_size)))
+    return {
+        'count': total,
+        'page': page_n,
+        'page_size': size,
+        'results': results,
+    }, None
 
 
 def delete_saved_porutham_matches(
