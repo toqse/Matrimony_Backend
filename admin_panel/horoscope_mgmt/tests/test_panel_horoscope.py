@@ -354,6 +354,88 @@ class HoroscopePanelExeDoneFilterTests(TestCase):
         self.assertNotIn(UserProfile.objects.get(user=self.awaiting_user).pk, profile_ids)
 
 
+class HoroscopePanelSearchNameMatriTests(TestCase):
+    """Porutham picker search= matches name OR matri_id (exact / prefix)."""
+
+    def setUp(self):
+        self.master_br = MasterBranch.objects.create(name="Search Branch", code="HP_SR_01")
+        self.admin_super = AdminUser.objects.create(
+            mobile="9000000095",
+            name="Admin Search Filter",
+            role=AdminUser.ROLE_ADMIN,
+        )
+
+        def _male(name: str, mobile: str):
+            u = User.objects.create_user(
+                mobile=mobile,
+                password="x",
+                name=name,
+                role="user",
+                gender="M",
+            )
+            u.is_active = True
+            u.branch = self.master_br
+            u.save()
+            UserProfile.objects.get_or_create(user=u, defaults={})
+            HoroscopeProfile.objects.update_or_create(
+                user=u,
+                defaults={
+                    "pr_rasi": _rasi_string(4),
+                    "pr_star": 5,
+                    "pr_pada": 1,
+                    "pr_name": name,
+                },
+            )
+            return u
+
+        self.target = _male("Gopikrishnan Search", "+919876543701")
+        self.other = _male("Other Groom Search", "+919876543702")
+        self.target_profile_id = UserProfile.objects.get(user=self.target).pk
+        self.other_profile_id = UserProfile.objects.get(user=self.other).pk
+
+    def _ids(self, params: dict) -> set:
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        list_req = _list_req({"gender": "M", "exe_done": "true", **params})
+        data, err = list_horoscope_records(qs, request=list_req, page=1, page_size=50)
+        self.assertIsNone(err)
+        return {row["profile_id"] for row in data["results"]}
+
+    def test_search_by_name_substring(self):
+        ids = self._ids({"search": "Gopikrishnan"})
+        self.assertIn(self.target_profile_id, ids)
+        self.assertNotIn(self.other_profile_id, ids)
+
+    def test_search_by_full_matri_id(self):
+        mid = (self.target.matri_id or "").strip()
+        self.assertTrue(mid)
+        ids = self._ids({"search": mid})
+        self.assertEqual(ids, {self.target_profile_id})
+
+    def test_search_by_matri_id_prefix(self):
+        mid = (self.target.matri_id or "").strip()
+        self.assertTrue(len(mid) >= 4)
+        prefix = mid[:4]
+        ids = self._ids({"search": prefix})
+        self.assertIn(self.target_profile_id, ids)
+
+    def test_list_search_query_count_bounded(self):
+        """select_related + single page materialization must stay O(1) vs page size."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        mid = (self.target.matri_id or "").strip()
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        list_req = _list_req({"gender": "M", "exe_done": "true", "search": mid})
+        with CaptureQueriesContext(connection) as ctx:
+            data, err = list_horoscope_records(qs, request=list_req, page=1, page_size=50)
+        self.assertIsNone(err)
+        self.assertEqual(len(data["results"]), 1)
+        # Warm path typically ~few queries; hard-fail only if it looks like N+1.
+        self.assertLessEqual(len(ctx.captured_queries), 30)
+
+
 class HoroscopePanelStarRasiRajjuFilterTests(TestCase):
     """Porutham picker list (exe_done) must honour star / rasi / rajju query params."""
 

@@ -1,6 +1,7 @@
 """Shared queryset filters for admin / staff / branch profile list endpoints."""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 from django.db.models import Q
@@ -271,15 +272,42 @@ def apply_profile_status_filter(qs, filter_value: str):
     return qs, None
 
 
+# Matri IDs are typically like AM143118 (optional letters + digits). Prefer
+# indexed iexact/istartswith over LOWER()…LIKE %…% for these lookups.
+_MATRI_LIKE_RE = re.compile(r"^[A-Za-z]{0,8}\d[A-Za-z0-9]*$")
+
+
+def _looks_like_matri_id(term: str) -> bool:
+    s = (term or "").strip()
+    if not s or " " in s:
+        return False
+    return bool(_MATRI_LIKE_RE.match(s))
+
+
 def _apply_legacy_search(qs, search: str):
+    """Quick search: name OR matri_id (index-friendly when matri-like).
+
+    Non–matri-like terms also match mobile / reg_no for general profile lists.
+    """
+    s = (search or "").strip()
+    if not s:
+        return qs
+
+    name_q = _ci_contains("name", s)
+
+    if _looks_like_matri_id(s):
+        # Unique / prefix index on matri_id; also allow name substring match.
+        matri_q = Q(matri_id__iexact=s) | Q(matri_id__istartswith=s)
+        return qs.filter(name_q | matri_q)
+
     search_filter = (
-        _ci_contains("name", search)
-        | _ci_contains("matri_id", search)
-        | _ci_contains("mobile", search)
-        | _ci_contains("reg_no", search)
+        name_q
+        | _ci_contains("matri_id", s)
+        | _ci_contains("mobile", s)
+        | _ci_contains("reg_no", s)
     )
-    digits_only = "".join(ch for ch in search if ch.isdigit())
-    if digits_only and digits_only != search:
+    digits_only = "".join(ch for ch in s if ch.isdigit())
+    if digits_only and digits_only != s:
         search_filter |= _ci_contains("mobile", digits_only)
     return qs.filter(search_filter)
 

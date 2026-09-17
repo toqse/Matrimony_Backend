@@ -192,6 +192,8 @@ def _porutham_eligible_users_qs(qs):
 def _list_users_filtered(
     users_qs, *, search: str, branch_id: str | None, gender: str | None = None, exe_done: bool = False
 ):
+    from admin_panel.profile_filters import _apply_legacy_search
+
     qs = users_qs
     if branch_id:
         try:
@@ -219,8 +221,16 @@ def _list_users_filtered(
         qs = _porutham_eligible_users_qs(qs)
     s = (search or '').strip()
     if s:
-        qs = qs.filter(Q(matri_id__icontains=s) | Q(name__icontains=s))
+        qs = _apply_legacy_search(qs, s)
     return qs.order_by('-created_at')
+
+
+_RECORD_LIST_SELECT_RELATED = (
+    'branch',
+    'user_profile',
+    'user_religion__religion',
+    'horoscope_profile',
+)
 
 
 def paginate(qs, page: int, page_size: int):
@@ -247,6 +257,8 @@ def list_horoscope_records(
     exe_done_raw = (request.query_params.get('exe_done') or '').strip().lower()
     exe_done = exe_done_raw in {'1', 'true', 'yes'}
 
+    # search= is owned by apply_profile_list_filters → _apply_legacy_search
+    # (name | matri, index-friendly for matri-like terms). Do not pass search here.
     qs = _list_users_filtered(
         users_qs,
         search='',
@@ -259,12 +271,27 @@ def list_horoscope_records(
     if perr:
         return None, perr
 
-    total, page_qs = paginate(qs, page, page_size)
-    user_ids = [u.pk for u in page_qs]
-    hp_map = {
-        h.user_id: h
-        for h in HoroscopeProfile.objects.filter(user_id__in=user_ids)
-    }
+    # Re-apply after filters/distinct so build_record_row hits no per-row joins.
+    qs = qs.select_related(*_RECORD_LIST_SELECT_RELATED)
+
+    total, page_slice = paginate(qs, page, page_size)
+    # Materialize once — avoid a second query when building rows.
+    page_users = list(page_slice)
+    # Prefer already select_related horoscope_profile; batch-fetch any misses.
+    hp_map: dict = {}
+    missing_ids: list = []
+    for u in page_users:
+        try:
+            hp = u.horoscope_profile
+        except HoroscopeProfile.DoesNotExist:
+            hp = None
+        if hp is not None:
+            hp_map[u.pk] = hp
+        else:
+            missing_ids.append(u.pk)
+    if missing_ids:
+        for h in HoroscopeProfile.objects.filter(user_id__in=missing_ids):
+            hp_map[h.user_id] = h
 
     page = max(1, int(page))
     page_size = max(1, min(100, int(page_size)))
@@ -283,7 +310,7 @@ def list_horoscope_records(
         'next': next_link,
         'previous': previous_link,
         'results': [
-            build_record_row(u, hp_map, request=request, mount=mount) for u in page_qs
+            build_record_row(u, hp_map, request=request, mount=mount) for u in page_users
         ],
     }, None
 
