@@ -237,7 +237,9 @@ def _compute_step_completion(user, *, ensure_loaded=True):
         edu and (
             edu.highest_education_id
             or edu.education_subject_id
+            or (getattr(edu, 'education_subject_name', None) or '').strip()
             or edu.occupation_id
+            or (getattr(edu, 'occupation_name', None) or '').strip()
             or edu.annual_income_id
             or (edu.employment_status or '').strip()
             or (edu.company or '').strip()

@@ -15,6 +15,7 @@ from profiles.serializers import (
     LocationDetailsUpdateSerializer,
     PersonalDetailsUpdateSerializer,
     ReligionDetailsUpdateSerializer,
+    persist_education_details,
 )
 from profiles.utils import assign_height_cm, sync_profile_completion_flags
 
@@ -125,19 +126,8 @@ def apply_education(user, payload: dict):
         data=payload, partial=True, context={'user': user}
     )
     ser.is_valid(raise_exception=True)
-    vd = ser.validated_data
     edu, _ = UserEducation.objects.get_or_create(user=user, defaults={})
-    if vd.get("highest_education_id") is not None:
-        edu.highest_education_id = vd["highest_education_id"]
-    if vd.get("education_subject_id") is not None:
-        edu.education_subject_id = vd["education_subject_id"]
-    if "employment_status" in vd:
-        edu.employment_status = vd["employment_status"]
-    if vd.get("occupation_id") is not None:
-        edu.occupation_id = vd["occupation_id"]
-    if vd.get("annual_income_id") is not None:
-        edu.annual_income_id = vd["annual_income_id"]
-    edu.save()
+    persist_education_details(edu, ser.validated_data)
     sync_profile_completion_flags(user)
 
 

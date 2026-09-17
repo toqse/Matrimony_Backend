@@ -369,6 +369,13 @@ def apply_profile_list_filters(qs, request):
     occupation_id = _qp(request, "occupation_id")
     if occupation_id.isdigit():
         qs = qs.filter(user_education__occupation_id=int(occupation_id))
+    else:
+        occupation_search = _qp(request, "occupation_search").strip()
+        if occupation_search:
+            qs = qs.filter(
+                ci_contains("user_education__occupation__name", occupation_search)
+                | ci_contains("user_education__occupation_name", occupation_search)
+            )
 
     marital_status_id = _qp(request, "marital_status_id")
     if marital_status_id.isdigit():

@@ -54,6 +54,7 @@ from .serializers import (
     empty_location_details_read_data,
     empty_personal_details_read_data,
     empty_religion_details_read_data,
+    persist_education_details,
 )
 from admin_panel.audit_log.models import AuditLog
 from admin_panel.audit_log.utils import create_audit_log
@@ -973,17 +974,7 @@ class ProfileEducationView(APIView):
         )
         ser.is_valid(raise_exception=True)
         edu, _ = UserEducation.objects.get_or_create(user=request.user, defaults={})
-        if ser.validated_data.get('highest_education_id') is not None:
-            edu.highest_education_id = ser.validated_data['highest_education_id']
-        if ser.validated_data.get('education_subject_id') is not None:
-            edu.education_subject_id = ser.validated_data['education_subject_id']
-        if 'employment_status' in ser.validated_data:
-            edu.employment_status = ser.validated_data['employment_status']
-        if ser.validated_data.get('occupation_id') is not None:
-            edu.occupation_id = ser.validated_data['occupation_id']
-        if ser.validated_data.get('annual_income_id') is not None:
-            edu.annual_income_id = ser.validated_data['annual_income_id']
-        edu.save()
+        persist_education_details(edu, ser.validated_data)
         mark_profile_step_completed(request.user, 'education')
         edu = UserEducation.objects.filter(user=request.user).select_related(
             'highest_education', 'education_subject', 'occupation', 'annual_income'

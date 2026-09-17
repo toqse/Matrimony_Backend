@@ -875,9 +875,11 @@ class EducationDetailsReadSerializer(serializers.Serializer):
     highest_education = serializers.SerializerMethodField()
     education_subject_id = serializers.IntegerField(allow_null=True)
     education_subject = serializers.SerializerMethodField()
+    education_subject_name = serializers.SerializerMethodField()
     employment_status = serializers.CharField()
     occupation_id = serializers.IntegerField(allow_null=True)
     occupation = serializers.SerializerMethodField()
+    occupation_name = serializers.SerializerMethodField()
     annual_income_id = serializers.IntegerField(allow_null=True)
     annual_income = serializers.SerializerMethodField()
 
@@ -885,10 +887,26 @@ class EducationDetailsReadSerializer(serializers.Serializer):
         return obj.highest_education.name if obj.highest_education_id else None
 
     def get_education_subject(self, obj):
-        return obj.education_subject.name if obj.education_subject_id else None
+        if obj.education_subject_id and obj.education_subject:
+            return obj.education_subject.name
+        name = (getattr(obj, 'education_subject_name', None) or '').strip()
+        return name or None
+
+    def get_education_subject_name(self, obj):
+        if obj.education_subject_id and obj.education_subject:
+            return obj.education_subject.name
+        return (getattr(obj, 'education_subject_name', None) or '').strip() or None
 
     def get_occupation(self, obj):
-        return obj.occupation.name if obj.occupation_id else None
+        if obj.occupation_id and obj.occupation:
+            return obj.occupation.name
+        name = (getattr(obj, 'occupation_name', None) or '').strip()
+        return name or None
+
+    def get_occupation_name(self, obj):
+        if obj.occupation_id and obj.occupation:
+            return obj.occupation.name
+        return (getattr(obj, 'occupation_name', None) or '').strip() or None
 
     def get_annual_income(self, obj):
         return obj.annual_income.name if obj.annual_income_id else None
@@ -990,9 +1008,11 @@ def empty_education_details_read_data():
         'highest_education': None,
         'education_subject_id': None,
         'education_subject': None,
+        'education_subject_name': None,
         'employment_status': '',
         'occupation_id': None,
         'occupation': None,
+        'occupation_name': None,
         'annual_income_id': None,
         'annual_income': None,
     }
@@ -1536,8 +1556,10 @@ class FamilyDetailsUpdateSerializer(serializers.Serializer):
 class EducationDetailsUpdateSerializer(serializers.Serializer):
     highest_education_id = serializers.IntegerField(required=False, allow_null=True)
     education_subject_id = serializers.IntegerField(required=False, allow_null=True)
+    education_subject_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     employment_status = serializers.CharField(required=False, allow_blank=True)
     occupation_id = serializers.IntegerField(required=False, allow_null=True)
+    occupation_name = serializers.CharField(required=False, allow_blank=True, max_length=100)
     annual_income_id = serializers.IntegerField(required=False, allow_null=True)
     employment = serializers.CharField(required=False, allow_blank=True, write_only=True)
     # Backward/forward compatible: allow clients to send master "name" strings
@@ -1546,6 +1568,16 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
     education_subject = serializers.CharField(required=False, allow_blank=True, write_only=True)
     occupation = serializers.CharField(required=False, allow_blank=True, write_only=True)
     annual_income = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    @staticmethod
+    def _sanitize_subject_name(raw) -> str:
+        if raw is None:
+            return ''
+        s = str(raw).strip()
+        if not s:
+            return ''
+        s = ' '.join(s.split())
+        return s[:150]
 
     def _resolve_active_name_to_id(self, model, label: str, *, field_name: str) -> int:
         cleaned = (label or '').strip()
@@ -1576,6 +1608,9 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Invalid education_subject_id.')
         return v
 
+    def validate_education_subject_name(self, value):
+        return self._sanitize_subject_name(value)
+
     def validate_occupation_id(self, v):
         if v is None:
             return v
@@ -1584,6 +1619,19 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Invalid occupation_id.')
         return v
 
+    def validate_occupation_name(self, value):
+        return self._sanitize_occupation_name(value)
+
+    @staticmethod
+    def _sanitize_occupation_name(raw) -> str:
+        if raw is None:
+            return ''
+        s = str(raw).strip()
+        if not s:
+            return ''
+        s = ' '.join(s.split())
+        return s[:100]
+
     def validate_annual_income_id(self, v):
         if v is None:
             return v
@@ -1591,6 +1639,20 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
         if not IncomeRange.objects.filter(pk=v, is_active=True).exists():
             raise serializers.ValidationError('Invalid annual_income_id.')
         return v
+
+    def _education_id_for_mapping(self, attrs):
+        education_id = attrs.get('highest_education_id')
+        if education_id is not None:
+            return education_id
+        user = self.context.get('user')
+        if user is None:
+            request = self.context.get('request')
+            user = getattr(request, 'user', None) if request else None
+        if user is not None and getattr(user, 'is_authenticated', False):
+            existing = UserEducation.objects.filter(user=user).first()
+            if existing:
+                return existing.highest_education_id
+        return None
 
     def validate(self, attrs):
         # Allow either *_id or string label. If both are provided, *_id wins.
@@ -1609,23 +1671,56 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
                     Education, v, field_name='highest_education'
                 )
 
-        if attrs.get('education_subject_id') is None and 'education_subject' in attrs:
+        # City-style subject: explicit free-text name with null id.
+        if (
+            attrs.get('education_subject_id') is None
+            and 'education_subject_name' in attrs
+            and 'education_subject' not in attrs
+        ):
+            name = self._sanitize_subject_name(attrs.get('education_subject_name'))
+            attrs['education_subject_name'] = name
+            attrs['education_subject_id'] = None
+        elif attrs.get('education_subject_id') is None and 'education_subject' in attrs:
             v = attrs.pop('education_subject')
-            if v.strip() == '':
+            cleaned = self._sanitize_subject_name(v)
+            if not cleaned:
                 attrs['education_subject_id'] = None
+                attrs['education_subject_name'] = ''
             else:
-                attrs['education_subject_id'] = self._resolve_active_name_to_id(
-                    EducationSubject, v, field_name='education_subject'
-                )
+                qs = EducationSubject.objects.filter(name__iexact=cleaned, is_active=True)
+                if qs.count() == 1:
+                    attrs['education_subject_id'] = int(qs.values_list('id', flat=True).first())
+                    attrs['education_subject_name'] = ''
+                else:
+                    # Unknown / ambiguous label → store as free-text (no master create).
+                    attrs['education_subject_id'] = None
+                    attrs['education_subject_name'] = cleaned
 
-        if attrs.get('occupation_id') is None and 'occupation' in attrs:
+        if (
+            attrs.get('occupation_id') is None
+            and 'occupation_name' in attrs
+            and 'occupation' not in attrs
+        ):
+            name = self._sanitize_occupation_name(attrs.get('occupation_name'))
+            attrs['occupation_name'] = name
+            attrs['occupation_id'] = None
+        elif attrs.get('occupation_id') is None and 'occupation' in attrs:
             v = attrs.pop('occupation')
-            if v.strip() == '':
+            cleaned = self._sanitize_occupation_name(v)
+            if not cleaned:
                 attrs['occupation_id'] = None
+                attrs['occupation_name'] = ''
             else:
-                attrs['occupation_id'] = self._resolve_active_name_to_id(
-                    Occupation, v, field_name='occupation'
-                )
+                qs = Occupation.objects.filter(name__iexact=cleaned, is_active=True)
+                if qs.count() == 1:
+                    attrs['occupation_id'] = int(qs.values_list('id', flat=True).first())
+                    attrs['occupation_name'] = ''
+                else:
+                    attrs['occupation_id'] = None
+                    attrs['occupation_name'] = cleaned
+        elif attrs.get('occupation_id') is not None:
+            occ = Occupation.objects.filter(pk=attrs['occupation_id'], is_active=True).first()
+            attrs['occupation_name'] = (occ.name[:100] if occ else '')
 
         if attrs.get('annual_income_id') is None and 'annual_income' in attrs:
             v = attrs.pop('annual_income')
@@ -1640,22 +1735,14 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
         if subject_id is None:
             return attrs
 
-        education_id = attrs.get('highest_education_id')
-        if education_id is None:
-            user = self.context.get('user')
-            if user is None:
-                request = self.context.get('request')
-                user = getattr(request, 'user', None) if request else None
-            if user is not None and getattr(user, 'is_authenticated', False):
-                existing = UserEducation.objects.filter(user=user).first()
-                if existing:
-                    education_id = existing.highest_education_id
-
+        education_id = self._education_id_for_mapping(attrs)
         if education_id is None:
             # Partial payload without education context cannot enforce mapping yet.
+            subject = EducationSubject.objects.filter(pk=subject_id, is_active=True).first()
+            if subject and 'education_subject_name' not in attrs:
+                attrs['education_subject_name'] = subject.name
             return attrs
 
-        from master.models import EducationSubject
         is_mapped = EducationSubject.objects.filter(
             pk=subject_id,
             is_active=True,
@@ -1666,7 +1753,28 @@ class EducationDetailsUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'education_subject_id': 'Selected subject is not available for the chosen highest education.'
             })
+        subject = EducationSubject.objects.filter(pk=subject_id, is_active=True).first()
+        attrs['education_subject_name'] = subject.name if subject else ''
         return attrs
+
+
+def persist_education_details(edu, vd: dict) -> None:
+    """Apply EducationDetailsUpdateSerializer validated_data onto a UserEducation row."""
+    if vd.get('highest_education_id') is not None:
+        edu.highest_education_id = vd['highest_education_id']
+    if 'education_subject_id' in vd:
+        edu.education_subject_id = vd['education_subject_id']
+    if 'education_subject_name' in vd:
+        edu.education_subject_name = vd.get('education_subject_name') or ''
+    if 'employment_status' in vd:
+        edu.employment_status = vd['employment_status']
+    if 'occupation_id' in vd:
+        edu.occupation_id = vd['occupation_id']
+    if 'occupation_name' in vd:
+        edu.occupation_name = vd.get('occupation_name') or ''
+    if vd.get('annual_income_id') is not None:
+        edu.annual_income_id = vd['annual_income_id']
+    edu.save()
 
 
 class AboutDetailsUpdateSerializer(serializers.Serializer):

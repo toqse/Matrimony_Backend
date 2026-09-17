@@ -135,6 +135,7 @@ def _match_list_response(request, *, home_slider=False):
             | ci_contains('matri_id', search)
             | ci_contains('user_education__highest_education__name', search)
             | ci_contains('user_education__occupation__name', search)
+            | ci_contains('user_education__occupation_name', search)
         ).distinct()
 
     # Age filter (explicit query params only; saved preference applied above when absent)
@@ -165,6 +166,13 @@ def _match_list_response(request, *, home_slider=False):
         qs = qs.filter(user_education__highest_education_id__in=education_ids)
     if occupation_ids:
         qs = qs.filter(user_education__occupation_id__in=occupation_ids)
+    else:
+        occupation_search = (request.query_params.get('occupation_search') or '').strip()
+        if occupation_search:
+            qs = qs.filter(
+                ci_contains('user_education__occupation__name', occupation_search)
+                | ci_contains('user_education__occupation_name', occupation_search)
+            )
     marital_status_id = _optional_fk_id(request.query_params.get('marital_status'))
     if marital_status_id is not None:
         qs = qs.filter(user_personal__marital_status_id=marital_status_id)
@@ -321,7 +329,13 @@ def _match_list_response(request, *, home_slider=False):
             'caste': rel.caste_fk.name if rel and rel.caste_fk_id else None,
             'height': height_val,
             'education': edu.highest_education.name if edu and edu.highest_education_id else None,
-            'occupation': edu.occupation.name if edu and edu.occupation_id else None,
+            'occupation': (
+                edu.occupation.name
+                if edu and edu.occupation_id and edu.occupation
+                else ((getattr(edu, 'occupation_name', None) or '').strip() or None)
+                if edu
+                else None
+            ),
             'profile_photo': photo_url,
             'full_photo': full_photo_url,
             'is_online': is_online,

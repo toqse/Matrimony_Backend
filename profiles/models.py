@@ -214,8 +214,20 @@ class UserEducation(TimeStampedModel):
     education_subject = models.ForeignKey(
         'master.EducationSubject', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
     )
+    education_subject_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        help_text='Free-text subject when no master EducationSubject is selected (City-style).',
+    )
     occupation = models.ForeignKey(
         'master.Occupation', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    occupation_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Free-text occupation when no master Occupation is selected.',
     )
     annual_income = models.ForeignKey(
         'master.IncomeRange', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
