@@ -1042,6 +1042,7 @@ class BasicDetailsUpdateSerializer(serializers.Serializer):
     gender = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     dob = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     email = serializers.EmailField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
     profile_for = serializers.ChoiceField(choices=PROFILE_FOR_CHOICES, required=False, allow_blank=True, allow_null=True)
 
     def validate_gender(self, value):
@@ -1084,12 +1085,36 @@ class BasicDetailsUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Email already exists. Please use a different email.')
         return normalized
 
+    def validate_phone(self, value):
+        cleaned = (value or '').strip()
+        if not cleaned:
+            raise serializers.ValidationError('Phone number is required.')
+        from accounts.serializers import validate_phone_number
+        from core.phone import personal_mobile_in_use
+        try:
+            phone = validate_phone_number(cleaned)
+        except serializers.ValidationError as exc:
+            detail = exc.detail
+            raise serializers.ValidationError(
+                str(detail[0]) if isinstance(detail, list) else str(detail)
+            ) from exc
+        instance = getattr(self, 'instance', None)
+        in_use = personal_mobile_in_use(
+            phone,
+            exclude_member_user_id=instance.pk if instance is not None else None,
+        )
+        if in_use:
+            raise serializers.ValidationError(in_use)
+        return phone
+
     def update(self, instance, validated_data):
         if 'gender' in validated_data and validated_data['gender'] is not None:
             instance.gender = validated_data['gender']
         for k in ('name', 'dob', 'email'):
             if k in validated_data:
                 setattr(instance, k, validated_data[k])
+        if 'phone' in validated_data:
+            instance.mobile = validated_data['phone']
         if 'profile_for' in validated_data:
             instance.profile_for = validated_data['profile_for'] or None
         instance.save()

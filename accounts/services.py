@@ -127,6 +127,28 @@ def check_otp_rate_limit(identifier: str) -> tuple[bool, str]:
     return True, ''
 
 
+def persist_otp_record(identifier: str, otp: str, *, expires_at=None) -> None:
+    """
+    Store OTP in OTPRecord for Redis fallback + Django admin visibility.
+    Plaintext otp_code is admin-only; APIs must not return it.
+    """
+    try:
+        from accounts.models import OTPRecord
+
+        expiry_minutes = getattr(settings, 'OTP_EXPIRY_MINUTES', 5)
+        if expires_at is None:
+            expires_at = timezone.now() + timezone.timedelta(minutes=expiry_minutes)
+        OTPRecord.objects.filter(identifier=identifier).delete()
+        OTPRecord.objects.create(
+            identifier=identifier,
+            otp_hash=_hash_otp(otp),
+            otp_code=(otp or '').strip(),
+            expires_at=expires_at,
+        )
+    except Exception:
+        pass
+
+
 def generate_otp(identifier: str, length: int = None) -> str:
     length = length or getattr(settings, 'OTP_LENGTH', 6)
     otp = ''.join(secrets.choice('0123456789') for _ in range(length))
@@ -139,16 +161,7 @@ def generate_otp(identifier: str, length: int = None) -> str:
     }
     cache_key = _otp_key(identifier)
     cache.set(cache_key, payload, timeout=expiry_minutes * 60)
-    try:
-        from accounts.models import OTPRecord
-        OTPRecord.objects.filter(identifier=identifier).delete()
-        OTPRecord.objects.create(
-            identifier=identifier,
-            otp_hash=payload['otp_hash'],
-            expires_at=expires_at,
-        )
-    except Exception:
-        pass
+    persist_otp_record(identifier, otp, expires_at=expires_at)
     return otp
 
 

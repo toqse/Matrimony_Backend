@@ -230,6 +230,10 @@ class SendOTPView(APIView):
         user.save(update_fields=["otp", "otp_expiry", "updated_at"])
         cache.delete(_attempt_key(mobile))
 
+        from accounts.services import persist_otp_record
+
+        persist_otp_record(f"admin:{mobile}", otp, expires_at=user.otp_expiry)
+
         _send_otp_sms(mobile, otp)
 
         payload = {"success": True, "message": "OTP sent successfully", "data": {"mobile": mobile}}
@@ -466,6 +470,14 @@ class AdminChangePhoneSendOTPView(APIView):
             _profile_phone_payload_key(user.id),
             {"mobile": new_mobile, "otp": otp, "attempts": 0},
             timeout=PROFILE_PHONE_OTP_EXPIRY_SECONDS,
+        )
+        from accounts.services import persist_otp_record
+
+        persist_otp_record(
+            f"admin_change_phone:{user.id}:{new_mobile}",
+            otp,
+            expires_at=timezone.now()
+            + timezone.timedelta(seconds=PROFILE_PHONE_OTP_EXPIRY_SECONDS),
         )
         _send_otp_sms(new_mobile, otp)
 

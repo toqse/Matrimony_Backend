@@ -199,16 +199,28 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
 
 class OTPRecord(TimeStampedModel):
-    """DB fallback for OTP when Redis unavailable."""
+    """DB fallback for OTP when Redis unavailable. Plaintext otp_code is for Django admin only."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     identifier = models.CharField(max_length=255, db_index=True)
     otp_hash = models.CharField(max_length=64)
+    otp_code = models.CharField(
+        max_length=10,
+        blank=True,
+        default='',
+        help_text='Plaintext OTP for Django admin visibility only (not returned by APIs).',
+    )
     attempts = models.PositiveSmallIntegerField(default=0)
     expires_at = models.DateTimeField()
     verified = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'accounts_otp_record'
+        verbose_name = 'OTP record'
+        verbose_name_plural = 'OTP records'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.identifier} ({self.otp_code or "••••••"})'
 
 
 class DummyOTPPhone(TimeStampedModel):

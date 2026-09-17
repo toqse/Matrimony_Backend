@@ -33,7 +33,52 @@ class UserAdmin(admin.ModelAdmin):
 
 @admin.register(OTPRecord)
 class OTPRecordAdmin(admin.ModelAdmin):
-    list_display = ['identifier', 'attempts', 'expires_at', 'verified', 'created_at']
+    list_display = ['identifier', 'otp_code', 'attempts', 'expires_at', 'verified', 'created_at']
+    list_filter = ['verified', 'created_at']
+    search_fields = ['identifier', 'otp_code']
+    readonly_fields = [
+        'id',
+        'identifier',
+        'otp_code',
+        'otp_hash',
+        'attempts',
+        'expires_at',
+        'verified',
+        'created_at',
+        'updated_at',
+    ]
+    ordering = ['-created_at']
+    fieldsets = (
+        (
+            None,
+            {
+                'fields': (
+                    'identifier',
+                    'otp_code',
+                    'attempts',
+                    'expires_at',
+                    'verified',
+                ),
+                'description': (
+                    'Plaintext OTP is shown here for support/debugging only. '
+                    'It is never returned in API responses.'
+                ),
+            },
+        ),
+        (
+            'Technical',
+            {
+                'classes': ('collapse',),
+                'fields': ('id', 'otp_hash', 'created_at', 'updated_at'),
+            },
+        ),
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 class DummyOTPPhoneAdminForm(forms.ModelForm):
