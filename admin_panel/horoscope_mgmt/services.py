@@ -12,7 +12,13 @@ from admin_panel.auth.serializers import normalize_admin_role
 from admin_panel.my_profiles.views import _my_profiles_base_queryset
 from admin_panel.staff_dashboard.services import staff_profile_for_dashboard
 from astrology.charts import format_dasa_balance, moon_rasi_name, star_name
-from astrology.models import AstrologyPdfCredit, AdminSavedPoruthamMatch, HoroscopeProfile, PoruthamResult
+from astrology.models import (
+    AdminGeneralSelection,
+    AstrologyPdfCredit,
+    AdminSavedPoruthamMatch,
+    HoroscopeProfile,
+    PoruthamResult,
+)
 from astrology.porutham import calculate_porutham
 from master.models import Branch as MasterBranch
 from plans.models import UserPlan
@@ -868,3 +874,269 @@ def _serialize_saved_match(
         'created_at': obj.created_at.isoformat(),
         'updated_at': obj.updated_at.isoformat(),
     }
+
+
+# --- General Selection (shortlist; no porutham calculation) ---
+
+
+def _serialize_general_selection(
+    obj: AdminGeneralSelection,
+    partner_prof: UserProfile | None = None,
+    fixed_prof: UserProfile | None = None,
+) -> dict[str, Any]:
+    partner_user = obj.partner_user
+    partner_profile = partner_prof or getattr(partner_user, 'user_profile', None)
+    fixed_user = obj.fixed_user
+    fixed_profile = fixed_prof or getattr(fixed_user, 'user_profile', None)
+    saved_by = obj.saved_by
+    return {
+        'id': obj.pk,
+        'mode': _mode_to_api(obj.mode),
+        'fixed_user_id': str(obj.fixed_user_id),
+        'fixed_profile_id': fixed_profile.pk if fixed_profile else None,
+        'fixed_matri_id': (fixed_user.matri_id or '') if fixed_user else '',
+        'fixed_name': ((fixed_user.name or '').strip() if fixed_user else ''),
+        'partner_user_id': str(obj.partner_user_id),
+        'partner_profile_id': partner_profile.pk if partner_profile else None,
+        'partner_matri_id': (partner_user.matri_id or '') if partner_user else '',
+        'partner_name': ((partner_user.name or '').strip() if partner_user else ''),
+        'saved_by_name': (saved_by.name if saved_by else '') or '',
+        'created_at': obj.created_at.isoformat(),
+        'updated_at': obj.updated_at.isoformat(),
+    }
+
+
+def save_general_selections(
+    users_qs,
+    *,
+    mode: str,
+    fixed_profile_id: int,
+    partner_profile_ids: list[int],
+    saved_by,
+) -> tuple[list[dict] | None, str | None]:
+    """Persist shortlist pairs without requiring or calculating horoscope."""
+    internal_mode = _mode_to_internal(mode)
+    if not internal_mode:
+        return None, 'Invalid mode. Use fixed-bride or fixed-groom.'
+    if not partner_profile_ids:
+        return None, 'Select at least one partner to save.'
+
+    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+    if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+        return None, 'Fixed profile not found or out of scope.'
+
+    unique_partner_ids = list(dict.fromkeys(int(pid) for pid in partner_profile_ids))
+    partner_map = {
+        p.pk: p
+        for p in UserProfile.objects.filter(pk__in=unique_partner_ids).select_related('user')
+    }
+
+    saved_rows: list[dict] = []
+    errors: list[str] = []
+
+    for partner_id in unique_partner_ids:
+        partner_prof = partner_map.get(partner_id)
+        if not partner_prof:
+            errors.append(f'Partner {partner_id}: Invalid profile id(s).')
+            continue
+        if partner_prof.pk == fixed_prof.pk:
+            errors.append(f'Partner {partner_id}: Fixed profile and partner must be different.')
+            continue
+        if not user_in_scope(users_qs, partner_prof.user_id):
+            errors.append(f'Partner {partner_id}: One or both profiles are out of scope.')
+            continue
+
+        if internal_mode == AdminSavedPoruthamMatch.MODE_FIXED_BRIDE:
+            fixed_user = fixed_prof.user
+            partner_user = partner_prof.user
+        else:
+            # fixed-groom: fixed is groom; partner is bride — still store fixed_user = fixed profile's user
+            fixed_user = fixed_prof.user
+            partner_user = partner_prof.user
+
+        obj, _ = AdminGeneralSelection.objects.update_or_create(
+            fixed_user=fixed_user,
+            partner_user=partner_user,
+            defaults={
+                'mode': internal_mode,
+                'saved_by': saved_by,
+            },
+        )
+        saved_rows.append(_serialize_general_selection(obj, partner_prof, fixed_prof))
+
+    if not saved_rows:
+        return None, errors[0] if errors else 'No selections could be saved.'
+
+    return saved_rows, None if not errors else '; '.join(errors)
+
+
+def _general_selection_qs(
+    users_qs, *, fixed_profile_id: int | None = None, search: str | None = None
+):
+    qs = (
+        AdminGeneralSelection.objects.filter(
+            fixed_user_id__in=users_qs.values('pk'),
+            partner_user_id__in=users_qs.values('pk'),
+        )
+        .select_related(
+            'fixed_user',
+            'fixed_user__user_profile',
+            'partner_user',
+            'partner_user__user_profile',
+            'saved_by',
+        )
+        .order_by('-updated_at')
+    )
+
+    if fixed_profile_id is not None:
+        fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+        if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+            return None, 'Fixed profile not found or out of scope.'
+        qs = qs.filter(fixed_user=fixed_prof.user)
+
+    term = (search or '').strip()
+    if term:
+        qs = qs.filter(
+            Q(fixed_user__name__icontains=term)
+            | Q(fixed_user__matri_id__icontains=term)
+            | Q(partner_user__name__icontains=term)
+            | Q(partner_user__matri_id__icontains=term)
+        )
+    return qs, None
+
+
+def _serialize_general_selection_rows(qs) -> list[dict]:
+    return [
+        _serialize_general_selection(
+            obj,
+            getattr(obj.partner_user, 'user_profile', None),
+            getattr(obj.fixed_user, 'user_profile', None),
+        )
+        for obj in qs
+    ]
+
+
+def list_general_selections(
+    users_qs,
+    fixed_profile_id: int | None = None,
+    search: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> tuple[list[dict] | dict | None, str | None]:
+    qs, err = _general_selection_qs(
+        users_qs, fixed_profile_id=fixed_profile_id, search=search
+    )
+    if err:
+        return None, err
+
+    if page is None:
+        return _serialize_general_selection_rows(qs), None
+
+    total, page_qs = paginate(qs, page, page_size or 20)
+    page_n = max(1, int(page))
+    size = max(1, min(100, int(page_size or 20)))
+    return {
+        'count': total,
+        'page': page_n,
+        'page_size': size,
+        'results': _serialize_general_selection_rows(page_qs),
+    }, None
+
+
+def list_general_selection_groups(
+    users_qs,
+    *,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[dict | None, str | None]:
+    qs, err = _general_selection_qs(users_qs, search=search)
+    if err:
+        return None, err
+
+    grouped = (
+        qs.order_by()
+        .values('fixed_user_id')
+        .annotate(
+            match_count=Count('id'),
+            last_saved_at=Max('updated_at'),
+        )
+        .order_by('-last_saved_at')
+    )
+    total, page_rows = paginate(grouped, page, page_size)
+    user_ids = [row['fixed_user_id'] for row in page_rows]
+    users = {
+        u.pk: u
+        for u in User.objects.filter(pk__in=user_ids).select_related('user_profile')
+    }
+    latest_by_user: dict = {}
+    if user_ids:
+        latest_qs = (
+            AdminGeneralSelection.objects.filter(fixed_user_id__in=user_ids)
+            .select_related('saved_by')
+            .order_by('-updated_at')
+        )
+        for obj in latest_qs:
+            if obj.fixed_user_id not in latest_by_user:
+                latest_by_user[obj.fixed_user_id] = obj
+
+    results = []
+    for row in page_rows:
+        uid = row['fixed_user_id']
+        user = users.get(uid)
+        latest = latest_by_user.get(uid)
+        profile = getattr(user, 'user_profile', None) if user else None
+        last_saved = row.get('last_saved_at')
+        results.append({
+            'fixed_user_id': str(uid),
+            'fixed_profile_id': profile.pk if profile else None,
+            'fixed_name': ((user.name or '').strip() if user else ''),
+            'fixed_matri_id': (user.matri_id or '') if user else '',
+            'mode': _mode_to_api(latest.mode) if latest else '',
+            'match_count': row['match_count'],
+            'last_saved_at': last_saved.isoformat() if last_saved else None,
+            'saved_by_name': (latest.saved_by.name if latest and latest.saved_by else '') or '',
+        })
+
+    page_n = max(1, int(page))
+    size = max(1, min(100, int(page_size)))
+    return {
+        'count': total,
+        'page': page_n,
+        'page_size': size,
+        'results': results,
+    }, None
+
+
+def delete_general_selections(
+    users_qs,
+    *,
+    fixed_profile_id: int,
+    partner_profile_ids: list[int],
+) -> tuple[int, str | None]:
+    fixed_prof = UserProfile.objects.filter(pk=fixed_profile_id).select_related('user').first()
+    if not fixed_prof or not user_in_scope(users_qs, fixed_prof.user_id):
+        return 0, 'Fixed profile not found or out of scope.'
+    if not partner_profile_ids:
+        return 0, 'Select at least one partner to remove.'
+
+    unique_partner_ids = list(dict.fromkeys(int(pid) for pid in partner_profile_ids))
+    partner_profs = list(
+        UserProfile.objects.filter(pk__in=unique_partner_ids).select_related('user')
+    )
+    if len(partner_profs) != len(unique_partner_ids):
+        found = {p.pk for p in partner_profs}
+        missing = next(pid for pid in unique_partner_ids if pid not in found)
+        return 0, f'Partner profile {missing} not found or out of scope.'
+
+    partner_user_ids = []
+    for partner_prof in partner_profs:
+        if not user_in_scope(users_qs, partner_prof.user_id):
+            return 0, f'Partner profile {partner_prof.pk} not found or out of scope.'
+        partner_user_ids.append(partner_prof.user_id)
+
+    deleted, _ = AdminGeneralSelection.objects.filter(
+        fixed_user=fixed_prof.user,
+        partner_user_id__in=partner_user_ids,
+    ).delete()
+    return deleted, None

@@ -18,8 +18,10 @@ from astrology.horoscope_api import (
 
 from .permissions import IsPanelStaff
 from .serializers import (
+    PanelDeleteGeneralSelectionsSerializer,
     PanelDeleteSavedPoruthamSerializer,
     PanelPoruthamRequestSerializer,
+    PanelSaveGeneralSelectionsSerializer,
     PanelSavePoruthamMatchesSerializer,
 )
 from . import services as horoscope_panel
@@ -378,6 +380,126 @@ class HoroscopePanelSavedPoruthamGroupsView(APIView):
         return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
 
 
+class HoroscopePanelGeneralSelectionsView(APIView):
+    """GET/POST/DELETE general partner shortlists (no porutham calculation)."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    mount = "admin"
+
+    def get_permissions(self):
+        if self.mount == "admin":
+            return [IsAuthenticated(), IsAdminUser()]
+        if self.mount == "staff":
+            return [IsAuthenticated(), IsPanelStaff()]
+        return [IsAuthenticated(), IsBranchManagerOnly()]
+
+    def get(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        raw = (request.query_params.get("fixed_profile_id") or "").strip()
+        fixed_profile_id = None
+        if raw:
+            try:
+                fixed_profile_id = int(raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {
+                        "success": False,
+                        "error": {"code": 400, "message": "fixed_profile_id must be an integer."},
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        search = (request.query_params.get("search") or "").strip() or None
+        page, page_size = _parse_page_params(request, optional=True)
+        rows, msg = horoscope_panel.list_general_selections(
+            qs,
+            fixed_profile_id=fixed_profile_id,
+            search=search,
+            page=page,
+            page_size=page_size,
+        )
+        if msg:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if isinstance(rows, dict):
+            return Response({"success": True, "data": rows}, status=status.HTTP_200_OK)
+        return Response({"success": True, "data": {"results": rows or []}}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        ser = PanelSaveGeneralSelectionsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        rows, msg = horoscope_panel.save_general_selections(
+            qs,
+            mode=ser.validated_data["mode"],
+            fixed_profile_id=ser.validated_data["fixed_profile_id"],
+            partner_profile_ids=ser.validated_data["partner_profile_ids"],
+            saved_by=request.user,
+        )
+        if not rows:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg or "Save failed."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = {"saved": rows}
+        if msg:
+            payload["warnings"] = msg
+        return Response({"success": True, "data": payload}, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        ser = PanelDeleteGeneralSelectionsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        deleted, msg = horoscope_panel.delete_general_selections(
+            qs,
+            fixed_profile_id=ser.validated_data["fixed_profile_id"],
+            partner_profile_ids=ser.validated_data["partner_profile_ids"],
+        )
+        if msg:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"success": True, "data": {"deleted": deleted}}, status=status.HTTP_200_OK)
+
+
+class HoroscopePanelGeneralSelectionGroupsView(APIView):
+    """GET paginated unique fixed profiles that have general selections."""
+
+    authentication_classes = [AdminJWTAuthentication]
+    mount = "admin"
+
+    def get_permissions(self):
+        if self.mount == "admin":
+            return [IsAuthenticated(), IsAdminUser()]
+        if self.mount == "staff":
+            return [IsAuthenticated(), IsPanelStaff()]
+        return [IsAuthenticated(), IsBranchManagerOnly()]
+
+    def get(self, request):
+        qs, err = _resolve_qs(request, self.mount)
+        if err:
+            return err
+        search = (request.query_params.get("search") or "").strip() or None
+        page, page_size = _parse_page_params(request)
+        data, msg = horoscope_panel.list_general_selection_groups(
+            qs, search=search, page=page or 1, page_size=page_size or 20
+        )
+        if msg:
+            return Response(
+                {"success": False, "error": {"code": 400, "message": msg}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+
+
 class HoroscopePanelMatchReportView(APIView):
     """GET /api/v1/admin/horoscope/match-report/?matri_id=&partner_matri_id="""
 
@@ -514,6 +636,26 @@ StaffHoroscopePanelSavedPoruthamGroupsView = _clone_view_attrs(
 )
 BranchHoroscopePanelSavedPoruthamGroupsView = _clone_view_attrs(
     HoroscopePanelSavedPoruthamGroupsView, "branch"
+)
+
+AdminHoroscopePanelGeneralSelectionsView = _clone_view_attrs(
+    HoroscopePanelGeneralSelectionsView, "admin"
+)
+StaffHoroscopePanelGeneralSelectionsView = _clone_view_attrs(
+    HoroscopePanelGeneralSelectionsView, "staff"
+)
+BranchHoroscopePanelGeneralSelectionsView = _clone_view_attrs(
+    HoroscopePanelGeneralSelectionsView, "branch"
+)
+
+AdminHoroscopePanelGeneralSelectionGroupsView = _clone_view_attrs(
+    HoroscopePanelGeneralSelectionGroupsView, "admin"
+)
+StaffHoroscopePanelGeneralSelectionGroupsView = _clone_view_attrs(
+    HoroscopePanelGeneralSelectionGroupsView, "staff"
+)
+BranchHoroscopePanelGeneralSelectionGroupsView = _clone_view_attrs(
+    HoroscopePanelGeneralSelectionGroupsView, "branch"
 )
 
 AdminHoroscopePanelJathakamPdfsView = _clone_view_attrs(HoroscopePanelJathakamPdfsView, "admin")

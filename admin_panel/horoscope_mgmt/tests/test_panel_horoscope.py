@@ -8,17 +8,26 @@ from admin_panel.auth.models import AdminUser
 from admin_panel.branches.models import Branch as PanelBranch
 from admin_panel.horoscope_mgmt.services import (
     build_summary_counts,
+    delete_general_selections,
     delete_saved_porutham_matches,
+    list_general_selection_groups,
+    list_general_selections,
     list_horoscope_records,
     list_saved_porutham_groups,
     list_saved_porutham_matches,
     panel_porutham,
+    save_general_selections,
     save_porutham_matches,
     scoped_member_users_queryset,
 )
 from admin_panel.staff_mgmt.models import StaffProfile
 from admin_panel.subscriptions.models import CustomerStaffAssignment
-from astrology.models import AdminSavedPoruthamMatch, HoroscopeProfile, PoruthamResult
+from astrology.models import (
+    AdminGeneralSelection,
+    AdminSavedPoruthamMatch,
+    HoroscopeProfile,
+    PoruthamResult,
+)
 from master.models import Branch as MasterBranch
 from profiles.models import UserProfile
 
@@ -808,3 +817,100 @@ class HoroscopePanelSavedPoruthamTests(TestCase):
             page1["results"][0]["partner_profile_id"],
             page2["results"][0]["partner_profile_id"],
         )
+
+
+class HoroscopePanelGeneralSelectionTests(TestCase):
+    """General Selection shortlist: no horoscope required."""
+
+    def setUp(self):
+        self.master_br = MasterBranch.objects.create(name="Gen Sel Branch", code="HP_GS_01")
+        self.admin_super = AdminUser.objects.create(
+            mobile="9000000099",
+            name="Admin Gen Sel",
+            role=AdminUser.ROLE_ADMIN,
+        )
+
+        def _member(name: str, mobile: str, gender: str):
+            u = User.objects.create_user(mobile=mobile, password="x", name=name, role="user")
+            u.is_active = True
+            u.branch = self.master_br
+            u.gender = gender
+            u.save()
+            return u
+
+        self.bride_user = _member("Gen Bride", "+919876543801", "F")
+        self.groom_user = _member("Gen Groom", "+919876543802", "M")
+        self.bride_no_hp = _member("No Chart Bride", "+919876543803", "F")
+        self.groom_no_hp = _member("No Chart Groom", "+919876543804", "M")
+        self.bride_profile, _ = UserProfile.objects.get_or_create(user=self.bride_user, defaults={})
+        self.groom_profile, _ = UserProfile.objects.get_or_create(user=self.groom_user, defaults={})
+        self.bride_no_hp_profile, _ = UserProfile.objects.get_or_create(
+            user=self.bride_no_hp, defaults={}
+        )
+        self.groom_no_hp_profile, _ = UserProfile.objects.get_or_create(
+            user=self.groom_no_hp, defaults={}
+        )
+
+    def test_save_general_selection_without_horoscope(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        saved, err = save_general_selections(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_no_hp_profile.pk,
+            partner_profile_ids=[self.groom_no_hp_profile.pk],
+            saved_by=self.admin_super,
+        )
+        self.assertIsNone(err)
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["partner_profile_id"], self.groom_no_hp_profile.pk)
+        self.assertEqual(
+            AdminGeneralSelection.objects.filter(
+                fixed_user=self.bride_no_hp,
+                partner_user=self.groom_no_hp,
+            ).count(),
+            1,
+        )
+        self.assertFalse(
+            PoruthamResult.objects.filter(
+                bride=self.bride_no_hp,
+                groom=self.groom_no_hp,
+            ).exists()
+        )
+
+    def test_list_groups_and_delete(self):
+        req = _Request(user=self.admin_super)
+        qs = scoped_member_users_queryset(req, mount="admin")
+        save_general_selections(
+            qs,
+            mode="fixed-bride",
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk, self.groom_no_hp_profile.pk],
+            saved_by=self.admin_super,
+        )
+        groups, gerr = list_general_selection_groups(qs, page=1, page_size=20)
+        self.assertIsNone(gerr)
+        self.assertGreaterEqual(groups["count"], 1)
+        fixed_ids = {r["fixed_profile_id"] for r in groups["results"]}
+        self.assertIn(self.bride_profile.pk, fixed_ids)
+
+        rows, lerr = list_general_selections(qs, self.bride_profile.pk)
+        self.assertIsNone(lerr)
+        self.assertEqual(len(rows), 2)
+
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx:
+            list_general_selections(qs, self.bride_profile.pk)
+        self.assertLessEqual(len(ctx.captured_queries), 12)
+
+        deleted, derr = delete_general_selections(
+            qs,
+            fixed_profile_id=self.bride_profile.pk,
+            partner_profile_ids=[self.groom_profile.pk],
+        )
+        self.assertIsNone(derr)
+        self.assertEqual(deleted, 1)
+        remaining, _ = list_general_selections(qs, self.bride_profile.pk)
+        self.assertEqual(len(remaining), 1)

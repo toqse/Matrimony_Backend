@@ -23,3 +23,8 @@ class PanelDeleteSavedPoruthamSerializer(serializers.Serializer):
         allow_empty=False,
         max_length=100,
     )
+
+
+# Same request shape as porutham save/delete; kept separate for API clarity.
+PanelSaveGeneralSelectionsSerializer = PanelSavePoruthamMatchesSerializer
+PanelDeleteGeneralSelectionsSerializer = PanelDeleteSavedPoruthamSerializer
